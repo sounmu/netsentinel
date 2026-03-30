@@ -3,7 +3,7 @@ version: "3.8"
 services:
   # 1. PostgreSQL DB: 외부에 포트 노출하지 않고 내부망 연결만 허용
   db:
-    image: postgres:15-alpine
+    image: timescale/timescaledb:latest-pg15 
     restart: unless-stopped
     volumes:
       - ./pgdata:/var/lib/postgresql/data
