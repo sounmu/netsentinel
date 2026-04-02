@@ -1,0 +1,81 @@
+name: CI — Server & Agent
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  server:
+    name: Server (fmt / check / clippy / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: network-monitor-server
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable + components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: network-monitor-server
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Cargo check (no build artifacts)
+        run: cargo check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+
+      - name: Unit tests
+        run: cargo test
+
+  agent:
+    name: Agent (fmt / check / clippy / test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: network-monitor-agent
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable + components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: network-monitor-agent
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Cargo check (no build artifacts)
+        run: cargo check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy -- -D warnings
+
+      - name: Unit tests
+        run: cargo test

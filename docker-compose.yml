@@ -1,9 +1,9 @@
 version: "3.8"
 
 services:
-  # 1. PostgreSQL DB: 외부에 포트 노출하지 않고 내부망 연결만 허용
+  # 1. PostgreSQL + TimescaleDB — no host port exposed; reachable only on the internal network
   db:
-    image: timescale/timescaledb:latest-pg15 
+    image: timescale/timescaledb:latest-pg15
     restart: unless-stopped
     volumes:
       - ./pgdata:/var/lib/postgresql/data
@@ -13,14 +13,26 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-network_monitor}
     networks:
       - backend-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-network_monitor}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
 
-  # 2. Rust 백엔드 서버 (Ubuntu 24.04 베이스 러너)
+  # 2. Rust backend server
   server:
     build:
       context: ./network-monitor-server
       dockerfile: Dockerfile
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     restart: unless-stopped
     volumes:
       - ./network-monitor-server/.env:/app/.env
@@ -30,8 +42,13 @@ services:
     networks:
       - shared-network
       - backend-internal
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
 
-  # 3. Next.js 프론트엔드 앱 (Standalone)
+  # 3. Next.js frontend (standalone build)
   web:
     build:
       context: ./network-monitor-web
@@ -48,9 +65,16 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}
     networks:
       - shared-network
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
 
 
 networks:
+  # shared-network is expected to be created externally (e.g. by a Cloudflare Tunnel container).
+  # Create it with: docker network create shared-network
   shared-network:
     external: true
   backend-internal:
