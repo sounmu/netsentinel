@@ -27,6 +27,8 @@
 - Public status page (no auth required)
 - Dark mode support with system preference detection
 - i18n: English (default) + Korean
+- HTTP endpoint monitoring (response time, status code, uptime tracking)
+- Ping/TCP reachability monitoring for network devices
 - Zero-Trust deployment via Cloudflare Tunnel (no exposed host ports)
 
 ---
@@ -203,6 +205,18 @@ All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
 | `DELETE` | `/api/notification-channels/{id}` | Delete channel |
 | `POST` | `/api/notification-channels/{id}/test` | Send test notification |
 | `GET` | `/api/alert-history?host_key=&limit=` | Alert event log |
+| `GET` | `/api/http-monitors` | List HTTP monitors |
+| `POST` | `/api/http-monitors` | Create HTTP monitor |
+| `GET` | `/api/http-monitors/summaries` | HTTP monitor summaries |
+| `PUT` | `/api/http-monitors/{id}` | Update HTTP monitor |
+| `DELETE` | `/api/http-monitors/{id}` | Delete HTTP monitor |
+| `GET` | `/api/http-monitors/{id}/results` | HTTP check results |
+| `GET` | `/api/ping-monitors` | List Ping monitors |
+| `POST` | `/api/ping-monitors` | Create Ping monitor |
+| `GET` | `/api/ping-monitors/summaries` | Ping monitor summaries |
+| `PUT` | `/api/ping-monitors/{id}` | Update Ping monitor |
+| `DELETE` | `/api/ping-monitors/{id}` | Delete Ping monitor |
+| `GET` | `/api/ping-monitors/{id}/results` | Ping check results |
 | `GET` | `/api/public/status` | Public status page data **(no auth)** |
 | `GET` | `/api/stream?key=<WEB_API_KEY>` | SSE stream (`metrics` + `status`) |
 
@@ -217,6 +231,10 @@ All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
 | **`alert_configs`** | Alert rules; `NULL host_key` = global default, per-host rows override. Supports cpu/memory/disk metric types. |
 | **`notification_channels`** | Alert delivery targets (Discord webhook, Slack webhook, Email SMTP). Config stored as JSONB. |
 | **`alert_history`** | Immutable log of all alert events with timestamps. |
+| **`http_monitors`** | External HTTP endpoint monitors with check intervals. |
+| **`http_monitor_results`** | HTTP check results (status code, response time, errors). |
+| **`ping_monitors`** | Network host reachability monitors (TCP connect). |
+| **`ping_results`** | Ping check results (RTT, success/failure). |
 
 ---
 
