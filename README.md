@@ -31,6 +31,8 @@
 - Ping/TCP reachability monitoring for network devices
 - Customizable dashboard with pinnable host status, alert feed, and uptime widgets
 - User authentication with Argon2 password hashing and JWT sessions
+- PWA support (installable, offline-capable app shell)
+- Prometheus-compatible `/metrics` endpoint for Grafana integration
 - Zero-Trust deployment via Cloudflare Tunnel (no exposed host ports)
 
 ---
@@ -226,6 +228,7 @@ All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
 | `DELETE` | `/api/ping-monitors/{id}` | Delete Ping monitor |
 | `GET` | `/api/ping-monitors/{id}/results` | Ping check results |
 | `GET` | `/api/public/status` | Public status page data **(no auth)** |
+| `GET` | `/metrics` | Prometheus metrics export **(no auth)** |
 | `GET` | `/api/stream?key=<WEB_API_KEY>` | SSE stream (`metrics` + `status`) |
 
 ---
