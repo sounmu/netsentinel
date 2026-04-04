@@ -1,7 +1,7 @@
-#[cfg(feature = "gpu-nvidia")]
-mod nvidia;
 #[cfg(feature = "gpu-apple")]
 mod apple;
+#[cfg(feature = "gpu-nvidia")]
+mod nvidia;
 
 use crate::GpuInfo;
 

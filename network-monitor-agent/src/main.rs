@@ -15,16 +15,16 @@ use bollard::models::EventMessage;
 use bollard::query_parameters::{EventsOptions, ListContainersOptions};
 use chrono::Utc;
 use chrono_tz::Asia::Seoul;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-use serde::{Deserialize, Serialize};
 use futures_util::StreamExt;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::sync::RwLock;
 use sysinfo::{Components, Disks, Networks, System};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
 // ──────────────────────────────────────────────
 // JWT middleware
@@ -309,7 +309,11 @@ async fn collect_sysinfo() -> SysinfoResult {
                 memory_mb: p.memory() / 1024 / 1024,
             })
             .collect();
-        process_list.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
+        process_list.sort_by(|a, b| {
+            b.cpu_usage
+                .partial_cmp(&a.cpu_usage)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         process_list.truncate(10);
 
         // Temperature sensors
@@ -329,16 +333,33 @@ async fn collect_sysinfo() -> SysinfoResult {
             })
             .collect();
 
-        (cpu_usage, memory_total_mb, memory_used_mb, memory_usage_percent,
-         disks, process_list, temperatures, network, load_average)
+        (
+            cpu_usage,
+            memory_total_mb,
+            memory_used_mb,
+            memory_usage_percent,
+            disks,
+            process_list,
+            temperatures,
+            network,
+            load_average,
+        )
     });
 
     // Await both blocking tasks concurrently — GPU sampling overlaps with CPU delta sleeps.
     let (gpu_result, sys_result) = tokio::join!(gpu_handle, sys_handle);
     let gpus = gpu_result.expect("spawn_blocking panicked in collect_gpu_info");
-    let (cpu_usage, memory_total_mb, memory_used_mb, memory_usage_percent,
-         disks, processes, temperatures, network, load_average) =
-        sys_result.expect("spawn_blocking panicked in collect_sysinfo");
+    let (
+        cpu_usage,
+        memory_total_mb,
+        memory_used_mb,
+        memory_usage_percent,
+        disks,
+        processes,
+        temperatures,
+        network,
+        load_average,
+    ) = sys_result.expect("spawn_blocking panicked in collect_sysinfo");
 
     SysinfoResult {
         cpu_usage,
@@ -658,10 +679,8 @@ async fn metrics_handler(
         .map(|c| c.split(',').map(|s| s.trim().to_string()).collect());
 
     // Run sysinfo (which includes a 200 ms blocking sleep for CPU delta) and port checks in parallel.
-    let (sys_result, port_statuses) = tokio::join!(
-        collect_sysinfo(),
-        collect_ports(monitor_ports),
-    );
+    let (sys_result, port_statuses) =
+        tokio::join!(collect_sysinfo(), collect_ports(monitor_ports),);
 
     // Docker state is served instantly from the in-memory cache — no HTTP I/O.
     let docker_containers = read_docker_cache(&docker_cache, target_containers).await;
@@ -702,13 +721,10 @@ async fn metrics_handler(
 
     // bincode binary serialisation: ~40–70% smaller payload than JSON, near-zero-copy parsing speed.
     // Both agent and server are Rust, so serde-based binary format field-order compatibility is guaranteed.
-    let bytes = bincode::serialize(&metrics)
-        .expect("AgentMetrics bincode serialization should never fail");
+    let bytes =
+        bincode::serialize(&metrics).expect("AgentMetrics bincode serialization should never fail");
 
-    (
-        [(header::CONTENT_TYPE, "application/octet-stream")],
-        bytes,
-    )
+    ([(header::CONTENT_TYPE, "application/octet-stream")], bytes)
 }
 
 // ──────────────────────────────────────────────
@@ -728,7 +744,9 @@ async fn main() -> anyhow::Result<()> {
 
     let jwt_secret = std::env::var("JWT_SECRET")
         .context("JWT_SECRET environment variable is not set. Please check your .env file.")?;
-    DECODING_KEY.set(DecodingKey::from_secret(jwt_secret.as_bytes())).ok();
+    DECODING_KEY
+        .set(DecodingKey::from_secret(jwt_secret.as_bytes()))
+        .ok();
 
     let hostname = System::host_name().unwrap_or_else(|| "unknown".to_string());
 
@@ -750,16 +768,18 @@ async fn main() -> anyhow::Result<()> {
     // events fire — far cheaper than periodic polling.
     tokio::spawn(docker_event_listener(docker_cache.clone()));
 
-    let app = Router::new().route(
-        "/metrics",
-        get({
-            let hostname = hostname.clone();
-            let cache = docker_cache.clone();
-            move |query: Query<MetricsQuery>| async move {
-                metrics_handler(hostname.clone(), cache.clone(), query).await
-            }
-        }),
-    ).layer(middleware::from_fn(auth_middleware));
+    let app = Router::new()
+        .route(
+            "/metrics",
+            get({
+                let hostname = hostname.clone();
+                let cache = docker_cache.clone();
+                move |query: Query<MetricsQuery>| async move {
+                    metrics_handler(hostname.clone(), cache.clone(), query).await
+                }
+            }),
+        )
+        .layer(middleware::from_fn(auth_middleware));
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr)
@@ -783,7 +803,7 @@ async fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 
     // ── Port parsing ─────────────────────────────
 
@@ -798,7 +818,10 @@ mod tests {
 
     #[test]
     fn test_port_parsing_trims_whitespace() {
-        assert_eq!(parse_comma_separated_ports(" 80 , 443 , 3000 "), vec![80, 443, 3000]);
+        assert_eq!(
+            parse_comma_separated_ports(" 80 , 443 , 3000 "),
+            vec![80, 443, 3000]
+        );
     }
 
     #[test]
@@ -846,7 +869,11 @@ mod tests {
             &EncodingKey::from_secret(secret),
         )
         .expect("Token creation failed");
-        let result = decode::<Claims>(&token, &DecodingKey::from_secret(secret), &test_validation());
+        let result = decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret(secret),
+            &test_validation(),
+        );
         assert!(result.is_ok(), "Should succeed with the correct secret");
     }
 
@@ -858,7 +885,11 @@ mod tests {
             &EncodingKey::from_secret(b"correct-secret"),
         )
         .expect("Token creation failed");
-        let result = decode::<Claims>(&token, &DecodingKey::from_secret(b"wrong-secret"), &test_validation());
+        let result = decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret(b"wrong-secret"),
+            &test_validation(),
+        );
         assert!(result.is_err(), "Should fail with the wrong secret");
     }
 
