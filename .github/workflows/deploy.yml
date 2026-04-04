@@ -101,3 +101,18 @@ jobs:
             docker compose up -d --build server web
             docker image prune -f
           EOF
+
+      - name: Verify deployment
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:3000/ > /dev/null 2>&1; then
+                echo "✅ Health check passed (attempt $i)"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "❌ Health check failed after 60s"
+            docker compose -f ~/network-monitor/docker-compose.yml logs --tail=30 server
+            exit 1
+          EOF

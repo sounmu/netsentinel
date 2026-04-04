@@ -34,11 +34,14 @@ pub fn check_jwt_query(token: &str) -> bool {
         || super::user_auth::decode_user_jwt(token).is_some()
 }
 
-pub fn generate_jwt() -> Result<String, jsonwebtoken::errors::Error> {
+pub fn generate_jwt() -> Result<String, AppError> {
     let exp = Utc::now().with_timezone(&Seoul).timestamp() as usize + 60;
     let claims = Claims { exp };
-    let key = ENCODING_KEY.get().expect("ENCODING_KEY not initialized");
+    let key = ENCODING_KEY
+        .get()
+        .ok_or_else(|| AppError::Internal("JWT encoding key not initialized".into()))?;
     encode(&Header::new(Algorithm::HS256), &claims, key)
+        .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
 }
 
 /// Axum extractor that enforces JWT-based authentication:

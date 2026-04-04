@@ -3,6 +3,11 @@ services:
   db:
     image: timescale/timescaledb:latest-pg15
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./pgdata:/var/lib/postgresql/data
     environment:
@@ -33,6 +38,11 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - ./network-monitor-server/.env:/app/.env
     env_file:
@@ -61,6 +71,11 @@ services:
     depends_on:
       - server
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "3001:3000"
     environment:

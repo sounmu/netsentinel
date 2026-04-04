@@ -7,6 +7,7 @@ import { I18nProvider } from "./i18n/I18nContext";
 import { ThemeProvider } from "./theme/ThemeContext";
 import { AuthProvider } from "./auth/AuthContext";
 import ServiceWorkerRegistration from "./components/ServiceWorkerRegistration";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -51,6 +52,7 @@ export default function RootLayout({
         <AuthProvider>
           <ServiceWorkerRegistration />
           <SSEProvider>
+            <ErrorBoundary>
             <div className="dashboard-grid">
               <SidebarShell />
               <main
@@ -63,6 +65,7 @@ export default function RootLayout({
                 {children}
               </main>
             </div>
+            </ErrorBoundary>
           </SSEProvider>
         </AuthProvider>
         </I18nProvider>

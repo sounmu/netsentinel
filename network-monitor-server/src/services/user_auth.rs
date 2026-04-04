@@ -5,6 +5,7 @@ use jsonwebtoken::{Algorithm, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
 use super::auth::{DECODING_KEY, ENCODING_KEY};
+use crate::errors::AppError;
 
 /// JWT claims for authenticated web users.
 /// Distinguished from agent Claims by the presence of `sub` (user ID).
@@ -38,11 +39,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 }
 
 /// Generate a user JWT (24-hour expiry)
-pub fn generate_user_jwt(
-    user_id: i32,
-    username: &str,
-    role: &str,
-) -> Result<String, jsonwebtoken::errors::Error> {
+pub fn generate_user_jwt(user_id: i32, username: &str, role: &str) -> Result<String, AppError> {
     let exp = chrono::Utc::now().timestamp() as usize + 24 * 60 * 60;
     let claims = UserClaims {
         sub: user_id,
@@ -50,8 +47,11 @@ pub fn generate_user_jwt(
         role: role.to_string(),
         exp,
     };
-    let key = ENCODING_KEY.get().expect("ENCODING_KEY not initialized");
+    let key = ENCODING_KEY
+        .get()
+        .ok_or_else(|| AppError::Internal("JWT encoding key not initialized".into()))?;
     encode(&Header::new(Algorithm::HS256), &claims, key)
+        .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
 }
 
 /// Decode and validate a user JWT, returning claims if valid

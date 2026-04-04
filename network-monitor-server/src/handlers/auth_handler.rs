@@ -38,8 +38,7 @@ pub async fn login(
         ));
     }
 
-    let token = user_auth::generate_user_jwt(user.id, &user.username, &user.role)
-        .map_err(|e| AppError::Internal(format!("Failed to generate token: {}", e)))?;
+    let token = user_auth::generate_user_jwt(user.id, &user.username, &user.role)?;
 
     tracing::info!(username = %user.username, "🔐 [Auth] User logged in");
 
@@ -102,8 +101,7 @@ pub async fn setup(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to create user: {}", e)))?;
 
-    let token = user_auth::generate_user_jwt(user.id, &user.username, &user.role)
-        .map_err(|e| AppError::Internal(format!("Failed to generate token: {}", e)))?;
+    let token = user_auth::generate_user_jwt(user.id, &user.username, &user.role)?;
 
     tracing::info!(username = %user.username, "🔐 [Auth] Initial admin account created");
 

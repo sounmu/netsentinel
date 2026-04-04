@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,14 @@ use crate::services::{alert_service, metrics_service};
 const SCRAPE_TIMEOUT_SECS: u64 = 5;
 /// Cooldown to suppress repeated UP/DOWN alert flapping (seconds)
 const FLAP_COOLDOWN_SECS: u64 = 60;
+/// Maximum backoff multiplier (2^4 = 16x base interval → 160s at 10s interval)
+const MAX_BACKOFF_POWER: u32 = 4;
+
+/// Per-host failure tracking for exponential backoff
+struct HostBackoff {
+    consecutive_failures: u32,
+    last_attempt: Instant,
+}
 
 /// Starts the pull-model scraper as a background task.
 /// Reads target list from the `hosts` DB table and alert rules from `alert_configs` each cycle.
@@ -37,14 +46,20 @@ pub fn start_scraper(state: Arc<AppState>) {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         let _ = interval.tick().await; // skip first immediate tick
 
+        let mut backoff_map: HashMap<String, HostBackoff> = HashMap::new();
+
         loop {
             interval.tick().await;
-            scrape_all(&client, &state).await;
+            scrape_all(&client, &state, &mut backoff_map).await;
         }
     });
 }
 
-async fn scrape_all(client: &Client, state: &Arc<AppState>) {
+async fn scrape_all(
+    client: &Client,
+    state: &Arc<AppState>,
+    backoff_map: &mut HashMap<String, HostBackoff>,
+) {
     // Reload the latest host list and alert configs from DB each cycle
     let hosts = match hosts_repo::list_hosts(&state.db_pool).await {
         Ok(h) => h,
@@ -61,32 +76,49 @@ async fn scrape_all(client: &Client, state: &Arc<AppState>) {
     // Pre-register any newly added hosts in last_known_status
     state.pre_populate_status(&hosts);
 
-    let futures = hosts.into_iter().map(|host| {
-        let client = client.clone();
-        let state = state.clone();
-        let alert_config = alert_configs_repo::resolve_alert_config(
-            &host.host_key,
-            host.load_threshold,
-            &alert_map,
-        );
-        let ports: Vec<u16> = host.ports.iter().map(|&p| p as u16).collect();
-        let containers = host.containers.clone();
+    let base_interval = Duration::from_secs(state.scrape_interval_secs);
 
-        async move {
-            let url = host.host_key.clone();
-            let result = scrape_one(
-                &client,
+    let futures = hosts
+        .into_iter()
+        .filter(|host| {
+            // Skip hosts that are in backoff (consecutive failures → exponential wait)
+            if let Some(backoff) = backoff_map.get(&host.host_key)
+                && backoff.consecutive_failures > 0
+            {
+                let power = backoff.consecutive_failures.min(MAX_BACKOFF_POWER);
+                let wait = base_interval * 2u32.pow(power);
+                if backoff.last_attempt.elapsed() < wait {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|host| {
+            let client = client.clone();
+            let state = state.clone();
+            let alert_config = alert_configs_repo::resolve_alert_config(
                 &host.host_key,
-                &host.display_name,
-                &ports,
-                &containers,
-                &alert_config,
-                &state,
-            )
-            .await;
-            (url, result)
-        }
-    });
+                host.load_threshold,
+                &alert_map,
+            );
+            let ports: Vec<u16> = host.ports.iter().map(|&p| p as u16).collect();
+            let containers = host.containers.clone();
+
+            async move {
+                let url = host.host_key.clone();
+                let result = scrape_one(
+                    &client,
+                    &host.host_key,
+                    &host.display_name,
+                    &ports,
+                    &containers,
+                    &alert_config,
+                    &state,
+                )
+                .await;
+                (url, result)
+            }
+        });
 
     let results = stream::iter(futures)
         .buffer_unordered(10)
@@ -96,12 +128,21 @@ async fn scrape_all(client: &Client, state: &Arc<AppState>) {
     let mut success_count = 0;
     let mut fail_count = 0;
 
-    for (url, res) in results {
+    for (url, res) in &results {
         match res {
-            Ok(_) => success_count += 1,
+            Ok(_) => {
+                success_count += 1;
+                backoff_map.remove(url);
+            }
             Err(e) => {
                 tracing::warn!(url = %url, error = %e, "🔴 [Scraper] Target failed");
                 fail_count += 1;
+                let entry = backoff_map.entry(url.clone()).or_insert(HostBackoff {
+                    consecutive_failures: 0,
+                    last_attempt: Instant::now(),
+                });
+                entry.consecutive_failures += 1;
+                entry.last_attempt = Instant::now();
             }
         }
     }
@@ -214,10 +255,9 @@ async fn handle_success(
             Ok(s) => s,
             Err(_) => return,
         };
-        let record = store
-            .hosts
-            .get_mut(target)
-            .expect("HostRecord must exist after process_metrics");
+        let Some(record) = store.hosts.get_mut(target) else {
+            return;
+        };
 
         if record.alert_state.offline_alerted {
             let last_offline = record.alert_state.last_offline_alert;
