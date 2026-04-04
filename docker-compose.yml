@@ -25,6 +25,7 @@ services:
 
   # 2. Rust backend server
   server:
+    image: ghcr.io/sounmu/network-monitor-server:latest
     build:
       context: ./network-monitor-server
       dockerfile: Dockerfile
@@ -34,6 +35,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./network-monitor-server/.env:/app/.env
+    env_file:
+      - ./network-monitor-server/.env
     environment:
       - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-network_monitor}
     ports:
@@ -49,6 +52,7 @@ services:
 
   # 3. Next.js frontend (standalone build)
   web:
+    image: ghcr.io/sounmu/network-monitor-web:latest
     build:
       context: ./network-monitor-web
       dockerfile: Dockerfile

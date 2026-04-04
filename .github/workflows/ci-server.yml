@@ -1,8 +1,6 @@
 name: CI — Server & Agent
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
