@@ -28,9 +28,7 @@ pub async fn create_http_monitor(
     State(state): State<Arc<AppState>>,
     Json(body): Json<http_monitors_repo::CreateHttpMonitorRequest>,
 ) -> Result<Json<http_monitors_repo::HttpMonitor>, AppError> {
-    if body.url.is_empty() {
-        return Err(AppError::BadRequest("URL is required".to_string()));
-    }
+    validate_http_monitor_request(&body.url, body.expected_status, body.interval_secs, body.timeout_ms)?;
     let monitor = http_monitors_repo::create(&state.db_pool, &body).await?;
     tracing::info!(id = monitor.id, url = %monitor.url, "🌐 [HTTP Monitor] Created");
     Ok(Json(monitor))
@@ -43,6 +41,12 @@ pub async fn update_http_monitor(
     Path(id): Path<i32>,
     Json(body): Json<http_monitors_repo::UpdateHttpMonitorRequest>,
 ) -> Result<Json<http_monitors_repo::HttpMonitor>, AppError> {
+    validate_http_monitor_request(
+        body.url.as_deref().unwrap_or("http://placeholder"),
+        body.expected_status,
+        body.interval_secs,
+        body.timeout_ms,
+    )?;
     let monitor = http_monitors_repo::update(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("HTTP monitor {} not found", id)))?;
@@ -107,9 +111,7 @@ pub async fn create_ping_monitor(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ping_monitors_repo::CreatePingMonitorRequest>,
 ) -> Result<Json<ping_monitors_repo::PingMonitor>, AppError> {
-    if body.host.is_empty() {
-        return Err(AppError::BadRequest("Host is required".to_string()));
-    }
+    validate_ping_monitor_request(&body.host, body.interval_secs, body.timeout_ms)?;
     let monitor = ping_monitors_repo::create(&state.db_pool, &body).await?;
     tracing::info!(id = monitor.id, host = %monitor.host, "🏓 [Ping Monitor] Created");
     Ok(Json(monitor))
@@ -122,6 +124,11 @@ pub async fn update_ping_monitor(
     Path(id): Path<i32>,
     Json(body): Json<ping_monitors_repo::UpdatePingMonitorRequest>,
 ) -> Result<Json<ping_monitors_repo::PingMonitor>, AppError> {
+    validate_ping_monitor_request(
+        body.host.as_deref().unwrap_or("placeholder"),
+        body.interval_secs,
+        body.timeout_ms,
+    )?;
     let monitor = ping_monitors_repo::update(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Ping monitor {} not found", id)))?;
@@ -160,4 +167,69 @@ pub async fn get_ping_summaries(
 ) -> Result<Json<Vec<ping_monitors_repo::PingMonitorSummary>>, AppError> {
     let summaries = ping_monitors_repo::get_summaries(&state.db_pool).await?;
     Ok(Json(summaries))
+}
+
+// ──────────────────────────────────────────────
+// Validation helpers
+// ──────────────────────────────────────────────
+
+fn validate_http_monitor_request(
+    url: &str,
+    expected_status: Option<i32>,
+    interval_secs: Option<i32>,
+    timeout_ms: Option<i32>,
+) -> Result<(), AppError> {
+    if url.is_empty() {
+        return Err(AppError::BadRequest("URL is required".into()));
+    }
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(AppError::BadRequest(
+            "URL must start with http:// or https://".into(),
+        ));
+    }
+    if let Some(status) = expected_status
+        && !(100..=599).contains(&status)
+    {
+        return Err(AppError::BadRequest(format!(
+            "expected_status must be between 100 and 599, got {status}"
+        )));
+    }
+    validate_interval_and_timeout(interval_secs, timeout_ms)
+}
+
+fn validate_ping_monitor_request(
+    host: &str,
+    interval_secs: Option<i32>,
+    timeout_ms: Option<i32>,
+) -> Result<(), AppError> {
+    if host.is_empty() {
+        return Err(AppError::BadRequest("Host is required".into()));
+    }
+    if host.len() > 255 {
+        return Err(AppError::BadRequest(
+            "Host must be 255 characters or fewer".into(),
+        ));
+    }
+    validate_interval_and_timeout(interval_secs, timeout_ms)
+}
+
+fn validate_interval_and_timeout(
+    interval_secs: Option<i32>,
+    timeout_ms: Option<i32>,
+) -> Result<(), AppError> {
+    if let Some(interval) = interval_secs
+        && !(10..=3600).contains(&interval)
+    {
+        return Err(AppError::BadRequest(format!(
+            "interval_secs must be between 10 and 3600, got {interval}"
+        )));
+    }
+    if let Some(timeout) = timeout_ms
+        && !(1000..=30000).contains(&timeout)
+    {
+        return Err(AppError::BadRequest(format!(
+            "timeout_ms must be between 1000 and 30000, got {timeout}"
+        )));
+    }
+    Ok(())
 }

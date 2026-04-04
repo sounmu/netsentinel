@@ -25,12 +25,7 @@ pub async fn create_channel(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateChannelRequest>,
 ) -> Result<Json<NotificationChannelRow>, AppError> {
-    if !matches!(body.channel_type.as_str(), "discord" | "slack" | "email") {
-        return Err(AppError::BadRequest(format!(
-            "Unsupported channel_type: {} (must be 'discord', 'slack', or 'email')",
-            body.channel_type
-        )));
-    }
+    validate_channel(&body.channel_type, &body.config)?;
     let channel = notification_channels_repo::create_channel(&state.db_pool, &body).await?;
     tracing::info!(id = channel.id, channel_type = %body.channel_type, "🔔 [Notification] Channel created");
     Ok(Json(channel))
@@ -43,6 +38,13 @@ pub async fn update_channel(
     Path(id): Path<i32>,
     Json(body): Json<UpdateChannelRequest>,
 ) -> Result<Json<NotificationChannelRow>, AppError> {
+    // If config is being updated, validate it against existing channel type
+    if let Some(config) = &body.config {
+        let channels = notification_channels_repo::get_all(&state.db_pool).await?;
+        if let Some(existing) = channels.iter().find(|c| c.id == id) {
+            validate_channel(&existing.channel_type, config)?;
+        }
+    }
     let channel = notification_channels_repo::update_channel(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Notification channel {} not found", id)))?;
@@ -84,4 +86,38 @@ pub async fn test_channel(
         .map_err(AppError::BadRequest)?;
 
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+fn validate_channel(channel_type: &str, config: &serde_json::Value) -> Result<(), AppError> {
+    if !matches!(channel_type, "discord" | "slack" | "email") {
+        return Err(AppError::BadRequest(format!(
+            "Unsupported channel_type: {channel_type} (must be 'discord', 'slack', or 'email')"
+        )));
+    }
+
+    match channel_type {
+        "discord" | "slack" => {
+            let webhook_url = config
+                .get("webhook_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if webhook_url.is_empty() {
+                return Err(AppError::BadRequest(format!(
+                    "{channel_type} channel requires a non-empty 'webhook_url' in config"
+                )));
+            }
+        }
+        "email" => {
+            for field in ["smtp_host", "from", "to"] {
+                let val = config.get(field).and_then(|v| v.as_str()).unwrap_or("");
+                if val.is_empty() {
+                    return Err(AppError::BadRequest(format!(
+                        "Email channel requires a non-empty '{field}' in config"
+                    )));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

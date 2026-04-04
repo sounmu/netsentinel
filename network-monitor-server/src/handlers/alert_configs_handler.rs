@@ -25,12 +25,7 @@ pub async fn update_global_configs(
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
     let mut results = Vec::new();
     for req in &body {
-        if !matches!(req.metric_type.as_str(), "cpu" | "memory" | "disk") {
-            return Err(AppError::BadRequest(format!(
-                "Unsupported metric_type: {} (must be 'cpu', 'memory', or 'disk')",
-                req.metric_type
-            )));
-        }
+        validate_alert_request(req)?;
         let row = alert_configs_repo::upsert_alert_config(&state.db_pool, None, req).await?;
         results.push(row);
     }
@@ -57,12 +52,7 @@ pub async fn update_host_configs(
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
     let mut results = Vec::new();
     for req in &body {
-        if !matches!(req.metric_type.as_str(), "cpu" | "memory" | "disk") {
-            return Err(AppError::BadRequest(format!(
-                "Unsupported metric_type: {}",
-                req.metric_type
-            )));
-        }
+        validate_alert_request(req)?;
         let row =
             alert_configs_repo::upsert_alert_config(&state.db_pool, Some(&host_key), req).await?;
         results.push(row);
@@ -86,4 +76,32 @@ pub async fn delete_host_configs(
     }
     tracing::info!(host_key = %host_key, "🔔 [AlertConfig] Per-host overrides deleted, reverted to global");
     Ok(Json(serde_json::json!({ "deleted": host_key })))
+}
+
+fn validate_alert_request(req: &UpsertAlertRequest) -> Result<(), AppError> {
+    if !matches!(req.metric_type.as_str(), "cpu" | "memory" | "disk") {
+        return Err(AppError::BadRequest(format!(
+            "Unsupported metric_type: {} (must be 'cpu', 'memory', or 'disk')",
+            req.metric_type
+        )));
+    }
+    if !(0.0..=100.0).contains(&req.threshold) {
+        return Err(AppError::BadRequest(format!(
+            "threshold must be between 0 and 100, got {}",
+            req.threshold
+        )));
+    }
+    if req.sustained_secs < 0 || req.sustained_secs > 3600 {
+        return Err(AppError::BadRequest(format!(
+            "sustained_secs must be between 0 and 3600, got {}",
+            req.sustained_secs
+        )));
+    }
+    if req.cooldown_secs < 0 || req.cooldown_secs > 86400 {
+        return Err(AppError::BadRequest(format!(
+            "cooldown_secs must be between 0 and 86400, got {}",
+            req.cooldown_secs
+        )));
+    }
+    Ok(())
 }
