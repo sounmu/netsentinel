@@ -1,0 +1,9 @@
+pub mod alert_configs_handler;
+pub mod alert_history_handler;
+pub mod auth_handler;
+pub mod dashboard_handler;
+pub mod hosts_handler;
+pub mod metrics_handler;
+pub mod monitors_handler;
+pub mod notification_channels_handler;
+pub mod sse_handler;

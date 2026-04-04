@@ -1,0 +1,6 @@
+/target
+/target_linux
+/logs
+.env
+config.yaml
+.DS_Store

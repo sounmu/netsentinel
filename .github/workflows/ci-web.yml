@@ -13,10 +13,8 @@ jobs:
         working-directory: network-monitor-web
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -37,5 +35,4 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # Fallback value keeps the build passing in CI without real config.
           NEXT_PUBLIC_API_URL: http://localhost:3000

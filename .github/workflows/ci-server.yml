@@ -16,10 +16,8 @@ jobs:
         working-directory: network-monitor-server
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Rust stable + components
         uses: dtolnay/rust-toolchain@stable
@@ -51,10 +49,8 @@ jobs:
         working-directory: network-monitor-agent
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Rust stable + components
         uses: dtolnay/rust-toolchain@stable
