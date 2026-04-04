@@ -56,10 +56,12 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("✅ [DB] Connected to PostgreSQL.");
 
-    // ── Initialize tables (metrics, hosts, alert_configs) ──
-    repositories::metrics_repo::init_db(&db_pool)
+    // ── Run database migrations ──
+    sqlx::migrate!()
+        .run(&db_pool)
         .await
-        .context("Failed to initialize database tables")?;
+        .context("Failed to run database migrations")?;
+    tracing::info!("✅ [DB] Migrations applied successfully.");
 
     // ── SSE broadcast channel ──
     let sse_buffer: usize = std::env::var("SSE_BUFFER_SIZE")

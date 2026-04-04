@@ -31,16 +31,12 @@ pub mod kst_date_format {
 }
 
 // ──────────────────────────────────────────────
-// Database initialisation
+// Legacy database initialisation (replaced by sqlx migrations)
 // ──────────────────────────────────────────────
 
-/// Called at server startup — creates tables and converts to a TimescaleDB hypertable.
-///
-/// # Schema design notes
-/// - BIGSERIAL id: monotonically increasing without a PK constraint — required for hypertable compatibility.
-/// - host_key: target-URL-based unique identifier — prevents collisions when multiple agents share the same OS hostname.
-/// - Composite index (host_key, timestamp DESC): optimised for the dashboard time-series query pattern.
-/// - TimescaleDB hypertable: 1-day chunk partitioning + 90-day automatic retention policy.
+/// Legacy init_db — now handled by sqlx::migrate!() in main.rs.
+/// Kept for reference; migration files are in migrations/ directory.
+#[allow(dead_code)]
 #[tracing::instrument(skip(pool))]
 pub async fn init_db(pool: &PgPool) -> Result<(), sqlx::Error> {
     // Enable the TimescaleDB extension (must run before hypertable conversion)

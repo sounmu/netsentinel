@@ -141,7 +141,20 @@ cd network-monitor-server
 cargo test
 ```
 
-Existing tests cover JWT generation/validation (`src/services/auth.rs`) and alert-threshold logic (`src/services/metrics_service.rs`).
+Existing tests cover JWT generation/validation (`src/services/auth.rs`), alert-threshold logic (`src/services/metrics_service.rs`), and input validation (`src/handlers/`).
+
+### Database migrations
+
+Schema changes use [sqlx migrations](https://docs.rs/sqlx/latest/sqlx/macro.migrate.html). Migrations run automatically on server startup.
+
+```bash
+# To add a new migration:
+# 1. Create a new numbered SQL file:
+touch network-monitor-server/migrations/005_your_change.sql
+# 2. Write idempotent SQL (use IF NOT EXISTS, IF EXISTS, etc.)
+# 3. Never modify existing migration files — always create new ones
+# 4. Migrations are embedded at compile time via sqlx::migrate!()
+```
 
 ### Web unit tests
 
