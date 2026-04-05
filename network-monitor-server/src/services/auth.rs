@@ -115,9 +115,7 @@ where
             .ok_or_else(|| AppError::Unauthorized("Invalid or expired token".to_string()))?;
 
         if claims.role != "admin" {
-            return Err(AppError::Unauthorized(
-                "Admin access required".to_string(),
-            ));
+            return Err(AppError::Unauthorized("Admin access required".to_string()));
         }
 
         Ok(AdminGuard)

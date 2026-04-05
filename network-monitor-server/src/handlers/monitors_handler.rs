@@ -28,7 +28,12 @@ pub async fn create_http_monitor(
     State(state): State<Arc<AppState>>,
     Json(body): Json<http_monitors_repo::CreateHttpMonitorRequest>,
 ) -> Result<Json<http_monitors_repo::HttpMonitor>, AppError> {
-    validate_http_monitor_request(&body.url, body.expected_status, body.interval_secs, body.timeout_ms)?;
+    validate_http_monitor_request(
+        &body.url,
+        body.expected_status,
+        body.interval_secs,
+        body.timeout_ms,
+    )?;
     let monitor = http_monitors_repo::create(&state.db_pool, &body).await?;
     tracing::info!(id = monitor.id, url = %monitor.url, "🌐 [HTTP Monitor] Created");
     Ok(Json(monitor))
@@ -240,7 +245,10 @@ mod tests {
 
     #[test]
     fn test_valid_http_monitor() {
-        assert!(validate_http_monitor_request("http://example.com", Some(200), Some(60), Some(5000)).is_ok());
+        assert!(
+            validate_http_monitor_request("http://example.com", Some(200), Some(60), Some(5000))
+                .is_ok()
+        );
         assert!(validate_http_monitor_request("https://example.com", None, None, None).is_ok());
     }
 

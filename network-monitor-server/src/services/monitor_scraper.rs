@@ -91,18 +91,18 @@ async fn handle_monitor_alert(
     name: &str,
     error: Option<String>,
 ) {
-    let entry = alert_state.entry(key.to_string()).or_insert(MonitorAlertState {
-        is_failing: false,
-        last_alert: None,
-    });
+    let entry = alert_state
+        .entry(key.to_string())
+        .or_insert(MonitorAlertState {
+            is_failing: false,
+            last_alert: None,
+        });
 
     let cooldown = Duration::from_secs(MONITOR_ALERT_COOLDOWN_SECS);
 
     if let Some(err_msg) = error {
         // Failure: send alert if cooldown has passed
-        let should_alert = entry
-            .last_alert
-            .is_none_or(|t| t.elapsed() >= cooldown);
+        let should_alert = entry.last_alert.is_none_or(|t| t.elapsed() >= cooldown);
 
         if should_alert {
             let monitor_type = if key.starts_with("http:") {
@@ -115,13 +115,8 @@ async fn handle_monitor_alert(
                 monitor_type, name, err_msg
             );
             alert_service::send_alert(&state.http_client, &state.db_pool, &msg).await;
-            let _ = alert_history_repo::insert_alert(
-                &state.db_pool,
-                key,
-                "monitor_down",
-                &msg,
-            )
-            .await;
+            let _ =
+                alert_history_repo::insert_alert(&state.db_pool, key, "monitor_down", &msg).await;
             entry.last_alert = Some(Instant::now());
         }
         entry.is_failing = true;
@@ -137,13 +132,8 @@ async fn handle_monitor_alert(
             monitor_type, name
         );
         alert_service::send_alert(&state.http_client, &state.db_pool, &msg).await;
-        let _ = alert_history_repo::insert_alert(
-            &state.db_pool,
-            key,
-            "monitor_recovery",
-            &msg,
-        )
-        .await;
+        let _ =
+            alert_history_repo::insert_alert(&state.db_pool, key, "monitor_recovery", &msg).await;
         entry.is_failing = false;
         entry.last_alert = None;
     }
@@ -241,26 +231,16 @@ async fn check_ping_host(
         }
         Ok(Err(e)) => {
             let error_msg = e.to_string();
-            let _ = ping_monitors_repo::insert_result(
-                pool,
-                monitor.id,
-                None,
-                false,
-                Some(&error_msg),
-            )
-            .await;
+            let _ =
+                ping_monitors_repo::insert_result(pool, monitor.id, None, false, Some(&error_msg))
+                    .await;
             Some(error_msg)
         }
         Err(_) => {
             let error_msg = format!("Timeout after {}ms", monitor.timeout_ms);
-            let _ = ping_monitors_repo::insert_result(
-                pool,
-                monitor.id,
-                None,
-                false,
-                Some(&error_msg),
-            )
-            .await;
+            let _ =
+                ping_monitors_repo::insert_result(pool, monitor.id, None, false, Some(&error_msg))
+                    .await;
             Some(error_msg)
         }
     }
