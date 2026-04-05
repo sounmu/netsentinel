@@ -33,6 +33,10 @@
 - User authentication with Argon2 password hashing and JWT sessions
 - PWA support (installable, offline-capable app shell)
 - Prometheus-compatible `/metrics` endpoint for Grafana integration
+- Monitor failure alerting (HTTP/Ping failures trigger notifications)
+- Admin role enforcement on mutation endpoints
+- Login rate limiting (10 attempts per 5 minutes per IP)
+- Graceful shutdown (SIGTERM/SIGINT handling on server and agent)
 - Zero-Trust deployment via Cloudflare Tunnel (no exposed host ports)
 
 ---
@@ -64,8 +68,8 @@ graph LR
 ```
 network-monitor/
 ├── network-monitor-server/   # Rust/Axum backend (metrics API, scraper, alerts)
-├── network-monitor-web/      # Next.js frontend dashboard (git submodule)
-└── network-monitor-agent/    # Rust agent daemon (git submodule)
+├── network-monitor-web/      # Next.js frontend dashboard
+└── network-monitor-agent/    # Rust agent daemon
 ```
 
 ---
@@ -76,10 +80,10 @@ network-monitor/
 - Docker & Docker Compose
 - A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) token (optional — remove the `tunnel` service for local-only use)
 
-### 1. Clone with submodules
+### 1. Clone the repository
 
 ```bash
-git clone --recurse-submodules https://github.com/sounmu/network-monitor.git
+git clone https://github.com/sounmu/network-monitor.git
 cd network-monitor
 ```
 
@@ -93,8 +97,6 @@ cp network-monitor-server/.env.example network-monitor-server/.env
 Edit both `.env` files and fill in:
 - `POSTGRES_PASSWORD` — strong password for PostgreSQL
 - `JWT_SECRET` — 32+ byte random hex (`openssl rand -hex 32`)
-- `WEB_API_KEY` — random string for dashboard auth
-- `DISCORD_WEBHOOK_URL` — your Discord incoming webhook URL
 - `CLOUDFLARE_TUNNEL_TOKEN` — from Cloudflare Zero Trust dashboard
 
 ### 3. Create the shared Docker network
@@ -156,7 +158,6 @@ cargo run
 | `POSTGRES_DB` | No | `network_monitor` | DB name |
 | `CLOUDFLARE_TUNNEL_TOKEN` | No | — | Cloudflare Tunnel token |
 | `NEXT_PUBLIC_API_URL` | No | `http://localhost:3000` | Backend URL seen by browser |
-| `NEXT_PUBLIC_WEB_API_KEY` | **Yes** | — | Dashboard auth key |
 
 ### Server `network-monitor-server/.env`
 
@@ -164,8 +165,6 @@ cargo run
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL connection string |
 | `JWT_SECRET` | **Yes** | — | HS256 secret for agent JWT auth |
-| `WEB_API_KEY` | **Yes** | — | Static API key for dashboard |
-| `DISCORD_WEBHOOK_URL` | No | — | Discord webhook for alerts (env-based) |
 | `ALLOWED_ORIGINS` | No | `http://localhost:3001` | Comma-separated CORS origins |
 | `SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `SERVER_PORT` | No | `3000` | Bind port |
@@ -180,13 +179,12 @@ cargo run
 | `JWT_SECRET` | **Yes** | — | Must match server's `JWT_SECRET` |
 | `AGENT_PORT` | No | `9100` | Port the agent HTTP server listens on |
 | `AGENT_HOSTNAME` | No | OS hostname | Display name shown in dashboard |
-| `MONITOR_PORTS` | No | `80,443` | Comma-separated ports to check |
 
 ---
 
 ## API Endpoints
 
-All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
+All endpoints require `Authorization: Bearer <JWT>` unless noted. Mutation endpoints require admin role.
 
 | Method | Path | Description |
 |---|---|---|
@@ -194,6 +192,8 @@ All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
 | `POST` | `/api/auth/setup` | Create initial admin **(no auth, first run only)** |
 | `GET` | `/api/auth/me` | Current user info |
 | `GET` | `/api/auth/status` | Check if setup needed **(no auth)** |
+| `PUT` | `/api/auth/password` | Change current user's password |
+| `GET` | `/api/health` | Health check — verifies DB **(no auth)** |
 | `GET` | `/api/dashboard` | Get user's dashboard layout |
 | `PUT` | `/api/dashboard` | Save user's dashboard layout |
 | `GET` | `/api/hosts` | List all hosts with online status |
@@ -229,7 +229,7 @@ All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
 | `GET` | `/api/ping-monitors/{id}/results` | Ping check results |
 | `GET` | `/api/public/status` | Public status page data **(no auth)** |
 | `GET` | `/metrics` | Prometheus metrics export **(no auth)** |
-| `GET` | `/api/stream?key=<WEB_API_KEY>` | SSE stream (`metrics` + `status`) |
+| `GET` | `/api/stream?key=<JWT>` | SSE stream (`metrics` + `status`) |
 
 ---
 
@@ -243,11 +243,11 @@ All endpoints require `Authorization: Bearer <JWT or WEB_API_KEY>` unless noted.
 | **`notification_channels`** | Alert delivery targets (Discord webhook, Slack webhook, Email SMTP). Config stored as JSONB. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSONB). |
 | **`users`** | User accounts with Argon2 password hashing. Roles: admin, viewer. |
-| **`alert_history`** | Immutable log of all alert events with timestamps. |
+| **`alert_history`** | Immutable log of all alert events with timestamps. TimescaleDB hypertable, 90-day retention. |
 | **`http_monitors`** | External HTTP endpoint monitors with check intervals. |
-| **`http_monitor_results`** | HTTP check results (status code, response time, errors). |
+| **`http_monitor_results`** | HTTP check results (status code, response time, errors). TimescaleDB hypertable, 90-day retention. |
 | **`ping_monitors`** | Network host reachability monitors (TCP connect). |
-| **`ping_results`** | Ping check results (RTT, success/failure). |
+| **`ping_results`** | Ping check results (RTT, success/failure). TimescaleDB hypertable, 90-day retention. |
 
 ---
 

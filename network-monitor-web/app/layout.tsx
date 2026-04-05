@@ -47,6 +47,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
+        <a href="#main-content" className="skip-to-content">Skip to content</a>
         <ThemeProvider>
         <I18nProvider>
         <AuthProvider>
@@ -56,6 +57,7 @@ export default function RootLayout({
             <div className="dashboard-grid">
               <SidebarShell />
               <main
+                id="main-content"
                 style={{
                   overflowY: "auto",
                   minHeight: "100vh",

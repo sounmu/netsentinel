@@ -31,8 +31,8 @@ Thank you for your interest in contributing! This document covers everything you
 ## Getting Started
 
 ```bash
-# 1. Clone the repository with all submodules
-git clone --recurse-submodules https://github.com/<owner>/network-monitor.git
+# 1. Clone the repository
+git clone https://github.com/<owner>/network-monitor.git
 cd network-monitor
 
 # 2. Copy environment template and fill in your values
@@ -94,7 +94,7 @@ cargo run
 ```bash
 cd network-monitor-web
 npm install
-cp .env.example .env.local    # set NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WEB_API_KEY
+cp .env.example .env.local    # set NEXT_PUBLIC_API_URL
 npm run dev                   # starts on http://localhost:3001
 ```
 
@@ -141,7 +141,7 @@ cd network-monitor-server
 cargo test
 ```
 
-Existing tests cover JWT generation/validation (`src/services/auth.rs`), alert-threshold logic (`src/services/metrics_service.rs`), and input validation (`src/handlers/`).
+Existing tests cover JWT generation/validation (`src/services/auth.rs`), alert-threshold logic (`src/services/metrics_service.rs`), and input validation (`src/handlers/`). There are 91 tests total across the project: server (51), agent (9), web (31).
 
 ### Database migrations
 
@@ -150,7 +150,7 @@ Schema changes use [sqlx migrations](https://docs.rs/sqlx/latest/sqlx/macro.migr
 ```bash
 # To add a new migration:
 # 1. Create a new numbered SQL file:
-touch network-monitor-server/migrations/005_your_change.sql
+touch network-monitor-server/migrations/006_your_change.sql
 # 2. Write idempotent SQL (use IF NOT EXISTS, IF EXISTS, etc.)
 # 3. Never modify existing migration files — always create new ones
 # 4. Migrations are embedded at compile time via sqlx::migrate!()

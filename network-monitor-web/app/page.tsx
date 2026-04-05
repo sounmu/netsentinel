@@ -58,6 +58,8 @@ export default function HomePage() {
         <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
           {t.overview.description}
           <span
+            role="status"
+            aria-live="polite"
             style={{
               marginLeft: 8,
               fontSize: 12,

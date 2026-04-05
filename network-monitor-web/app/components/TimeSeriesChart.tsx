@@ -489,7 +489,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       <div className="chart-grid">
         <MiniChartCard
           title={t.chart.cpuUsage}
-          color="#3B82F6"
+          color="var(--accent-blue)"
           isLoading={isInitialLoading}
           data={cpuData}
           dataKey="CPU (%)"
@@ -500,7 +500,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
         <MiniChartCard
           title={t.chart.ramUsage}
-          color="#06B6D4"
+          color="var(--accent-cyan)"
           isLoading={isInitialLoading}
           data={ramData}
           dataKey="RAM (%)"
@@ -511,7 +511,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
         <MiniChartCard
           title="Network In (RX)"
-          color="#10B981"
+          color="var(--accent-green)"
           isLoading={isInitialLoading}
           data={rxData}
           dataKey="RX"
@@ -522,7 +522,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
         <MiniChartCard
           title="Network Out (TX)"
-          color="#F59E0B"
+          color="var(--accent-yellow)"
           isLoading={isInitialLoading}
           data={txData}
           dataKey="TX"
@@ -533,8 +533,8 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
         <MiniChartCard
           title="Load Average"
-          color="#3B82F6"
-          colors={["#3B82F6", "#8B5CF6", "#F59E0B"]}
+          color="var(--accent-blue)"
+          colors={["var(--accent-blue)", "var(--accent-purple)", "var(--accent-yellow)"]}
           isLoading={isInitialLoading}
           data={loadData}
           dataKey={[t.chart.load1m, t.chart.load5m, t.chart.load15m]}
