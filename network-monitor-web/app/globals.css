@@ -164,12 +164,13 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px var(--shadow-sm);
   transition: all 0.2s ease;
 }
 
 .glass-card:hover {
   border-color: var(--border-glow);
-  box-shadow: 0 1px 3px var(--shadow-sm);
+  box-shadow: 0 2px 8px var(--shadow-md);
 }
 
 /* Status Badge */
