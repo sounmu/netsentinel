@@ -6,15 +6,22 @@ use chrono::Utc;
 use chrono_tz::Asia::Seoul;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock, RwLock};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub exp: usize,
+    /// Audience claim — "agent" for agent tokens (token type separation)
+    #[serde(default)]
+    pub aud: String,
 }
 
 pub static ENCODING_KEY: OnceLock<EncodingKey> = OnceLock::new();
 pub static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
+/// Global reference to the password_changed_at cache (set once from main.rs).
+/// AuthGuard/AdminGuard use this to reject tokens issued before a password change.
+static PASSWORD_CHANGED_CACHE: OnceLock<Arc<RwLock<HashMap<i32, i64>>>> = OnceLock::new();
 
 pub fn init_encoding_key(secret: &str) {
     let key = EncodingKey::from_secret(secret.as_bytes());
@@ -23,20 +30,63 @@ pub fn init_encoding_key(secret: &str) {
     let _ = DECODING_KEY.set(dk);
 }
 
+/// Initialize the password change cache reference (called from main.rs).
+pub fn init_password_changed_cache(cache: Arc<RwLock<HashMap<i32, i64>>>) {
+    let _ = PASSWORD_CHANGED_CACHE.set(cache);
+}
+
+/// Update the password_changed_at timestamp for a user (called on password change).
+pub fn update_password_changed_at(user_id: i32, timestamp: i64) {
+    if let Some(cache) = PASSWORD_CHANGED_CACHE.get()
+        && let Ok(mut map) = cache.write()
+    {
+        map.insert(user_id, timestamp);
+    }
+}
+
+/// Check if a user JWT's `iat` is after the last password change.
+/// Returns true if the token is still valid (not revoked by password change).
+fn is_token_valid_after_password_change(user_id: i32, iat: usize) -> bool {
+    let Some(cache) = PASSWORD_CHANGED_CACHE.get() else {
+        return true; // Cache not initialized — allow (graceful degradation)
+    };
+    let Ok(map) = cache.read() else {
+        return true; // Lock poisoned — allow
+    };
+    match map.get(&user_id) {
+        Some(&changed_at) => (iat as i64) >= changed_at,
+        None => true, // No record — user hasn't changed password, allow
+    }
+}
+
 /// Validate a JWT token passed as a query parameter (for SSE — EventSource cannot set headers).
 /// Accepts both agent JWTs (Claims) and user JWTs (UserClaims).
 pub fn check_jwt_query(token: &str) -> bool {
     let Some(dk) = DECODING_KEY.get() else {
         return false;
     };
-    let validation = Validation::new(Algorithm::HS256);
-    decode::<Claims>(token, dk, &validation).is_ok()
-        || super::user_auth::decode_user_jwt(token).is_some()
+    let mut agent_validation = Validation::new(Algorithm::HS256);
+    agent_validation.set_audience(&["agent"]);
+    if decode::<Claims>(token, dk, &agent_validation).is_ok() {
+        return true;
+    }
+    // Fallback: accept agent tokens without aud (legacy agents) via permissive validation
+    let mut legacy_validation = Validation::new(Algorithm::HS256);
+    legacy_validation.validate_aud = false;
+    if let Ok(data) = decode::<Claims>(token, dk, &legacy_validation)
+        && data.claims.aud.is_empty()
+    {
+        return true;
+    }
+    super::user_auth::decode_user_jwt(token).is_some()
 }
 
 pub fn generate_jwt() -> Result<String, AppError> {
     let exp = Utc::now().with_timezone(&Seoul).timestamp() as usize + 60;
-    let claims = Claims { exp };
+    let claims = Claims {
+        exp,
+        aud: "agent".to_string(),
+    };
     let key = ENCODING_KEY
         .get()
         .ok_or_else(|| AppError::Internal("JWT encoding key not initialized".into()))?;
@@ -69,18 +119,32 @@ where
             AppError::Unauthorized("Authorization header must use Bearer scheme".to_string())
         })?;
 
-        // Try agent JWT first, then user JWT
+        // Try agent JWT first (with aud: "agent"), then legacy agent (no aud), then user JWT
         let decoding_key = DECODING_KEY
             .get()
             .ok_or_else(|| AppError::Internal("DECODING_KEY not initialized".to_string()))?;
-        let validation = Validation::new(Algorithm::HS256);
 
-        if decode::<Claims>(token, decoding_key, &validation).is_ok() {
+        let mut agent_validation = Validation::new(Algorithm::HS256);
+        agent_validation.set_audience(&["agent"]);
+        if decode::<Claims>(token, decoding_key, &agent_validation).is_ok() {
+            return Ok(AuthGuard);
+        }
+        // Legacy agent tokens without aud claim
+        let mut legacy_validation = Validation::new(Algorithm::HS256);
+        legacy_validation.validate_aud = false;
+        if let Ok(data) = decode::<Claims>(token, decoding_key, &legacy_validation)
+            && data.claims.aud.is_empty()
+        {
             return Ok(AuthGuard);
         }
 
-        // User JWT (different claims structure)
-        if super::user_auth::decode_user_jwt(token).is_some() {
+        // User JWT (different claims structure) — also check password revocation
+        if let Some(claims) = super::user_auth::decode_user_jwt(token) {
+            if !is_token_valid_after_password_change(claims.sub, claims.iat) {
+                return Err(AppError::Unauthorized(
+                    "Token revoked (password changed)".to_string(),
+                ));
+            }
             return Ok(AuthGuard);
         }
 
@@ -114,6 +178,12 @@ where
         let claims = super::user_auth::decode_user_jwt(token)
             .ok_or_else(|| AppError::Unauthorized("Invalid or expired token".to_string()))?;
 
+        if !is_token_valid_after_password_change(claims.sub, claims.iat) {
+            return Err(AppError::Unauthorized(
+                "Token revoked (password changed)".to_string(),
+            ));
+        }
+
         if claims.role != "admin" {
             return Err(AppError::Unauthorized("Admin access required".to_string()));
         }
@@ -137,6 +207,7 @@ mod tests {
     fn test_validation() -> Validation {
         let mut v = Validation::new(Algorithm::HS256);
         v.validate_exp = false;
+        v.set_audience(&["agent"]);
         v
     }
 
@@ -169,7 +240,10 @@ mod tests {
         use jsonwebtoken::{EncodingKey, Header, encode};
         let token = encode(
             &Header::new(Algorithm::HS256),
-            &Claims { exp: usize::MAX },
+            &Claims {
+                exp: usize::MAX,
+                aud: "agent".to_string(),
+            },
             &EncodingKey::from_secret(b"correct-secret"),
         )
         .expect("Token creation failed");

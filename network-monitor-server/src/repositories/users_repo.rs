@@ -91,10 +91,26 @@ pub async fn update_password(
     user_id: i32,
     new_password_hash: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2")
-        .bind(new_password_hash)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2",
+    )
+    .bind(new_password_hash)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+/// Load password_changed_at timestamps for all users (startup cache population).
+pub async fn load_password_changed_at(
+    pool: &PgPool,
+) -> Result<std::collections::HashMap<i32, i64>, sqlx::Error> {
+    let rows: Vec<(i32, DateTime<Utc>)> =
+        sqlx::query_as("SELECT id, password_changed_at FROM users")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, ts)| (id, ts.timestamp()))
+        .collect())
 }

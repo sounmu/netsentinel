@@ -31,6 +31,14 @@ pub struct AppState {
     pub metrics_query_cache: Arc<MetricsQueryCache>,
     /// Per-IP login attempt rate limiter
     pub login_rate_limiter: Arc<LoginRateLimiter>,
+    /// Number of trusted reverse proxies in front of the server.
+    /// When 0, X-Forwarded-For is ignored and the peer socket IP is used.
+    /// When >0, the Nth IP from the right of X-Forwarded-For is used.
+    pub trusted_proxy_count: usize,
+    /// Cache of password_changed_at timestamps (user_id → unix timestamp).
+    /// Used to reject JWTs issued before the last password change.
+    /// Populated on startup from DB, updated on password change.
+    pub password_changed_at: Arc<RwLock<HashMap<i32, i64>>>,
 }
 
 impl AppState {

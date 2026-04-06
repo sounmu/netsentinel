@@ -50,7 +50,8 @@ impl IntoResponse for AppError {
         match self {
             AppError::Internal(msg) => {
                 tracing::error!(error = %msg, status = 500, "Internal Server Error");
-                (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+                // Return generic message — never expose internal details (DB errors, paths, etc.)
+                (StatusCode::INTERNAL_SERVER_ERROR, "Internal server error").into_response()
             }
             AppError::NotFound(msg) => {
                 tracing::warn!(error = %msg, status = 404, "Not Found");

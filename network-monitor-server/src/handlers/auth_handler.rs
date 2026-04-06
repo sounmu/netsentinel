@@ -1,7 +1,8 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::HeaderMap;
 use serde::Deserialize;
 
@@ -23,20 +24,38 @@ pub struct LoginResponse {
     pub user: UserInfo,
 }
 
+/// Extract the client IP address, accounting for trusted reverse proxies.
+///
+/// When `trusted_proxy_count == 0`, ignores X-Forwarded-For (prevents spoofing)
+/// and uses the peer socket address. When `> 0`, takes the Nth IP from the
+/// **right** of X-Forwarded-For (proxies append left-to-right, so the rightmost
+/// entries are from infrastructure the operator controls).
+fn extract_client_ip(
+    headers: &HeaderMap,
+    peer_addr: &SocketAddr,
+    trusted_proxy_count: usize,
+) -> String {
+    if trusted_proxy_count == 0 {
+        return peer_addr.ip().to_string();
+    }
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
+        if ips.len() >= trusted_proxy_count {
+            return ips[ips.len() - trusted_proxy_count].to_string();
+        }
+    }
+    peer_addr.ip().to_string()
+}
+
 /// POST /api/auth/login — authenticate with username/password, returns JWT
 pub async fn login(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AppError> {
-    // Rate limit by client IP (X-Forwarded-For for reverse proxy, fallback to peer addr)
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .unwrap_or("unknown")
-        .trim()
-        .to_string();
+    // Rate limit by client IP (secure extraction, immune to X-Forwarded-For spoofing)
+    let ip = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
 
     if let Err(retry_after) = state.login_rate_limiter.check(&ip) {
         tracing::warn!(ip = %ip, "🔒 [Auth] Login rate limited");
@@ -105,11 +124,10 @@ pub async fn setup(
         ));
     }
 
-    if body.username.is_empty() || body.password.len() < 6 {
-        return Err(AppError::BadRequest(
-            "Username is required and password must be at least 6 characters".to_string(),
-        ));
+    if body.username.is_empty() {
+        return Err(AppError::BadRequest("Username is required".to_string()));
     }
+    validate_password(&body.password)?;
 
     let password_hash = user_auth::hash_password(&body.password)
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {}", e)))?;
@@ -151,11 +169,7 @@ pub async fn change_password(
     headers: HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    if body.new_password.len() < 6 {
-        return Err(AppError::BadRequest(
-            "New password must be at least 6 characters".to_string(),
-        ));
-    }
+    validate_password(&body.new_password)?;
 
     let token = headers
         .get("Authorization")
@@ -181,6 +195,29 @@ pub async fn change_password(
 
     users_repo::update_password(&state.db_pool, user.id, &new_hash).await?;
 
-    tracing::info!(username = %user.username, "🔐 [Auth] Password changed");
+    // Invalidate all existing tokens by updating password_changed_at cache
+    let now = chrono::Utc::now().timestamp();
+    crate::services::auth::update_password_changed_at(user.id, now);
+
+    tracing::info!(username = %user.username, "🔐 [Auth] Password changed — existing tokens revoked");
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+/// Validate password strength: min 8 chars, uppercase, lowercase, digit, special char.
+fn validate_password(password: &str) -> Result<(), AppError> {
+    if password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".to_string(),
+        ));
+    }
+    let has_upper = password.chars().any(|c| c.is_uppercase());
+    let has_lower = password.chars().any(|c| c.is_lowercase());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    let has_special = password.chars().any(|c| !c.is_alphanumeric());
+    if !has_upper || !has_lower || !has_digit || !has_special {
+        return Err(AppError::BadRequest(
+            "Password must contain uppercase, lowercase, digit, and special character".to_string(),
+        ));
+    }
+    Ok(())
 }

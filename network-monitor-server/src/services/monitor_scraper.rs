@@ -145,6 +145,12 @@ async fn check_http_endpoint(
     client: &reqwest::Client,
     monitor: &http_monitors_repo::HttpMonitor,
 ) -> Option<String> {
+    // Defense-in-depth: re-validate URL at runtime (catches pre-existing DB entries)
+    if let Err(e) = super::url_validator::validate_url(&monitor.url, &["http", "https"]).await {
+        tracing::warn!(monitor_id = monitor.id, url = %monitor.url, "⚠️ [HTTP Monitor] SSRF blocked: {e}");
+        return Some(format!("SSRF blocked: {e}"));
+    }
+
     let timeout = Duration::from_millis(monitor.timeout_ms.max(1000) as u64);
     let start = Instant::now();
 
@@ -211,6 +217,12 @@ async fn check_ping_host(
     pool: &sqlx::PgPool,
     monitor: &ping_monitors_repo::PingMonitor,
 ) -> Option<String> {
+    // Defense-in-depth: re-validate host at runtime (catches pre-existing DB entries)
+    if let Err(e) = super::url_validator::validate_host(&monitor.host).await {
+        tracing::warn!(monitor_id = monitor.id, host = %monitor.host, "⚠️ [Ping Monitor] SSRF blocked: {e}");
+        return Some(format!("SSRF blocked: {e}"));
+    }
+
     let timeout = Duration::from_millis(monitor.timeout_ms.max(1000) as u64);
 
     // Use tokio TCP connect as a cross-platform "ping" alternative.

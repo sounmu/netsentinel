@@ -34,6 +34,7 @@ pub async fn create_http_monitor(
         body.interval_secs,
         body.timeout_ms,
     )?;
+    validate_monitor_url_ssrf(&body.url).await?;
     let monitor = http_monitors_repo::create(&state.db_pool, &body).await?;
     tracing::info!(id = monitor.id, url = %monitor.url, "🌐 [HTTP Monitor] Created");
     Ok(Json(monitor))
@@ -52,6 +53,9 @@ pub async fn update_http_monitor(
         body.interval_secs,
         body.timeout_ms,
     )?;
+    if let Some(url) = &body.url {
+        validate_monitor_url_ssrf(url).await?;
+    }
     let monitor = http_monitors_repo::update(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("HTTP monitor {} not found", id)))?;
@@ -117,6 +121,7 @@ pub async fn create_ping_monitor(
     Json(body): Json<ping_monitors_repo::CreatePingMonitorRequest>,
 ) -> Result<Json<ping_monitors_repo::PingMonitor>, AppError> {
     validate_ping_monitor_request(&body.host, body.interval_secs, body.timeout_ms)?;
+    validate_monitor_host_ssrf(&body.host).await?;
     let monitor = ping_monitors_repo::create(&state.db_pool, &body).await?;
     tracing::info!(id = monitor.id, host = %monitor.host, "🏓 [Ping Monitor] Created");
     Ok(Json(monitor))
@@ -134,6 +139,9 @@ pub async fn update_ping_monitor(
         body.interval_secs,
         body.timeout_ms,
     )?;
+    if let Some(host) = &body.host {
+        validate_monitor_host_ssrf(host).await?;
+    }
     let monitor = ping_monitors_repo::update(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Ping monitor {} not found", id)))?;
@@ -177,6 +185,20 @@ pub async fn get_ping_summaries(
 // ──────────────────────────────────────────────
 // Validation helpers
 // ──────────────────────────────────────────────
+
+/// SSRF protection: validate HTTP monitor URL resolves to public IPs only.
+async fn validate_monitor_url_ssrf(url: &str) -> Result<(), AppError> {
+    crate::services::url_validator::validate_url(url, &["http", "https"])
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Monitor URL rejected: {e}")))
+}
+
+/// SSRF protection: validate ping monitor host resolves to public IPs only.
+async fn validate_monitor_host_ssrf(host: &str) -> Result<(), AppError> {
+    crate::services::url_validator::validate_host(host)
+        .await
+        .map_err(|e| AppError::BadRequest(format!("Monitor host rejected: {e}")))
+}
 
 fn validate_http_monitor_request(
     url: &str,

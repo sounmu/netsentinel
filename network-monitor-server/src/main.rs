@@ -34,7 +34,14 @@ async fn main() -> anyhow::Result<()> {
 
     let jwt_secret =
         std::env::var("JWT_SECRET").context("JWT_SECRET environment variable is not set")?;
+    if jwt_secret.len() < 32 {
+        anyhow::bail!("JWT_SECRET must be at least 32 characters for adequate security");
+    }
     services::auth::init_encoding_key(&jwt_secret);
+
+    // ── Load password_changed_at cache for token revocation ──
+    let password_changed_cache = Arc::new(RwLock::new(HashMap::<i32, i64>::new()));
+    services::auth::init_password_changed_cache(Arc::clone(&password_changed_cache));
 
     // ── Optional environment variables with defaults ──
     let scrape_interval_secs: u64 = std::env::var("SCRAPE_INTERVAL_SECS")
@@ -75,6 +82,11 @@ async fn main() -> anyhow::Result<()> {
         std::time::Duration::from_secs(120),
     ));
 
+    let trusted_proxy_count: usize = std::env::var("TRUSTED_PROXY_COUNT")
+        .unwrap_or_else(|_| "0".to_string())
+        .parse()
+        .unwrap_or(0);
+
     let state = Arc::new(AppState {
         store: Arc::new(RwLock::new(MetricsStore::new())),
         http_client: reqwest::Client::new(),
@@ -87,6 +99,8 @@ async fn main() -> anyhow::Result<()> {
             10,
             std::time::Duration::from_secs(300),
         )),
+        trusted_proxy_count,
+        password_changed_at: password_changed_cache,
     });
 
     // Background task: evict expired cache entries every 60 seconds
@@ -104,6 +118,19 @@ async fn main() -> anyhow::Result<()> {
             state.pre_populate_status(&hosts);
         }
         Err(e) => tracing::warn!(err = ?e, "⚠️ [Hosts] Failed to load initial hosts"),
+    }
+
+    // ── Pre-populate password_changed_at cache for token revocation ──
+    match repositories::users_repo::load_password_changed_at(&state.db_pool).await {
+        Ok(map) => {
+            if let Ok(mut cache) = state.password_changed_at.write() {
+                *cache = map;
+            }
+            tracing::info!("🔐 [Auth] Password change timestamps loaded");
+        }
+        Err(e) => {
+            tracing::warn!(err = ?e, "⚠️ [Auth] Failed to load password timestamps (column may not exist yet)")
+        }
     }
 
     // Build CORS layer from ALLOWED_ORIGINS env var (comma-separated).
@@ -153,10 +180,13 @@ async fn main() -> anyhow::Result<()> {
         scrape_interval_secs
     );
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("Server error during execution")?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("Server error during execution")?;
 
     // ── Graceful shutdown: cancel background tasks ──
     tracing::info!("🛑 Shutting down background tasks...");
@@ -189,8 +219,16 @@ async fn shutdown_signal() {
 }
 
 async fn add_api_version_header(mut response: Response) -> Response {
-    response
-        .headers_mut()
-        .insert("X-API-Version", HeaderValue::from_static("1"));
+    let headers = response.headers_mut();
+    headers.insert("X-API-Version", HeaderValue::from_static("1"));
+    headers.insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+    headers.insert(
+        "Referrer-Policy",
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
     response
 }

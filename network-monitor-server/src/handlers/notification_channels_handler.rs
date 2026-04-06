@@ -26,6 +26,7 @@ pub async fn create_channel(
     Json(body): Json<CreateChannelRequest>,
 ) -> Result<Json<NotificationChannelRow>, AppError> {
     validate_channel(&body.channel_type, &body.config)?;
+    validate_webhook_ssrf(&body.channel_type, &body.config).await?;
     let channel = notification_channels_repo::create_channel(&state.db_pool, &body).await?;
     tracing::info!(id = channel.id, channel_type = %body.channel_type, "🔔 [Notification] Channel created");
     Ok(Json(channel))
@@ -43,6 +44,7 @@ pub async fn update_channel(
         let channels = notification_channels_repo::get_all(&state.db_pool).await?;
         if let Some(existing) = channels.iter().find(|c| c.id == id) {
             validate_channel(&existing.channel_type, config)?;
+            validate_webhook_ssrf(&existing.channel_type, config).await?;
         }
     }
     let channel = notification_channels_repo::update_channel(&state.db_pool, id, &body)
@@ -86,6 +88,21 @@ pub async fn test_channel(
         .map_err(AppError::BadRequest)?;
 
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+/// SSRF protection: validate webhook URLs resolve to public IPs only.
+async fn validate_webhook_ssrf(
+    channel_type: &str,
+    config: &serde_json::Value,
+) -> Result<(), AppError> {
+    if matches!(channel_type, "discord" | "slack")
+        && let Some(url) = config.get("webhook_url").and_then(|v| v.as_str())
+    {
+        crate::services::url_validator::validate_url(url, &["https"])
+            .await
+            .map_err(|e| AppError::BadRequest(format!("Webhook URL rejected: {e}")))?;
+    }
+    Ok(())
 }
 
 fn validate_channel(channel_type: &str, config: &serde_json::Value) -> Result<(), AppError> {

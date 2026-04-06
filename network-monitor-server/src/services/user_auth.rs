@@ -15,8 +15,14 @@ pub struct UserClaims {
     pub sub: i32,
     pub username: String,
     pub role: String,
+    /// Issued-at (Unix timestamp) — used for token revocation on password change
+    #[serde(default)]
+    pub iat: usize,
     /// Expiration (Unix timestamp)
     pub exp: usize,
+    /// Audience claim — "user" for user tokens (token type separation)
+    #[serde(default)]
+    pub aud: String,
 }
 
 /// Hash a plaintext password with Argon2id
@@ -40,12 +46,14 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 
 /// Generate a user JWT (24-hour expiry)
 pub fn generate_user_jwt(user_id: i32, username: &str, role: &str) -> Result<String, AppError> {
-    let exp = chrono::Utc::now().timestamp() as usize + 24 * 60 * 60;
+    let now = chrono::Utc::now().timestamp() as usize;
     let claims = UserClaims {
         sub: user_id,
         username: username.to_string(),
         role: role.to_string(),
-        exp,
+        iat: now,
+        exp: now + 24 * 60 * 60,
+        aud: "user".to_string(),
     };
     let key = ENCODING_KEY
         .get()
@@ -54,11 +62,21 @@ pub fn generate_user_jwt(user_id: i32, username: &str, role: &str) -> Result<Str
         .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
 }
 
-/// Decode and validate a user JWT, returning claims if valid
+/// Decode and validate a user JWT, returning claims if valid.
+/// Accepts tokens with `aud: "user"` and legacy tokens without `aud` (backward compat).
 pub fn decode_user_jwt(token: &str) -> Option<UserClaims> {
     let dk = DECODING_KEY.get()?;
-    let validation = Validation::new(Algorithm::HS256);
-    decode::<UserClaims>(token, dk, &validation)
+    // Try with aud: "user" first
+    let mut user_validation = Validation::new(Algorithm::HS256);
+    user_validation.set_audience(&["user"]);
+    if let Ok(data) = decode::<UserClaims>(token, dk, &user_validation) {
+        return Some(data.claims);
+    }
+    // Fallback: legacy tokens without aud claim
+    let mut legacy_validation = Validation::new(Algorithm::HS256);
+    legacy_validation.validate_aud = false;
+    decode::<UserClaims>(token, dk, &legacy_validation)
         .ok()
+        .filter(|data| data.claims.aud.is_empty()) // Only accept if no aud (legacy)
         .map(|data| data.claims)
 }

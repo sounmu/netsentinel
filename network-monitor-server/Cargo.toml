@@ -27,3 +27,4 @@ tracing-subscriber = { version = "0.3.23", features = ["ansi", "env-filter", "fm
 tracing-appender = "0.2.4"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder", "hostname"] }
 argon2 = "0.5"
+url = "2.5.8"
