@@ -36,8 +36,14 @@
 - Monitor failure alerting (HTTP/Ping failures trigger notifications)
 - Admin role enforcement on mutation endpoints
 - Login rate limiting (10 attempts per 5 minutes per IP)
-- Graceful shutdown (SIGTERM/SIGINT handling on server and agent)
+- Graceful shutdown with 5-second drain timeout (SIGTERM/SIGINT handling)
 - Zero-Trust deployment via Cloudflare Tunnel (no exposed host ports)
+- Continuous Aggregate (5-min pre-aggregated metrics) for fast long-range queries
+- Batch metrics INSERT (single DB round-trip per scrape cycle)
+- Batch metrics API for multi-host chart queries
+- SSRF protection on webhooks, HTTP monitors, and ping monitors
+- Token revocation on password change (iat + password_changed_at)
+- Security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
 
 ---
 
@@ -55,10 +61,10 @@ graph LR
 ```
 
 **Data flow:**
-1. Server scrapes each registered agent every 10 s (configurable)
-2. Metrics stored in TimescaleDB with 90-day retention
-3. Browser connects to SSE stream for real-time updates (10 s push)
-4. REST API available for historical range queries
+1. Server scrapes each registered agent every 10 s (configurable), batch-inserts metrics in a single query
+2. Metrics stored in TimescaleDB hypertable (90-day retention) + 5-min continuous aggregate for fast long-range queries
+3. Browser connects to SSE stream for real-time updates (10 s push, in-memory — no DB hit)
+4. REST API with automatic downsampling: ≤6h raw, 6h-3d 1-min, 3d-14d 5-min (CA), >14d 15-min (CA)
 5. Alerts delivered to Discord, Slack, and/or Email channels
 
 ---
@@ -164,13 +170,14 @@ cargo run
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL connection string |
-| `JWT_SECRET` | **Yes** | — | HS256 secret for agent JWT auth |
+| `JWT_SECRET` | **Yes** | — | HS256 secret (min 32 chars). `openssl rand -hex 32` |
 | `ALLOWED_ORIGINS` | No | `http://localhost:3001` | Comma-separated CORS origins |
 | `SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `SERVER_PORT` | No | `3000` | Bind port |
 | `SCRAPE_INTERVAL_SECS` | No | `10` | How often to pull each agent |
 | `MAX_DB_CONNECTIONS` | No | `10` | PostgreSQL pool size |
 | `SSE_BUFFER_SIZE` | No | `128` | SSE broadcast channel buffer |
+| `TRUSTED_PROXY_COUNT` | No | `0` | Reverse proxy count for X-Forwarded-For (0 = use peer IP directly) |
 
 ### Agent `network-monitor-agent/.env`
 
@@ -203,6 +210,7 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Mutation endpo
 | `DELETE` | `/api/hosts/{host_key}` | Delete a host |
 | `GET` | `/api/metrics/{host_key}` | Recent 50 metric rows |
 | `GET` | `/api/metrics/{host_key}?start=&end=` | Metrics in a time range (ISO 8601) |
+| `POST` | `/api/metrics/batch` | Batch metrics for multiple hosts (max 50) |
 | `GET` | `/api/uptime/{host_key}?days=` | Daily uptime breakdown |
 | `GET` | `/api/alert-configs` | Global alert defaults |
 | `PUT` | `/api/alert-configs` | Update global defaults |
@@ -237,12 +245,13 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Mutation endpo
 
 | Table | Description |
 |---|---|
-| **`metrics`** | TimescaleDB hypertable, 90-day retention, 1-day chunks. Stores CPU, memory, load, network, disk, process, temperature, GPU, Docker, port data as JSONB. |
+| **`metrics`** | TimescaleDB hypertable, 90-day retention, 1-day chunks, compression after 7 days. Stores CPU, memory, load, network, disk, process, temperature, GPU, Docker, port data as JSONB. |
+| **`metrics_5min`** | Continuous aggregate over `metrics`. 5-min buckets with AVG (cpu/memory/load), MAX (network bytes), bool_and (online), COUNT (samples). 90-day refresh policy. |
 | **`hosts`** | Agent registry (scrape interval, thresholds, monitored ports/containers) |
 | **`alert_configs`** | Alert rules; `NULL host_key` = global default, per-host rows override. Supports cpu/memory/disk metric types. |
 | **`notification_channels`** | Alert delivery targets (Discord webhook, Slack webhook, Email SMTP). Config stored as JSONB. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSONB). |
-| **`users`** | User accounts with Argon2 password hashing. Roles: admin, viewer. |
+| **`users`** | User accounts with Argon2 password hashing. Roles: admin, viewer. Tracks `password_changed_at` for token revocation. |
 | **`alert_history`** | Immutable log of all alert events with timestamps. TimescaleDB hypertable, 90-day retention. |
 | **`http_monitors`** | External HTTP endpoint monitors with check intervals. |
 | **`http_monitor_results`** | HTTP check results (status code, response time, errors). TimescaleDB hypertable, 90-day retention. |
