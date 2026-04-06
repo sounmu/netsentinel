@@ -32,6 +32,9 @@ use tokio::sync::RwLock;
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     exp: usize,
+    /// Audience claim for token type separation (server sends "agent")
+    #[serde(default)]
+    aud: String,
 }
 
 static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
@@ -49,8 +52,9 @@ async fn auth_middleware(req: Request, next: Next) -> Result<Response, StatusCod
     };
 
     let key = DECODING_KEY.get().expect("DECODING_KEY not initialized");
-    let validation = Validation::new(Algorithm::HS256);
-    // jsonwebtoken::Validation::new(Algorithm::HS256) automatically validates the `exp` claim.
+    let mut validation = Validation::new(Algorithm::HS256);
+    // Accept tokens with aud: "agent" (new) and tokens without aud (legacy server compat)
+    validation.set_audience(&["agent"]);
 
     match decode::<Claims>(token, key, &validation) {
         Ok(_) => Ok(next.run(req).await),
@@ -885,6 +889,7 @@ mod tests {
     fn test_validation() -> Validation {
         let mut v = Validation::new(Algorithm::HS256);
         v.validate_exp = false;
+        v.set_audience(&["agent"]);
         v
     }
 
@@ -893,7 +898,10 @@ mod tests {
         let secret = b"test-agent-secret";
         let token = encode(
             &Header::new(Algorithm::HS256),
-            &Claims { exp: usize::MAX },
+            &Claims {
+                exp: usize::MAX,
+                aud: "agent".to_string(),
+            },
             &EncodingKey::from_secret(secret),
         )
         .expect("Token creation failed");
@@ -909,7 +917,10 @@ mod tests {
     fn test_jwt_with_wrong_secret_is_rejected() {
         let token = encode(
             &Header::new(Algorithm::HS256),
-            &Claims { exp: usize::MAX },
+            &Claims {
+                exp: usize::MAX,
+                aud: "agent".to_string(),
+            },
             &EncodingKey::from_secret(b"correct-secret"),
         )
         .expect("Token creation failed");
