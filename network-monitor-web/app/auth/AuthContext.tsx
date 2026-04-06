@@ -23,27 +23,33 @@ const PUBLIC_PATHS = ["/login", "/setup", "/status"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(null);
-  const [isLoading, setIsLoading] = useState(() => {
-    if (typeof window === "undefined") return true;
-    return !!getUserToken();
-  });
+  // Start as true on both server and client to avoid hydration mismatch.
+  // Resolved to false either synchronously (no token) or after getMe() completes.
+  const [isLoading, setIsLoading] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
+    let cancelled = false;
     const token = getUserToken();
     if (token) {
       getMe()
         .then((u) => {
-          setUser(u);
+          if (!cancelled) setUser(u);
         })
         .catch(() => {
           setUserToken(null);
         })
         .finally(() => {
-          setIsLoading(false);
+          if (!cancelled) setIsLoading(false);
         });
+    } else {
+      // No token — use microtask to avoid synchronous setState in effect body
+      queueMicrotask(() => {
+        if (!cancelled) setIsLoading(false);
+      });
     }
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
