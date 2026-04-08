@@ -329,8 +329,25 @@ export interface AuthStatus {
 
 export const getAuthStatusUrl = () => `${API_BASE}/api/auth/status`;
 
-export const login = (username: string, password: string) =>
-  apiCall<LoginResponse>(`${API_BASE}/api/auth/login`, "POST", { username, password });
+/** Custom error class that preserves HTTP status code for login error handling */
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export const login = async (username: string, password: string): Promise<LoginResponse> => {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+};
 
 export const setupAdmin = (username: string, password: string) =>
   apiCall<LoginResponse>(`${API_BASE}/api/auth/setup`, "POST", { username, password });

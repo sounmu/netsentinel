@@ -8,6 +8,7 @@ import { ThemeProvider } from "./theme/ThemeContext";
 import { AuthProvider } from "./auth/AuthContext";
 import ServiceWorkerRegistration from "./components/ServiceWorkerRegistration";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { Toaster } from "sonner";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -45,9 +46,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" data-scroll-behavior="smooth" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body>
         <a href="#main-content" className="skip-to-content">Skip to content</a>
+        <Toaster position="top-right" theme="system" richColors duration={4000} />
         <ThemeProvider>
         <I18nProvider>
         <AuthProvider>

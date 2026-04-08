@@ -4,10 +4,12 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { Shield } from "lucide-react";
+import { toast } from "sonner";
 import { useAuth } from "@/app/auth/AuthContext";
 import { useI18n } from "@/app/i18n/I18nContext";
 import {
   login as apiLogin,
+  ApiError,
   AuthStatus,
   getAuthStatusUrl,
   fetcher,
@@ -20,7 +22,6 @@ export default function LoginPage() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const { data: authStatus } = useSWR<AuthStatus>(getAuthStatusUrl(), fetcher);
@@ -45,10 +46,9 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError("");
 
     if (!username.trim()) {
-      setError(t.auth.usernameRequired);
+      toast.error(t.auth.usernameRequired);
       return;
     }
 
@@ -57,8 +57,21 @@ export default function LoginPage() {
       const response = await apiLogin(username, password);
       auth.login(response.token, response.user);
       router.replace("/");
-    } catch {
-      setError(t.auth.invalidCredentials);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          toast.error(t.auth.loginError.invalid);
+        } else if (err.status === 429) {
+          toast.error(t.auth.loginError.rateLimit);
+        } else {
+          toast.error(t.auth.loginError.generic);
+        }
+      } else if (err instanceof TypeError) {
+        // fetch throws TypeError on network failure (DNS, CORS, offline)
+        toast.error(t.auth.loginError.network);
+      } else {
+        toast.error(t.auth.loginError.generic);
+      }
     } finally {
       setLoading(false);
     }
@@ -130,19 +143,6 @@ export default function LoginPage() {
               style={{ width: "100%", boxSizing: "border-box" }}
             />
           </div>
-
-          {error && (
-            <p
-              style={{
-                color: "var(--status-red, #ef4444)",
-                fontSize: 14,
-                marginBottom: 16,
-                textAlign: "center",
-              }}
-            >
-              {error}
-            </p>
-          )}
 
           <button
             type="submit"

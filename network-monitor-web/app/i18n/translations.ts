@@ -20,6 +20,12 @@ export const translations = {
       passwordMismatch: "Passwords do not match",
       usernameRequired: "Username is required",
       setupFailed: "Setup failed",
+      loginError: {
+        invalid: "Invalid username or password",
+        rateLimit: "Too many login attempts. Please try again later",
+        network: "Unable to connect to server",
+        generic: "An error occurred during login",
+      },
     },
     // Dashboard
     dashboard: {
@@ -321,6 +327,12 @@ export const translations = {
       passwordMismatch: "비밀번호가 일치하지 않습니다",
       usernameRequired: "사용자 이름은 필수입니다",
       setupFailed: "초기 설정에 실패했습니다",
+      loginError: {
+        invalid: "아이디 또는 비밀번호가 올바르지 않습니다",
+        rateLimit: "로그인 시도 횟수를 초과했습니다. 잠시 후 다시 시도해주세요",
+        network: "서버에 연결할 수 없습니다",
+        generic: "로그인 중 오류가 발생했습니다",
+      },
     },
     overview: {
       title: "인프라 개요",

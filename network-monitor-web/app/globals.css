@@ -97,9 +97,8 @@
   padding: 0;
 }
 
-html {
-  scroll-behavior: smooth;
-}
+/* scroll-behavior moved to <html data-scroll-behavior="smooth"> in layout.tsx
+   to avoid conflict with Next.js route transition scroll handling */
 
 /* ── Accessibility ─────────────────────────── */
 
