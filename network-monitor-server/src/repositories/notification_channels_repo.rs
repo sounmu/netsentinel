@@ -45,6 +45,17 @@ pub async fn get_all(pool: &PgPool) -> Result<Vec<NotificationChannelRow>, sqlx:
         .await
 }
 
+/// Fetch a single notification channel by ID
+pub async fn get_by_id(
+    pool: &PgPool,
+    id: i32,
+) -> Result<Option<NotificationChannelRow>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationChannelRow>("SELECT * FROM notification_channels WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+}
+
 /// Fetch only enabled notification channels
 pub async fn get_enabled(pool: &PgPool) -> Result<Vec<NotificationChannelRow>, sqlx::Error> {
     sqlx::query_as::<_, NotificationChannelRow>(

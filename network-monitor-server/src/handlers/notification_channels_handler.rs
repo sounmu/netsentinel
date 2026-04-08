@@ -41,11 +41,11 @@ pub async fn update_channel(
 ) -> Result<Json<NotificationChannelRow>, AppError> {
     // If config is being updated, validate it against existing channel type
     if let Some(config) = &body.config {
-        let channels = notification_channels_repo::get_all(&state.db_pool).await?;
-        if let Some(existing) = channels.iter().find(|c| c.id == id) {
-            validate_channel(&existing.channel_type, config)?;
-            validate_webhook_ssrf(&existing.channel_type, config).await?;
-        }
+        let existing = notification_channels_repo::get_by_id(&state.db_pool, id)
+            .await?
+            .ok_or_else(|| AppError::NotFound(format!("Notification channel {} not found", id)))?;
+        validate_channel(&existing.channel_type, config)?;
+        validate_webhook_ssrf(&existing.channel_type, config).await?;
     }
     let channel = notification_channels_repo::update_channel(&state.db_pool, id, &body)
         .await?
@@ -77,10 +77,8 @@ pub async fn test_channel(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let channels = notification_channels_repo::get_all(&state.db_pool).await?;
-    let channel = channels
-        .into_iter()
-        .find(|c| c.id == id)
+    let channel = notification_channels_repo::get_by_id(&state.db_pool, id)
+        .await?
         .ok_or_else(|| AppError::NotFound(format!("Notification channel {} not found", id)))?;
 
     crate::services::alert_service::test_channel(&state.http_client, &channel)
