@@ -69,6 +69,8 @@ async fn main() -> anyhow::Result<()> {
     // the `gzip` feature enabled, so it negotiates and decompresses transparently.
     let compression = tower_http::compression::CompressionLayer::new().gzip(true);
 
+    let start_time = std::time::Instant::now();
+
     let app = Router::new()
         .route(
             "/metrics",
@@ -81,7 +83,28 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .layer(compression)
-        .layer(middleware::from_fn(auth::auth_middleware));
+        .layer(middleware::from_fn(auth::auth_middleware))
+        // Health endpoint is outside the auth layer — no JWT required.
+        // Useful for operators to verify the agent process is running
+        // independently of network/auth issues with the server.
+        .route(
+            "/health",
+            get({
+                let hostname = hostname.clone();
+                move || {
+                    let hostname = hostname.clone();
+                    let uptime = start_time.elapsed().as_secs();
+                    async move {
+                        axum::Json(serde_json::json!({
+                            "status": "ok",
+                            "hostname": hostname,
+                            "version": env!("CARGO_PKG_VERSION"),
+                            "uptime_secs": uptime,
+                        }))
+                    }
+                }
+            }),
+        );
 
     let addr = format!("0.0.0.0:{}", port);
     let listener = TcpListener::bind(&addr)

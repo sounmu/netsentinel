@@ -215,3 +215,78 @@ pub(crate) async fn collect_sysinfo() -> SysinfoResult {
         load_average,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_interface_en0() {
+        assert!(is_physical_interface("en0"));
+    }
+
+    #[test]
+    fn physical_interface_eth0() {
+        assert!(is_physical_interface("eth0"));
+    }
+
+    #[test]
+    fn filtered_loopback_lo() {
+        assert!(!is_physical_interface("lo"));
+    }
+
+    #[test]
+    fn filtered_docker0() {
+        assert!(!is_physical_interface("docker0"));
+    }
+
+    #[test]
+    fn filtered_veth() {
+        assert!(!is_physical_interface("veth123"));
+    }
+
+    #[test]
+    fn filtered_utun() {
+        assert!(!is_physical_interface("utun0"));
+    }
+
+    #[test]
+    fn filtered_awdl() {
+        assert!(!is_physical_interface("awdl0"));
+    }
+
+    #[test]
+    fn filtered_bridge() {
+        assert!(!is_physical_interface("br-abc123"));
+    }
+
+    #[test]
+    fn filtered_llw() {
+        assert!(!is_physical_interface("llw0"));
+    }
+
+    #[test]
+    fn filtered_gif() {
+        assert!(!is_physical_interface("gif0"));
+    }
+
+    #[test]
+    fn filtered_stf() {
+        assert!(!is_physical_interface("stf0"));
+    }
+
+    #[test]
+    fn filtered_anpi() {
+        assert!(!is_physical_interface("anpi0"));
+    }
+
+    #[test]
+    fn filtered_ap() {
+        assert!(!is_physical_interface("ap1"));
+    }
+
+    #[test]
+    fn physical_interface_wlan0() {
+        assert!(is_physical_interface("wlan0"));
+    }
+}

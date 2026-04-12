@@ -158,14 +158,18 @@ async fn send_email(config: &serde_json::Value, message: &str) {
     // Strip markdown formatting for plain-text email
     let plain_text = message.replace("**", "").replace('`', "");
 
+    let Ok(from_addr) = from.parse() else {
+        tracing::error!(channel = "email", from, "⚠️ [Email] Invalid 'from' address");
+        return;
+    };
+    let Ok(to_addr) = to.parse() else {
+        tracing::error!(channel = "email", to, "⚠️ [Email] Invalid 'to' address");
+        return;
+    };
+
     let email = match Message::builder()
-        .from(
-            from.parse()
-                .unwrap_or_else(|_| "alert@monitor.local".parse().unwrap()),
-        )
-        .to(to
-            .parse()
-            .unwrap_or_else(|_| "admin@monitor.local".parse().unwrap()))
+        .from(from_addr)
+        .to(to_addr)
         .subject("Network Monitor Alert")
         .body(plain_text)
     {

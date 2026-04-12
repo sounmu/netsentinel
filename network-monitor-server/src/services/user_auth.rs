@@ -99,6 +99,44 @@ mod tests {
     const TEST_SECRET: &str = "test-secret-for-unit-tests";
 
     #[test]
+    fn test_hash_password_produces_valid_argon2_hash() {
+        let hash = hash_password("TestPass123!").expect("hashing should succeed");
+        // Argon2 hashes start with $argon2
+        assert!(
+            hash.starts_with("$argon2"),
+            "Hash should be a valid argon2 string, got: {hash}"
+        );
+        // Should be parseable
+        PasswordHash::new(&hash).expect("hash should be parseable by PasswordHash");
+    }
+
+    #[test]
+    fn test_verify_password_correct() {
+        let hash = hash_password("CorrectHorse!1").expect("hashing should succeed");
+        assert!(
+            verify_password("CorrectHorse!1", &hash),
+            "verify_password should return true for the correct password"
+        );
+    }
+
+    #[test]
+    fn test_verify_password_wrong() {
+        let hash = hash_password("CorrectHorse!1").expect("hashing should succeed");
+        assert!(
+            !verify_password("WrongPassword!1", &hash),
+            "verify_password should return false for a wrong password"
+        );
+    }
+
+    #[test]
+    fn test_verify_password_invalid_hash() {
+        assert!(
+            !verify_password("anything", "not-a-valid-hash"),
+            "verify_password should return false for an unparseable hash"
+        );
+    }
+
+    #[test]
     fn test_decode_user_jwt_rejects_token_from_other_secret() {
         init_encoding_key(TEST_SECRET);
 

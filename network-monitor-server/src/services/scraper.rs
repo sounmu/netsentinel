@@ -57,7 +57,11 @@ impl JwtCache {
                 minted_at: Instant::now(),
             });
         }
-        Ok(slot.as_ref().map(|c| c.token.as_str()).unwrap())
+        Ok(slot
+            .as_ref()
+            .expect("slot always Some after refresh above")
+            .token
+            .as_str())
     }
 }
 

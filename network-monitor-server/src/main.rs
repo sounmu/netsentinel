@@ -3,6 +3,7 @@ mod handlers;
 mod logger;
 mod models;
 mod repositories;
+mod request_id;
 mod routes;
 mod services;
 
@@ -62,13 +63,32 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(10);
 
     // ── PostgreSQL connection pool ──
+    // statement_timeout prevents any single query from holding a connection
+    // indefinitely. The 30-second default is generous enough for the heaviest
+    // analytics queries (90-day CA refresh) while still catching runaway
+    // transactions before the pool is exhausted. Configurable via env var.
+    let statement_timeout_secs: u64 = std::env::var("DB_STATEMENT_TIMEOUT_SECS")
+        .unwrap_or_else(|_| "30".to_string())
+        .parse()
+        .unwrap_or(30);
+    let connect_options: sqlx::postgres::PgConnectOptions = database_url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .context("Invalid DATABASE_URL")?
+        .options([(
+            "statement_timeout",
+            format!("{}s", statement_timeout_secs).as_str(),
+        )]);
     let db_pool = PgPoolOptions::new()
         .max_connections(max_db_connections)
         .min_connections(3)
         .acquire_timeout(std::time::Duration::from_secs(5))
-        .connect(&database_url)
+        .connect_with(connect_options)
         .await
         .context("Failed to connect to PostgreSQL")?;
+    tracing::info!(
+        statement_timeout_secs,
+        "⏱️ [DB] Query statement_timeout set"
+    );
 
     tracing::info!("✅ [DB] Connected to PostgreSQL.");
 
@@ -122,12 +142,32 @@ async fn main() -> anyhow::Result<()> {
         last_known_status: Arc::new(RwLock::new(HashMap::new())),
         metrics_query_cache: metrics_query_cache.clone(),
         login_rate_limiter: Arc::new(LoginRateLimiter::new(
-            10,
-            std::time::Duration::from_secs(300),
+            std::env::var("LOGIN_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            std::time::Duration::from_secs(
+                std::env::var("LOGIN_RATE_LIMIT_WINDOW_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(300),
+            ),
         )),
         trusted_proxy_count,
         token_revocation_cutoffs: Arc::clone(&token_revocation_cache),
         sse_ticket_store: Arc::clone(&sse_ticket_store),
+        api_rate_limiter: Arc::new(LoginRateLimiter::new(
+            std::env::var("API_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(200),
+            std::time::Duration::from_secs(
+                std::env::var("API_RATE_LIMIT_WINDOW_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(60),
+            ),
+        )),
     });
 
     // Background task: evict expired cache entries every 60 seconds
@@ -303,6 +343,11 @@ async fn main() -> anyhow::Result<()> {
 
     let app = metrics_routes::create_router(Arc::clone(&state))
         .layer(middleware::map_response(add_api_version_header))
+        .layer(middleware::from_fn(request_id::request_id))
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            request_id::api_rate_limit,
+        ))
         .layer(cors)
         .layer(compression);
 

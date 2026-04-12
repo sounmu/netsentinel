@@ -141,7 +141,7 @@ cd network-monitor-server
 cargo test
 ```
 
-Existing tests cover JWT generation/validation (`src/services/auth.rs`), alert-threshold logic (`src/services/metrics_service.rs`), and input validation (`src/handlers/`). There are 91 tests total across the project: server (51), agent (9), web (31).
+Existing tests cover JWT generation/validation, alert-threshold logic, password validation, rate limiting, refresh-token rotation, SSE tickets, request ID generation, and input validation. There are 178 tests total across the project: server (96), agent (33), web (49).
 
 ### Database migrations
 
@@ -164,6 +164,63 @@ npm test
 ```
 
 Tests use [Vitest](https://vitest.dev/). New tests go in `*.test.ts(x)` files co-located with the source they test.
+
+---
+
+## Deployment & Rollback
+
+### Image tagging
+
+Docker images are tagged with the git short SHA and `latest` on every successful deploy:
+
+```bash
+# CI builds and pushes:
+ghcr.io/sounmu/network-monitor-server:<short-sha>
+ghcr.io/sounmu/network-monitor-server:latest
+ghcr.io/sounmu/network-monitor-web:<short-sha>
+ghcr.io/sounmu/network-monitor-web:latest
+```
+
+### Rolling back
+
+If a deployment causes issues, roll back to a known-good image:
+
+```bash
+# 1. Find the previous working image tag (git short SHA from the last good release)
+git log --oneline -5          # e.g. 6a0a9d1 is bad, 95afce6 was good
+
+# 2. Pin docker-compose to the known-good image
+#    Edit docker-compose.yml (or use an override file):
+#      image: ghcr.io/sounmu/network-monitor-server:95afce6
+#      image: ghcr.io/sounmu/network-monitor-web:95afce6
+
+# 3. Redeploy
+docker compose pull && docker compose up -d
+
+# 4. Verify health
+curl -sf http://localhost:3000/api/health
+```
+
+### Database migration rollback
+
+Migrations are forward-only (`sqlx::migrate!()`). If a migration causes issues:
+
+1. **Do NOT delete the migration file** — this breaks `sqlx::migrate!()` checksums.
+2. Create a **new** migration that reverses the change (e.g., `DROP COLUMN IF EXISTS`, `DROP TABLE IF EXISTS`).
+3. Test the reverse migration locally before deploying.
+
+### Agent rollback
+
+Agents run as native binaries (not Docker). Keep the previous binary alongside the new one:
+
+```bash
+# Before deploying a new agent:
+cp /usr/local/bin/network-monitor-agent /usr/local/bin/network-monitor-agent.bak
+
+# To roll back:
+mv /usr/local/bin/network-monitor-agent.bak /usr/local/bin/network-monitor-agent
+sudo systemctl restart network-monitor-agent   # or launchctl on macOS
+```
 
 ---
 

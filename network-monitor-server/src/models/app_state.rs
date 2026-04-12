@@ -45,6 +45,10 @@ pub struct AppState {
     /// Single-use opaque ticket store for the SSE handshake.
     /// See `services::sse_ticket` for rationale.
     pub sse_ticket_store: Arc<SseTicketStore>,
+    /// Per-IP rate limiter for all API endpoints. More generous than the
+    /// login limiter (which protects against brute-force). Prevents any
+    /// single IP from overwhelming the server with rapid-fire requests.
+    pub api_rate_limiter: Arc<LoginRateLimiter>,
 }
 
 impl AppState {
@@ -310,7 +314,7 @@ impl LoginRateLimiter {
     }
 
     /// Check if a login attempt from the given IP is allowed.
-    /// Returns Ok(()) if allowed, Err with remaining seconds if rate-limited.
+    /// Returns `Ok(())` if allowed, `Err` with remaining seconds if rate-limited.
     pub fn check(&self, ip: &str) -> Result<(), u64> {
         let mut map = match self.attempts.write() {
             Ok(m) => m,
@@ -329,12 +333,66 @@ impl LoginRateLimiter {
         }
 
         if entry.len() >= self.max_attempts {
-            let oldest = entry.front().unwrap();
+            // Safety: len() >= max_attempts (>= 1), so the deque is non-empty.
+            let oldest = entry
+                .front()
+                .expect("deque non-empty (guarded by len check)");
             let retry_after = self.window.as_secs() - now.duration_since(*oldest).as_secs();
             return Err(retry_after.max(1));
         }
 
         entry.push_back(now);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limiter_allows_within_limit() {
+        let limiter = LoginRateLimiter::new(3, Duration::from_secs(60));
+        assert!(limiter.check("10.0.0.1").is_ok());
+        assert!(limiter.check("10.0.0.1").is_ok());
+        assert!(limiter.check("10.0.0.1").is_ok());
+    }
+
+    #[test]
+    fn rate_limiter_blocks_when_exceeded() {
+        let limiter = LoginRateLimiter::new(2, Duration::from_secs(60));
+        assert!(limiter.check("10.0.0.1").is_ok());
+        assert!(limiter.check("10.0.0.1").is_ok());
+        let result = limiter.check("10.0.0.1");
+        assert!(result.is_err(), "Third attempt should be rejected");
+        let retry_after = result.unwrap_err();
+        assert!(
+            retry_after >= 1,
+            "retry_after should be at least 1 second, got {retry_after}"
+        );
+    }
+
+    #[test]
+    fn rate_limiter_isolates_ips() {
+        let limiter = LoginRateLimiter::new(1, Duration::from_secs(60));
+        assert!(limiter.check("10.0.0.1").is_ok());
+        // Different IP should still be allowed
+        assert!(limiter.check("10.0.0.2").is_ok());
+        // First IP is now blocked
+        assert!(limiter.check("10.0.0.1").is_err());
+    }
+
+    #[test]
+    fn rate_limiter_expired_attempts_cleaned_up() {
+        // Use a tiny window so attempts expire almost immediately
+        let limiter = LoginRateLimiter::new(1, Duration::from_millis(1));
+        assert!(limiter.check("10.0.0.1").is_ok());
+        // Wait for the window to expire
+        std::thread::sleep(Duration::from_millis(5));
+        // Should be allowed again because the old attempt expired
+        assert!(
+            limiter.check("10.0.0.1").is_ok(),
+            "Expired attempts should be cleaned up, allowing new ones"
+        );
     }
 }

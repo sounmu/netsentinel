@@ -122,3 +122,140 @@ pub(crate) struct SysinfoResult {
     pub network: NetworkTotal,
     pub load_average: LoadAverage,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metrics_query_empty_defaults() {
+        // Simulate an empty query string (no ports, no containers)
+        let query: MetricsQuery = serde_json::from_str("{}").unwrap();
+        assert!(query.ports.is_none());
+        assert!(query.containers.is_none());
+    }
+
+    #[test]
+    fn metrics_query_with_ports_and_containers() {
+        let query: MetricsQuery =
+            serde_json::from_str(r#"{"ports":"80,443","containers":"nginx,redis"}"#).unwrap();
+        assert_eq!(query.ports.as_deref(), Some("80,443"));
+        assert_eq!(query.containers.as_deref(), Some("nginx,redis"));
+    }
+
+    #[test]
+    fn metrics_query_with_only_ports() {
+        let query: MetricsQuery = serde_json::from_str(r#"{"ports":"8080"}"#).unwrap();
+        assert_eq!(query.ports.as_deref(), Some("8080"));
+        assert!(query.containers.is_none());
+    }
+
+    #[test]
+    fn network_total_default() {
+        let net = NetworkTotal::default();
+        assert_eq!(net.total_rx_bytes, 0);
+        assert_eq!(net.total_tx_bytes, 0);
+    }
+
+    #[test]
+    fn network_total_serializes() {
+        let net = NetworkTotal {
+            total_rx_bytes: 1024,
+            total_tx_bytes: 2048,
+        };
+        let json = serde_json::to_value(&net).unwrap();
+        assert_eq!(json["total_rx_bytes"], 1024);
+        assert_eq!(json["total_tx_bytes"], 2048);
+    }
+
+    #[test]
+    fn port_status_serializes() {
+        let port = PortStatus {
+            port: 443,
+            is_open: true,
+        };
+        let json = serde_json::to_value(&port).unwrap();
+        assert_eq!(json["port"], 443);
+        assert_eq!(json["is_open"], true);
+    }
+
+    #[test]
+    fn docker_container_clone() {
+        let container = DockerContainer {
+            container_name: "nginx".into(),
+            image: "nginx:latest".into(),
+            state: "running".into(),
+            status: "Up 2 hours".into(),
+        };
+        let cloned = container.clone();
+        assert_eq!(cloned.container_name, "nginx");
+        assert_eq!(cloned.image, "nginx:latest");
+    }
+
+    #[test]
+    fn disk_info_serializes() {
+        let disk = DiskInfo {
+            name: "sda1".into(),
+            mount_point: "/".into(),
+            total_gb: 500.0,
+            available_gb: 200.0,
+            usage_percent: 60.0,
+        };
+        let json = serde_json::to_value(&disk).unwrap();
+        assert_eq!(json["name"], "sda1");
+        assert_eq!(json["mount_point"], "/");
+        assert_eq!(json["usage_percent"], 60.0);
+    }
+
+    #[test]
+    fn gpu_info_optional_fields() {
+        let gpu = GpuInfo {
+            name: "RTX 4090".into(),
+            gpu_usage_percent: 85,
+            memory_used_mb: 8192,
+            memory_total_mb: 24576,
+            temperature_c: 72,
+            power_watts: Some(350.0),
+            frequency_mhz: None,
+        };
+        let json = serde_json::to_value(&gpu).unwrap();
+        assert_eq!(json["power_watts"], 350.0);
+        assert!(json["frequency_mhz"].is_null());
+    }
+
+    #[test]
+    fn agent_metrics_bincode_round_trip() {
+        let metrics = AgentMetrics {
+            hostname: "test-host".into(),
+            timestamp: "2026-04-12T00:00:00Z".into(),
+            is_online: true,
+            system: SystemMetrics {
+                cpu_usage_percent: 45.5,
+                memory_total_mb: 16384,
+                memory_used_mb: 8192,
+                memory_usage_percent: 50.0,
+                disks: vec![],
+                processes: vec![],
+                temperatures: vec![],
+                gpus: vec![],
+            },
+            network: NetworkTotal {
+                total_rx_bytes: 1_000_000,
+                total_tx_bytes: 500_000,
+            },
+            load_average: LoadAverage {
+                one_min: 1.5,
+                five_min: 1.2,
+                fifteen_min: 0.9,
+            },
+            docker: vec![],
+            ports: vec![PortStatus {
+                port: 80,
+                is_open: true,
+            }],
+            agent_version: "1.0.0".into(),
+        };
+        let encoded = bincode::serialize(&metrics).unwrap();
+        assert!(!encoded.is_empty());
+    }
+}

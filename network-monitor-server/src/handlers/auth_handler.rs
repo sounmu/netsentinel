@@ -537,3 +537,135 @@ fn validate_password(password: &str) -> Result<(), AppError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── validate_password ──
+
+    #[test]
+    fn validate_password_rejects_short() {
+        let result = validate_password("Aa1!xyz");
+        assert!(result.is_err(), "7-char password should be rejected");
+    }
+
+    #[test]
+    fn validate_password_rejects_no_uppercase() {
+        let result = validate_password("abcdefg1!");
+        assert!(
+            result.is_err(),
+            "password without uppercase should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_password_rejects_no_lowercase() {
+        let result = validate_password("ABCDEFG1!");
+        assert!(
+            result.is_err(),
+            "password without lowercase should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_password_rejects_no_digit() {
+        let result = validate_password("Abcdefgh!");
+        assert!(result.is_err(), "password without digit should be rejected");
+    }
+
+    #[test]
+    fn validate_password_rejects_no_special() {
+        let result = validate_password("Abcdefg1");
+        assert!(
+            result.is_err(),
+            "password without special char should be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_password_accepts_valid() {
+        let result = validate_password("StrongP@ss1");
+        assert!(result.is_ok(), "valid complex password should be accepted");
+    }
+
+    // ── build_refresh_cookie ──
+
+    #[test]
+    fn build_refresh_cookie_contains_expected_attributes() {
+        let cookie = build_refresh_cookie("tok_abc123");
+        assert!(
+            cookie.contains("nm_refresh=tok_abc123"),
+            "cookie should contain name=value"
+        );
+        assert!(cookie.contains("HttpOnly"), "cookie should be HttpOnly");
+        assert!(
+            cookie.contains("SameSite=Strict"),
+            "cookie should be SameSite=Strict"
+        );
+        assert!(
+            cookie.contains("Path=/api/auth"),
+            "cookie should be scoped to /api/auth"
+        );
+        assert!(cookie.contains("Max-Age="), "cookie should have Max-Age");
+        // Verify Max-Age is REFRESH_TTL_DAYS in seconds
+        let expected_max_age = REFRESH_TTL_DAYS * 24 * 60 * 60;
+        assert!(
+            cookie.contains(&format!("Max-Age={expected_max_age}")),
+            "Max-Age should be {expected_max_age}, got: {cookie}"
+        );
+    }
+
+    // ── build_refresh_cookie_expiry ──
+
+    #[test]
+    fn build_refresh_cookie_expiry_sets_max_age_zero() {
+        let cookie = build_refresh_cookie_expiry();
+        assert!(
+            cookie.contains("Max-Age=0"),
+            "expiry cookie should have Max-Age=0, got: {cookie}"
+        );
+        assert!(
+            cookie.contains("nm_refresh=;")
+                || cookie.contains("nm_refresh= ;")
+                || cookie.contains("nm_refresh="),
+            "expiry cookie should clear the value"
+        );
+    }
+
+    // ── extract_refresh_cookie ──
+
+    #[test]
+    fn extract_refresh_cookie_parses_single_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("nm_refresh=abc123"));
+        let result = extract_refresh_cookie(&headers);
+        assert_eq!(result, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn extract_refresh_cookie_parses_among_multiple() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_static("other=foo; nm_refresh=mytoken; session=bar"),
+        );
+        let result = extract_refresh_cookie(&headers);
+        assert_eq!(result, Some("mytoken".to_string()));
+    }
+
+    #[test]
+    fn extract_refresh_cookie_returns_none_when_missing() {
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_static("other=foo; session=bar"));
+        let result = extract_refresh_cookie(&headers);
+        assert!(result.is_none(), "should return None when cookie is absent");
+    }
+
+    #[test]
+    fn extract_refresh_cookie_returns_none_when_no_cookie_header() {
+        let headers = HeaderMap::new();
+        let result = extract_refresh_cookie(&headers);
+        assert!(result.is_none(), "should return None with no cookie header");
+    }
+}
