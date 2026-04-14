@@ -1,4 +1,4 @@
-# Contributing to network-monitor
+# Contributing to NetSentinel
 
 Thank you for your interest in contributing! This document covers everything you need to get the project running locally and submit a pull request.
 
@@ -32,8 +32,8 @@ Thank you for your interest in contributing! This document covers everything you
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/<owner>/network-monitor.git
-cd network-monitor
+git clone https://github.com/<owner>/netsentinel.git
+cd netsentinel
 
 # 2. Copy environment template and fill in your values
 cp .env.example .env
@@ -49,10 +49,10 @@ The web dashboard will be available at **http://localhost:3001**.
 ## Project Structure
 
 ```
-network-monitor/
-├── network-monitor-server/   # Rust/Axum backend — REST API, scraper, SSE
-├── network-monitor-agent/    # Rust daemon — collects host metrics
-├── network-monitor-web/      # Next.js dashboard
+netsentinel/
+├── netsentinel-server/   # Rust/Axum backend — REST API, scraper, SSE
+├── netsentinel-agent/    # Rust daemon — collects host metrics
+├── netsentinel-web/      # Next.js dashboard
 ├── docker-compose.yml        # Full stack orchestration
 ├── .env.example              # Environment variable template
 └── .github/workflows/        # GitHub Actions CI
@@ -67,7 +67,7 @@ See [ARCHITECTURE.md](README.md#architecture) in the README for data flow detail
 ### Server (Rust/Axum)
 
 ```bash
-cd network-monitor-server
+cd netsentinel-server
 cp .env.example .env          # edit DATABASE_URL etc.
 cargo run                     # starts on 0.0.0.0:3000 by default
 ```
@@ -84,7 +84,7 @@ cargo test                    # run unit tests
 ### Agent (Rust)
 
 ```bash
-cd network-monitor-agent
+cd netsentinel-agent
 cp .env.example .env          # edit JWT_SECRET, AGENT_PORT etc.
 cargo run
 ```
@@ -92,7 +92,7 @@ cargo run
 ### Web (Next.js)
 
 ```bash
-cd network-monitor-web
+cd netsentinel-web
 npm install
 cp .env.example .env.local    # set NEXT_PUBLIC_API_URL
 npm run dev                   # starts on http://localhost:3001
@@ -137,7 +137,7 @@ npm run build    # production build
 ### Server unit tests
 
 ```bash
-cd network-monitor-server
+cd netsentinel-server
 cargo test
 ```
 
@@ -150,7 +150,7 @@ Schema changes use [sqlx migrations](https://docs.rs/sqlx/latest/sqlx/macro.migr
 ```bash
 # To add a new migration:
 # 1. Create a new numbered SQL file:
-touch network-monitor-server/migrations/006_your_change.sql
+touch netsentinel-server/migrations/006_your_change.sql
 # 2. Write idempotent SQL (use IF NOT EXISTS, IF EXISTS, etc.)
 # 3. Never modify existing migration files — always create new ones
 # 4. Migrations are embedded at compile time via sqlx::migrate!()
@@ -159,7 +159,7 @@ touch network-monitor-server/migrations/006_your_change.sql
 ### Web unit tests
 
 ```bash
-cd network-monitor-web
+cd netsentinel-web
 npm test
 ```
 
@@ -175,10 +175,10 @@ Docker images are tagged with the git short SHA and `latest` on every successful
 
 ```bash
 # CI builds and pushes:
-ghcr.io/sounmu/network-monitor-server:<short-sha>
-ghcr.io/sounmu/network-monitor-server:latest
-ghcr.io/sounmu/network-monitor-web:<short-sha>
-ghcr.io/sounmu/network-monitor-web:latest
+ghcr.io/sounmu/netsentinel-server:<short-sha>
+ghcr.io/sounmu/netsentinel-server:latest
+ghcr.io/sounmu/netsentinel-web:<short-sha>
+ghcr.io/sounmu/netsentinel-web:latest
 ```
 
 ### Rolling back
@@ -191,8 +191,8 @@ git log --oneline -5          # e.g. 6a0a9d1 is bad, 95afce6 was good
 
 # 2. Pin docker-compose to the known-good image
 #    Edit docker-compose.yml (or use an override file):
-#      image: ghcr.io/sounmu/network-monitor-server:95afce6
-#      image: ghcr.io/sounmu/network-monitor-web:95afce6
+#      image: ghcr.io/sounmu/netsentinel-server:95afce6
+#      image: ghcr.io/sounmu/netsentinel-web:95afce6
 
 # 3. Redeploy
 docker compose pull && docker compose up -d
@@ -215,11 +215,11 @@ Agents run as native binaries (not Docker). Keep the previous binary alongside t
 
 ```bash
 # Before deploying a new agent:
-cp /usr/local/bin/network-monitor-agent /usr/local/bin/network-monitor-agent.bak
+cp /usr/local/bin/netsentinel-agent /usr/local/bin/netsentinel-agent.bak
 
 # To roll back:
-mv /usr/local/bin/network-monitor-agent.bak /usr/local/bin/network-monitor-agent
-sudo systemctl restart network-monitor-agent   # or launchctl on macOS
+mv /usr/local/bin/netsentinel-agent.bak /usr/local/bin/netsentinel-agent
+sudo systemctl restart netsentinel-agent   # or launchctl on macOS
 ```
 
 ---
