@@ -8,14 +8,24 @@ use crate::models::app_state::AppState;
 use crate::repositories::notification_channels_repo::{
     self, CreateChannelRequest, NotificationChannelRow, UpdateChannelRequest,
 };
-use crate::services::auth::{AdminGuard, AuthGuard};
+use crate::services::auth::AdminGuard;
 
 /// GET /api/notification-channels — list all notification channels
+/// Requires AdminGuard to prevent agent JWTs from reading SMTP credentials.
 pub async fn list_channels(
-    _auth: AuthGuard,
+    _admin: AdminGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<NotificationChannelRow>>, AppError> {
-    let channels = notification_channels_repo::get_all(&state.db_pool).await?;
+    let mut channels = notification_channels_repo::get_all(&state.db_pool).await?;
+    // Redact SMTP password from email channels before returning
+    for channel in &mut channels {
+        if channel.channel_type == "email"
+            && let Some(obj) = channel.config.as_object_mut()
+            && obj.contains_key("smtp_pass")
+        {
+            obj.insert("smtp_pass".into(), serde_json::json!("********"));
+        }
+    }
     Ok(Json(channels))
 }
 

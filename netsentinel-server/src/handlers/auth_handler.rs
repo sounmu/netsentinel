@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::errors::AppError;
 use crate::models::app_state::AppState;
 use crate::repositories::users_repo::{self, UserInfo};
-use crate::services::auth::{AdminGuard, AuthGuard};
+use crate::services::auth::{AdminGuard, UserGuard};
 use crate::services::refresh_token::{self, REFRESH_TTL_DAYS, RotateOutcome};
 use crate::services::user_auth;
 
@@ -144,7 +144,7 @@ pub async fn login(
 
     if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
         tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited");
-        return Err(AppError::BadRequest(format!(
+        return Err(AppError::TooManyRequests(format!(
             "Too many login attempts. Try again in {retry_after} seconds."
         )));
     }
@@ -254,7 +254,7 @@ pub async fn refresh(
 
 /// GET /api/auth/me — return current user info from JWT
 pub async fn me(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<UserInfo>, AppError> {
@@ -498,7 +498,7 @@ pub struct SseTicketResponse {
 /// bound to the caller's `user_id` and is consumed atomically on the SSE handshake.
 /// See `services::sse_ticket` for rationale.
 pub async fn issue_sse_ticket(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<SseTicketResponse>, AppError> {
@@ -524,6 +524,11 @@ fn validate_password(password: &str) -> Result<(), AppError> {
     if password.len() < 8 {
         return Err(AppError::BadRequest(
             "Password must be at least 8 characters".to_string(),
+        ));
+    }
+    if password.len() > 128 {
+        return Err(AppError::BadRequest(
+            "Password must not exceed 128 characters".to_string(),
         ));
     }
     let has_upper = password.chars().any(|c| c.is_uppercase());

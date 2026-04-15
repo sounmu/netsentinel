@@ -4,7 +4,7 @@ use axum::http::request::Parts;
 use crate::errors::AppError;
 use chrono::Utc;
 use chrono_tz::Asia::Seoul;
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
@@ -103,15 +103,12 @@ pub fn generate_jwt() -> Result<String, AppError> {
         .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
 }
 
-/// Axum extractor that enforces JWT-based authentication:
-///
-/// - Agent JWT (HS256, 60s expiry): used by agents during scraping.
-/// - User JWT (HS256, 24h expiry): contains sub/username/role, used by web dashboard.
-///
-/// Either JWT type passing is sufficient. Missing or invalid auth returns 401.
-pub struct AuthGuard;
+/// Axum extractor that only accepts **user** JWTs (aud: "user").
+/// Agent JWTs are rejected — agents should only be accessed via the scraping path.
+/// Use this instead of `AuthGuard` on all user-facing read endpoints.
+pub struct UserGuard;
 
-impl<S> FromRequestParts<S> for AuthGuard
+impl<S> FromRequestParts<S> for UserGuard
 where
     S: Send + Sync,
 {
@@ -128,36 +125,14 @@ where
             AppError::Unauthorized("Authorization header must use Bearer scheme".to_string())
         })?;
 
-        // Try agent JWT first (with aud: "agent"), then legacy agent (no aud), then user JWT
-        let decoding_key = DECODING_KEY
-            .get()
-            .ok_or_else(|| AppError::Internal("DECODING_KEY not initialized".to_string()))?;
+        let claims = super::user_auth::decode_user_jwt(token)
+            .ok_or_else(|| AppError::Unauthorized("Invalid or expired token".to_string()))?;
 
-        let mut agent_validation = Validation::new(Algorithm::HS256);
-        agent_validation.set_audience(&["agent"]);
-        if decode::<Claims>(token, decoding_key, &agent_validation).is_ok() {
-            return Ok(AuthGuard);
-        }
-        // Legacy agent tokens without aud claim
-        let mut legacy_validation = Validation::new(Algorithm::HS256);
-        legacy_validation.validate_aud = false;
-        if let Ok(data) = decode::<Claims>(token, decoding_key, &legacy_validation)
-            && data.claims.aud.is_empty()
-        {
-            return Ok(AuthGuard);
+        if !is_token_iat_still_valid(claims.sub, claims.iat) {
+            return Err(AppError::Unauthorized("Token revoked".to_string()));
         }
 
-        // User JWT (different claims structure) — also check revocation cutoff
-        if let Some(claims) = super::user_auth::decode_user_jwt(token) {
-            if !is_token_iat_still_valid(claims.sub, claims.iat) {
-                return Err(AppError::Unauthorized("Token revoked".to_string()));
-            }
-            return Ok(AuthGuard);
-        }
-
-        Err(AppError::Unauthorized(
-            "Invalid or expired token".to_string(),
-        ))
+        Ok(UserGuard)
     }
 }
 

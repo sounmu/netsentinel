@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::errors::AppError;
 use crate::models::app_state::{AppState, MetricsQueryCache};
 use crate::repositories::metrics_repo::{self, MetricsRow, UptimeSummary};
-use crate::services::auth::AuthGuard;
+use crate::services::auth::UserGuard;
 
 /// GET / — server health check
 pub async fn root_handler() -> &'static str {
@@ -46,7 +46,7 @@ pub struct TimeRangeQuery {
 /// Optional `start` and `end` query params return data within that time range.
 /// If omitted, returns the most recent 50 records.
 pub async fn get_metrics_by_host_key(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Path(host_key): Path<String>,
     Query(range): Query<TimeRangeQuery>,
@@ -94,7 +94,7 @@ pub struct UptimeQuery {
 
 /// GET /api/uptime/:host_key — compute daily uptime for a host
 pub async fn get_uptime(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Path(host_key): Path<String>,
     Query(query): Query<UptimeQuery>,
@@ -117,7 +117,7 @@ pub struct BatchMetricsRequest {
 /// Reduces HTTP overhead when the dashboard renders charts for many hosts simultaneously.
 /// Each host_key is queried concurrently, with cache applied for long-range queries.
 pub async fn batch_metrics(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Json(req): Json<BatchMetricsRequest>,
 ) -> Result<Json<HashMap<String, Vec<MetricsRow>>>, AppError> {
@@ -214,6 +214,14 @@ pub async fn public_status(
 ///
 /// Exports the latest metrics for all hosts as Prometheus gauges.
 /// This endpoint is designed to be scraped by a Prometheus server.
+/// Escape a string for use as a Prometheus label value.
+/// Per the text exposition format: backslash, double-quote, and newline must be escaped.
+fn escape_prom_label(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 pub async fn prometheus_metrics(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
@@ -244,8 +252,8 @@ pub async fn prometheus_metrics(
         for (host_key, status) in lks.iter() {
             let labels = format!(
                 "host_key=\"{}\",display_name=\"{}\"",
-                host_key.replace('"', "\\\""),
-                status.display_name.replace('"', "\\\""),
+                escape_prom_label(host_key),
+                escape_prom_label(&status.display_name),
             );
             let online = if status.is_online { 1 } else { 0 };
             output.push_str(&format!(
@@ -259,8 +267,8 @@ pub async fn prometheus_metrics(
     for (host_key, record) in &store.hosts {
         let labels = format!(
             "host_key=\"{}\",display_name=\"{}\"",
-            host_key.replace('"', "\\\""),
-            record.last_known_hostname.replace('"', "\\\""),
+            escape_prom_label(host_key),
+            escape_prom_label(&record.last_known_hostname),
         );
 
         if let Some(latest) = record.alert_history.back() {

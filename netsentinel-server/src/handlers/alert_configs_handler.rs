@@ -6,11 +6,11 @@ use axum::extract::{Path, State};
 use crate::errors::AppError;
 use crate::models::app_state::AppState;
 use crate::repositories::alert_configs_repo::{self, AlertConfigRow, UpsertAlertRequest};
-use crate::services::auth::{AdminGuard, AuthGuard};
+use crate::services::auth::{AdminGuard, UserGuard};
 
 /// GET /api/alert-configs — get global default alert configs
 pub async fn get_global_configs(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
     let configs = alert_configs_repo::get_global_configs(&state.db_pool).await?;
@@ -35,7 +35,7 @@ pub async fn update_global_configs(
 
 /// GET /api/alert-configs/{host_key} — get per-host alert config overrides
 pub async fn get_host_configs(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Path(host_key): Path<String>,
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
@@ -91,13 +91,13 @@ fn validate_alert_request(req: &UpsertAlertRequest) -> Result<(), AppError> {
             req.threshold
         )));
     }
-    if req.sustained_secs < 0 || req.sustained_secs > 3600 {
+    if !(0..=3600).contains(&req.sustained_secs) {
         return Err(AppError::BadRequest(format!(
             "sustained_secs must be between 0 and 3600, got {}",
             req.sustained_secs
         )));
     }
-    if req.cooldown_secs < 0 || req.cooldown_secs > 86400 {
+    if !(0..=86400).contains(&req.cooldown_secs) {
         return Err(AppError::BadRequest(format!(
             "cooldown_secs must be between 0 and 86400, got {}",
             req.cooldown_secs

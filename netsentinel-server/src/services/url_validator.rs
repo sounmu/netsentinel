@@ -18,6 +18,10 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
             || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
         }
         IpAddr::V6(v6) => {
+            // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1) — unwrap and check the inner v4
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_private_ip(IpAddr::V4(mapped));
+            }
             v6.is_loopback()       // ::1
             || v6.is_unspecified() // ::
             // fe80::/10 — link-local
@@ -128,6 +132,18 @@ mod tests {
         assert!(is_private_ip("fe80::1".parse().unwrap()));
         assert!(is_private_ip("fc00::1".parse().unwrap()));
         assert!(is_private_ip("::".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_ipv4_mapped_ipv6() {
+        // ::ffff:127.0.0.1 must be treated as loopback
+        assert!(is_private_ip("::ffff:127.0.0.1".parse().unwrap()));
+        // ::ffff:10.0.0.1 must be treated as private
+        assert!(is_private_ip("::ffff:10.0.0.1".parse().unwrap()));
+        // ::ffff:192.168.1.1 must be treated as private
+        assert!(is_private_ip("::ffff:192.168.1.1".parse().unwrap()));
+        // ::ffff:8.8.8.8 is public
+        assert!(!is_private_ip("::ffff:8.8.8.8".parse().unwrap()));
     }
 
     #[test]

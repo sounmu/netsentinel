@@ -6,11 +6,47 @@ use axum::extract::{Path, State};
 use crate::errors::AppError;
 use crate::models::app_state::AppState;
 use crate::repositories::hosts_repo::{self, CreateHostRequest, HostRow, UpdateHostRequest};
-use crate::services::auth::{AdminGuard, AuthGuard};
+use crate::services::auth::{AdminGuard, UserGuard};
 
 // ── Validation limits ────────────────────────
 const MAX_KEY_LEN: usize = 255;
 const MAX_NAME_LEN: usize = 255;
+
+/// Validate that `host_key` is a safe `host:port` string — no path, query, or fragment.
+/// Prevents SSRF via path/query injection when the scraper builds `http://{host_key}/metrics`.
+fn validate_host_key_format(host_key: &str) -> Result<(), AppError> {
+    // Must not contain path separators, query, or fragment characters
+    if host_key.contains('/')
+        || host_key.contains('?')
+        || host_key.contains('#')
+        || host_key.contains('@')
+    {
+        return Err(AppError::BadRequest(
+            "host_key must be host:port format (no path, query, fragment, or @)".to_string(),
+        ));
+    }
+    // Must parse as a valid socket address (ip:port or hostname:port)
+    // Try as SocketAddr first (handles IP:port), then as host:port string
+    if host_key.parse::<std::net::SocketAddr>().is_err() {
+        // Not a raw IP:port — check it's at least hostname:port
+        let Some((host, port_str)) = host_key.rsplit_once(':') else {
+            return Err(AppError::BadRequest(
+                "host_key must include a port (host:port)".to_string(),
+            ));
+        };
+        if host.is_empty() {
+            return Err(AppError::BadRequest(
+                "host_key host part must not be empty".to_string(),
+            ));
+        }
+        if port_str.parse::<u16>().is_err() {
+            return Err(AppError::BadRequest(
+                "host_key port must be a valid number (1-65535)".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 fn validate_ports(ports: &[i32]) -> Result<(), AppError> {
     for &p in ports {
@@ -26,7 +62,7 @@ fn validate_ports(ports: &[i32]) -> Result<(), AppError> {
 
 /// GET /api/hosts — list all hosts (includes is_online status)
 pub async fn list_hosts(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<crate::repositories::metrics_repo::HostSummary>>, AppError> {
     let hosts = crate::repositories::metrics_repo::fetch_host_summaries(&state.db_pool).await?;
@@ -44,6 +80,7 @@ pub async fn create_host(
             "host_key must not be empty".to_string(),
         ));
     }
+    validate_host_key_format(&body.host_key)?;
     if body.host_key.len() > MAX_KEY_LEN {
         return Err(AppError::BadRequest(format!(
             "host_key must not exceed {} characters",
@@ -77,7 +114,7 @@ pub async fn create_host(
 
 /// GET /api/hosts/{host_key} — get a specific host's full config
 pub async fn get_host(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Path(host_key): Path<String>,
 ) -> Result<Json<HostRow>, AppError> {

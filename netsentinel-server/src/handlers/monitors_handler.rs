@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::errors::AppError;
 use crate::models::app_state::AppState;
 use crate::repositories::{http_monitors_repo, ping_monitors_repo};
-use crate::services::auth::{AdminGuard, AuthGuard};
+use crate::services::auth::{AdminGuard, UserGuard};
 
 // ──────────────────────────────────────────────
 // HTTP Monitors
@@ -15,7 +15,7 @@ use crate::services::auth::{AdminGuard, AuthGuard};
 
 /// GET /api/http-monitors
 pub async fn list_http_monitors(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<http_monitors_repo::HttpMonitor>>, AppError> {
     let monitors = http_monitors_repo::get_all(&state.db_pool).await?;
@@ -82,7 +82,7 @@ pub struct ResultsQuery {
 
 /// GET /api/http-monitors/{id}/results
 pub async fn get_http_results(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
     Query(query): Query<ResultsQuery>,
@@ -94,7 +94,7 @@ pub async fn get_http_results(
 
 /// GET /api/http-monitors/summaries
 pub async fn get_http_summaries(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<http_monitors_repo::HttpMonitorSummary>>, AppError> {
     let summaries = http_monitors_repo::get_summaries(&state.db_pool).await?;
@@ -107,7 +107,7 @@ pub async fn get_http_summaries(
 
 /// GET /api/ping-monitors
 pub async fn list_ping_monitors(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ping_monitors_repo::PingMonitor>>, AppError> {
     let monitors = ping_monitors_repo::get_all(&state.db_pool).await?;
@@ -163,7 +163,7 @@ pub async fn delete_ping_monitor(
 
 /// GET /api/ping-monitors/{id}/results
 pub async fn get_ping_results(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
     Query(query): Query<ResultsQuery>,
@@ -175,7 +175,7 @@ pub async fn get_ping_results(
 
 /// GET /api/ping-monitors/summaries
 pub async fn get_ping_summaries(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<ping_monitors_repo::PingMonitorSummary>>, AppError> {
     let summaries = ping_monitors_repo::get_summaries(&state.db_pool).await?;

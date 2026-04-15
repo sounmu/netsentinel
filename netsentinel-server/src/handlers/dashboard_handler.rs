@@ -7,7 +7,7 @@ use axum::http::HeaderMap;
 use crate::errors::AppError;
 use crate::models::app_state::AppState;
 use crate::repositories::dashboard_repo::{self, DashboardLayout};
-use crate::services::auth::AuthGuard;
+use crate::services::auth::UserGuard;
 use crate::services::user_auth;
 
 /// Extract user_id from the Authorization header (user JWT only)
@@ -27,7 +27,7 @@ fn extract_user_id(headers: &HeaderMap) -> Result<i32, AppError> {
 
 /// GET /api/dashboard — get current user's dashboard layout
 pub async fn get_dashboard(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -46,7 +46,7 @@ pub struct SaveDashboardRequest {
 
 /// PUT /api/dashboard — save current user's dashboard layout
 pub async fn save_dashboard(
-    _auth: AuthGuard,
+    _auth: UserGuard,
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(body): Json<SaveDashboardRequest>,

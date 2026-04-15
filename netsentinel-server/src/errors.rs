@@ -12,6 +12,8 @@ pub enum AppError {
     BadRequest(String),
     /// Authentication required or credentials invalid (401)
     Unauthorized(String),
+    /// Too many requests / rate limited (429)
+    TooManyRequests(String),
     /// Request conflicts with current server state, e.g. duplicate key (409)
     Conflict(String),
 }
@@ -23,6 +25,7 @@ impl std::fmt::Display for AppError {
             AppError::NotFound(msg) => write!(f, "Not Found: {}", msg),
             AppError::BadRequest(msg) => write!(f, "Bad Request: {}", msg),
             AppError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            AppError::TooManyRequests(msg) => write!(f, "Too Many Requests: {}", msg),
             AppError::Conflict(msg) => write!(f, "Conflict: {}", msg),
         }
     }
@@ -64,6 +67,10 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(msg) => {
                 tracing::warn!(error = %msg, status = 401, "Unauthorized");
                 (StatusCode::UNAUTHORIZED, msg).into_response()
+            }
+            AppError::TooManyRequests(msg) => {
+                tracing::warn!(error = %msg, status = 429, "Too Many Requests");
+                (StatusCode::TOO_MANY_REQUESTS, msg).into_response()
             }
             AppError::Conflict(msg) => {
                 tracing::warn!(error = %msg, status = 409, "Conflict");
