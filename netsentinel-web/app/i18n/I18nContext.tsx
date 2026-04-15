@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -35,6 +36,11 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(STORAGE_KEY, next);
     setLocaleState(next);
   }, []);
+
+  // Sync <html lang> attribute with current locale
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const value = useMemo(
     () => ({ locale, t: translations[locale], setLocale }),

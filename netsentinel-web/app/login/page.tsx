@@ -105,6 +105,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 16 }}>
             <label
+              htmlFor="login-username"
               style={{
                 display: "block",
                 color: "var(--text-muted)",
@@ -115,6 +116,7 @@ export default function LoginPage() {
               {t.auth.username}
             </label>
             <input
+              id="login-username"
               className="date-input"
               type="text"
               value={username}
@@ -126,6 +128,7 @@ export default function LoginPage() {
 
           <div style={{ marginBottom: 24 }}>
             <label
+              htmlFor="login-password"
               style={{
                 display: "block",
                 color: "var(--text-muted)",
@@ -136,6 +139,7 @@ export default function LoginPage() {
               {t.auth.password}
             </label>
             <input
+              id="login-password"
               className="date-input"
               type="password"
               value={password}
@@ -151,7 +155,7 @@ export default function LoginPage() {
               width: "100%",
               padding: "10px 16px",
               backgroundColor: "var(--accent-blue)",
-              color: "#fff",
+              color: "var(--text-on-accent, #fff)",
               border: "none",
               borderRadius: 6,
               fontSize: 15,

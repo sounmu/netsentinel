@@ -1,4 +1,4 @@
-import { MetricsRow, HostsApiResponse } from "@/app/types/metrics";
+import { MetricsRow } from "@/app/types/metrics";
 
 // Default to localhost (not 127.0.0.1) so the browser treats the frontend
 // (localhost:3001) and API (localhost:3000) as same-site. This is required
@@ -515,4 +515,4 @@ export const fetchBatchMetrics = (hostKeys: string[], start: string, end: string
     end,
   });
 
-export type { MetricsRow, HostsApiResponse };
+export type { MetricsRow };
