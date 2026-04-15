@@ -18,64 +18,80 @@ export default function CpuCoreGrid({ cores }: CpuCoreGridProps) {
   if (!cores || cores.length === 0) return null;
 
   return (
-    <div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(auto-fill, minmax(${cores.length > 16 ? 42 : 56}px, 1fr))`,
-          gap: 4,
-        }}
-      >
-        {cores.map((pct, idx) => {
-          const clamped = Math.min(Math.max(pct, 0), 100);
-          const color = getCoreColor(clamped);
-          return (
-            <div
-              key={idx}
-              title={`${t.cpuCores.core} ${idx}: ${clamped.toFixed(1)}%`}
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: cores.length > 8 ? "1fr 1fr" : "1fr",
+        gap: 4,
+      }}
+    >
+      {cores.map((pct, idx) => {
+        const clamped = Math.min(Math.max(pct, 0), 100);
+        const color = getCoreColor(clamped);
+        return (
+          <div
+            key={idx}
+            role="meter"
+            aria-label={`${t.cpuCores.core} ${idx}`}
+            aria-valuenow={clamped}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            title={`${t.cpuCores.core} ${idx}: ${clamped.toFixed(1)}%`}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "3px 0",
+            }}
+          >
+            <span
               style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 2,
+                fontSize: 10,
+                color: "var(--text-muted)",
+                fontFamily: "var(--font-mono), monospace",
+                minWidth: 18,
+                textAlign: "right",
+                flexShrink: 0,
               }}
             >
-              <div
-                style={{
-                  width: "100%",
-                  height: 20,
-                  background: "var(--bg-card-hover)",
-                  borderRadius: 4,
-                  overflow: "hidden",
-                  position: "relative",
-                }}
-              >
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: 0,
-                    left: 0,
-                    width: "100%",
-                    height: `${clamped}%`,
-                    background: color,
-                    borderRadius: 4,
-                    transition: "height 0.5s ease, background 0.3s ease",
-                  }}
-                />
-              </div>
+              {idx}
+            </span>
+            <span
+              style={{
+                flex: 1,
+                height: 10,
+                background: "var(--bg-muted)",
+                borderRadius: 3,
+                overflow: "hidden",
+              }}
+            >
               <span
                 style={{
-                  fontSize: 9,
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono), monospace",
+                  display: "block",
+                  height: "100%",
+                  width: `${clamped}%`,
+                  background: color,
+                  borderRadius: 3,
+                  transition: "width 0.5s ease, background 0.3s ease",
                 }}
-              >
-                {idx}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+              />
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                fontFamily: "var(--font-mono), monospace",
+                color: color,
+                minWidth: 38,
+                textAlign: "right",
+                flexShrink: 0,
+              }}
+            >
+              {clamped.toFixed(0)}%
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

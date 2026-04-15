@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
-import SidebarShell from "./components/SidebarShell";
+import Navbar from "./components/Navbar";
 import { SSEProvider } from "./lib/sse-context";
 import { I18nProvider } from "./i18n/I18nContext";
 import { ThemeProvider } from "./theme/ThemeContext";
@@ -31,12 +31,12 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "NetMonitor — Infrastructure Dashboard",
+  title: "NetSentinel — Infrastructure Dashboard",
   description: "Real-time server infrastructure monitoring dashboard",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "NetMonitor",
+    title: "NetSentinel",
   },
 };
 
@@ -56,16 +56,9 @@ export default function RootLayout({
           <ServiceWorkerRegistration />
           <SSEProvider>
             <ErrorBoundary>
-            <div className="dashboard-grid">
-              <SidebarShell />
-              <main
-                id="main-content"
-                style={{
-                  overflowY: "auto",
-                  minHeight: "100vh",
-                  background: "var(--bg-primary)",
-                }}
-              >
+            <div className="app-layout">
+              <Navbar />
+              <main id="main-content">
                 {children}
               </main>
             </div>

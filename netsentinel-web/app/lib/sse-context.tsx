@@ -238,10 +238,13 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
     return { hostList: list, onlineCount: online, offlineCount: offline };
   }, [statusMap]);
 
+  const contextValue = useMemo(
+    () => ({ metricsMap, statusMap, isConnected, hostList, onlineCount, offlineCount }),
+    [metricsMap, statusMap, isConnected, hostList, onlineCount, offlineCount],
+  );
+
   return (
-    <SSEContext.Provider
-      value={{ metricsMap, statusMap, isConnected, hostList, onlineCount, offlineCount }}
-    >
+    <SSEContext.Provider value={contextValue}>
       {children}
     </SSEContext.Provider>
   );

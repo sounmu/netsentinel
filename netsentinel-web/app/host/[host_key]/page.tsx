@@ -7,38 +7,41 @@ const TimeSeriesChart = dynamic(
   () => import("@/app/components/TimeSeriesChart"),
   { ssr: false, loading: () => <div className="skeleton" style={{ height: 300 }} /> },
 );
-import LoadGauge from "@/app/components/LoadGauge";
-import DockerGrid from "@/app/components/DockerGrid";
 import PortList from "@/app/components/PortList";
-import DiskUsageBar from "@/app/components/DiskUsageBar";
-import ProcessTable from "@/app/components/ProcessTable";
-import TemperatureDisplay from "@/app/components/TemperatureDisplay";
 import GpuCard from "@/app/components/GpuCard";
-import CpuCoreGrid from "@/app/components/CpuCoreGrid";
-import NetworkInterfaceTable from "@/app/components/NetworkInterfaceTable";
 import {
   getHostStatus,
-  STATUS_BADGE_CLASS,
   STATUS_DOT_CLASS,
-  STATUS_LABELS,
 } from "@/app/lib/status";
 import {
   Activity,
   ArrowLeft,
   Wifi,
   Network,
-  Layers,
-  HardDrive,
-  Cpu,
-  Thermometer,
   Monitor,
+  Clock,
+  Globe,
+  Server,
+  Cpu,
+  MemoryStick,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { LoadAverage } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
 
 interface Props {
   params: Promise<{ host_key: string }>;
+}
+
+/** Format uptime from boot_time (Unix timestamp seconds).
+ *  <24h → "Xh Xm", ≥24h → "Xd Xh" */
+function formatUptime(bootTime: number): string {
+  const now = Math.floor(Date.now() / 1000);
+  const secs = Math.max(now - bootTime, 0);
+  const minutes = Math.floor(secs / 60) % 60;
+  const hours = Math.floor(secs / 3600) % 24;
+  const days = Math.floor(secs / 86400);
+  if (days > 0) return `${days}d ${hours}h`;
+  return `${hours}h ${minutes}m`;
 }
 
 function SectionCard({
@@ -64,8 +67,8 @@ function SectionCard({
           borderBottom: "1px solid var(--border-subtle)",
         }}
       >
-        <span style={{ color: "var(--accent-blue)", display: "flex" }}>{icon}</span>
-        <h2 style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+        <span style={{ color: "var(--text-muted)", display: "flex" }}>{icon}</span>
+        <h2 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
           {title}
         </h2>
       </div>
@@ -76,116 +79,178 @@ function SectionCard({
 
 export default function HostPage({ params }: Props) {
   const { host_key } = use(params);
-  // host_key is the target URL (e.g. "192.168.1.10:9101") — needs URL decoding
   const decodedHostKey = decodeURIComponent(host_key);
   const router = useRouter();
 
   const { metricsMap, statusMap, isConnected } = useSSE();
   const { t } = useI18n();
 
-  // Look up latest metrics and status data for this host by host_key from SSE
   const liveMetrics = metricsMap[decodedHostKey] ?? null;
   const statusData = statusMap[decodedHostKey] ?? null;
 
-  // Display name: prefer display_name, fall back to raw host_key
   const displayName = liveMetrics?.display_name ?? statusData?.display_name ?? decodedHostKey;
-
-  // Connected but no data received for this host yet
   const hasData = liveMetrics !== null || statusData !== null;
 
-  const loadAvg: LoadAverage | null = liveMetrics
-    ? {
-        one_min: liveMetrics.load_1min,
-        five_min: liveMetrics.load_5min,
-        fifteen_min: liveMetrics.load_15min,
-      }
-    : null;
-
-  const docker = statusData?.docker_containers ?? [];
-  const dockerStats = statusData?.docker_stats ?? [];
   const ports = statusData?.ports ?? [];
-  const disks = statusData?.disks ?? [];
-  const processes = statusData?.processes ?? [];
-  const temperatures = statusData?.temperatures ?? [];
   const gpus = statusData?.gpus ?? [];
-  const cpuCores = liveMetrics?.cpu_cores ?? [];
-  const networkInterfaces = liveMetrics?.network_interface_rates ?? [];
   const latestTimestamp = liveMetrics?.timestamp ?? statusData?.last_seen ?? null;
 
+  const isOnline = liveMetrics?.is_online ?? statusData?.is_online;
+  const hostStatus = latestTimestamp ? getHostStatus(latestTimestamp, isOnline) : "pending";
+
   return (
-    <div className="page-content fade-in">
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          marginBottom: 24,
-          flexWrap: "wrap",
-          gap: 12,
-        }}
-      >
-        <div>
-          <button
-            onClick={() => router.push("/")}
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              color: "var(--text-muted)",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              marginBottom: 8,
-              padding: 0,
-            }}
-          >
-            <ArrowLeft size={12} /> {t.host.backToOverview}
-          </button>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+    <div className="fade-in">
+      {/* Info bar */}
+      <div className="glass-card" style={{ marginBottom: 16 }}>
+        <div
+          style={{
+            padding: "16px 20px 0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              onClick={() => router.push("/")}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                color: "var(--text-muted)",
+                display: "flex",
+                alignItems: "center",
+                padding: 0,
+              }}
+              aria-label={t.host.backToOverview}
+            >
+              <ArrowLeft size={18} />
+            </button>
             <h1
               style={{
-                fontSize: 24,
-                fontWeight: 800,
+                fontSize: 20,
+                fontWeight: 700,
                 color: "var(--text-primary)",
-                letterSpacing: "-0.5px",
+                letterSpacing: "-0.3px",
               }}
             >
               {displayName}
             </h1>
-            {/* Show host_key (IP:port) as secondary info when different from display_name */}
-            {displayName !== decodedHostKey && (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono), monospace",
-                }}
-              >
-                {decodedHostKey}
-              </div>
-            )}
-            {latestTimestamp && (() => {
-              const isOnline = liveMetrics?.is_online ?? statusData?.is_online;
-              const status = getHostStatus(latestTimestamp, isOnline);
-              return (
-                <span className={STATUS_BADGE_CLASS[status]}>
-                  <span className={STATUS_DOT_CLASS[status]} />
-                  {STATUS_LABELS[status]}
-                </span>
-              );
-            })()}
+            <span
+              className={STATUS_DOT_CLASS[hostStatus]}
+              style={{ width: 10, height: 10 }}
+            />
           </div>
-          {latestTimestamp && (
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-              {t.host.lastSeen} {new Date(latestTimestamp).toLocaleString()}
+        </div>
+
+        <div className="info-bar">
+          {/* System info (from /system-info endpoint) */}
+          {statusData?.ip_address && (
+            <>
+              <div className="info-bar-item">
+                <Globe size={14} color="var(--text-muted)" />
+                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12 }}>
+                  {statusData.ip_address}
+                </span>
+              </div>
+              <div className="info-bar-separator" />
+            </>
+          )}
+          {statusData?.boot_time && (
+            <>
+              <div className="info-bar-item">
+                <Clock size={14} color="var(--text-muted)" />
+                <span style={{ fontSize: 12 }}>
+                  {t.host.uptime}: {formatUptime(statusData.boot_time)}
+                </span>
+              </div>
+              <div className="info-bar-separator" />
+            </>
+          )}
+          {statusData?.os_info && (
+            <>
+              <div className="info-bar-item">
+                <Monitor size={14} color="var(--text-muted)" />
+                <span style={{ fontSize: 12 }}>{statusData.os_info}</span>
+              </div>
+              <div className="info-bar-separator" />
+            </>
+          )}
+          {statusData?.cpu_model && (
+            <>
+              <div className="info-bar-item">
+                <Cpu size={14} color="var(--text-muted)" />
+                <span style={{ fontSize: 12 }}>{statusData.cpu_model}</span>
+              </div>
+              <div className="info-bar-separator" />
+            </>
+          )}
+          {statusData?.memory_total_mb != null && (
+            <div className="info-bar-item">
+              <MemoryStick size={14} color="var(--text-muted)" />
+              <span style={{ fontSize: 12, fontFamily: "var(--font-mono), monospace" }}>
+                {statusData.memory_total_mb >= 1024
+                  ? `${(statusData.memory_total_mb / 1024).toFixed(1)} GB`
+                  : `${statusData.memory_total_mb} MB`}
+              </span>
             </div>
+          )}
+
+          {/* Fallback: show basic info when system info is not yet available */}
+          {!statusData?.ip_address && !statusData?.os_info && (
+            <>
+              {displayName !== decodedHostKey && (
+                <>
+                  <div className="info-bar-item">
+                    <Globe size={14} color="var(--text-muted)" />
+                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12 }}>
+                      {decodedHostKey}
+                    </span>
+                  </div>
+                  <div className="info-bar-separator" />
+                </>
+              )}
+              <div className="info-bar-item">
+                <Server size={14} color="var(--text-muted)" />
+                <span>{displayName}</span>
+              </div>
+              {latestTimestamp && (
+                <>
+                  <div className="info-bar-separator" />
+                  <div className="info-bar-item">
+                    <Clock size={14} color="var(--text-muted)" />
+                    <span style={{ fontSize: 12, fontFamily: "var(--font-mono), monospace" }}>
+                      {new Date(latestTimestamp).toLocaleString()}
+                    </span>
+                  </div>
+                </>
+              )}
+              {liveMetrics && (
+                <>
+                  <div className="info-bar-separator" />
+                  <div className="info-bar-item">
+                    <Cpu size={14} color="var(--text-muted)" />
+                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12, fontWeight: 600 }}>
+                      CPU {liveMetrics.cpu_usage_percent.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="info-bar-separator" />
+                  <div className="info-bar-item">
+                    <Activity size={14} color="var(--text-muted)" />
+                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12, fontWeight: 600 }}>
+                      RAM {liveMetrics.memory_usage_percent.toFixed(1)}%
+                    </span>
+                  </div>
+                </>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      {/* Loading skeleton while waiting for connection */}
+      {/* Loading */}
       {!isConnected && !hasData && (
         <div style={{ display: "grid", gap: 16 }}>
           {[220, 400, 200].map((h, i) => (
@@ -194,146 +259,53 @@ export default function HostPage({ params }: Props) {
         </div>
       )}
 
-      {/* Connected but no data available for this host yet */}
+      {/* No data */}
       {isConnected && !hasData && (
         <div
           className="glass-card"
-          style={{
-            padding: "48px 24px",
-            textAlign: "center",
-            color: "var(--text-muted)",
-          }}
+          style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)" }}
         >
-          <Wifi size={40} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
-            {t.host.noMetrics}
-          </div>
-          <div style={{ fontSize: 13 }}>
-            {t.host.noMetricsHint}
-          </div>
+          <Wifi size={36} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>{t.host.noMetrics}</div>
+          <div style={{ fontSize: 13 }}>{t.host.noMetricsHint}</div>
         </div>
       )}
 
-      {/* Actual data */}
+      {/* All charts + remaining sections */}
       {hasData && (
         <>
-          {/* Time-series chart — internally uses REST API + SSE trigger */}
-          <div style={{ marginBottom: 20 }}>
+          {/* Main time-series charts (CPU, RAM, Network, Temp, Cores, Disk, Processes) */}
+          <div style={{ marginBottom: 16 }}>
             <TimeSeriesChart hostKey={decodedHostKey} />
           </div>
 
-          {/* Load Average + Ports */}
+          {/* Ports + GPU — small info cards */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
               gap: 16,
               marginBottom: 16,
             }}
           >
-            <SectionCard title={t.host.loadAverage} icon={<Activity size={15} />}>
-              {loadAvg && <LoadGauge load={loadAvg} />}
-            </SectionCard>
-
-            <SectionCard
-              title={`${t.host.portStatus} (${ports.length})`}
-              icon={<Network size={15} />}
-            >
-              <PortList ports={ports} />
-            </SectionCard>
+            {ports.length > 0 && (
+              <SectionCard
+                title={`${t.host.portStatus} (${ports.length})`}
+                icon={<Network size={15} />}
+              >
+                <PortList ports={ports} />
+              </SectionCard>
+            )}
+            {gpus.length > 0 && (
+              <SectionCard
+                title={`${t.host.gpu} (${gpus.length})`}
+                icon={<Monitor size={15} />}
+              >
+                <GpuCard gpus={gpus} />
+              </SectionCard>
+            )}
           </div>
 
-          {/* CPU Cores + Network Interfaces */}
-          {(cpuCores.length > 0 || networkInterfaces.length > 0) && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                gap: 16,
-                marginBottom: 16,
-              }}
-            >
-              {cpuCores.length > 0 && (
-                <SectionCard
-                  title={`${t.cpuCores.title} (${cpuCores.length})`}
-                  icon={<Cpu size={15} />}
-                >
-                  <CpuCoreGrid cores={cpuCores} />
-                </SectionCard>
-              )}
-              {networkInterfaces.length > 0 && (
-                <SectionCard
-                  title={`${t.networkInterfaces.title} (${networkInterfaces.length})`}
-                  icon={<Network size={15} />}
-                >
-                  <NetworkInterfaceTable interfaces={networkInterfaces} />
-                </SectionCard>
-              )}
-            </div>
-          )}
-
-          {/* Disk + Processes grid */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              gap: 16,
-              marginBottom: 16,
-            }}
-          >
-            <SectionCard
-              title={`${t.host.diskUsage} (${disks.length})`}
-              icon={<HardDrive size={15} />}
-            >
-              <DiskUsageBar disks={disks} />
-            </SectionCard>
-
-            <SectionCard
-              title={`${t.host.topProcesses} (${processes.length})`}
-              icon={<Cpu size={15} />}
-            >
-              <ProcessTable processes={processes} />
-            </SectionCard>
-          </div>
-
-          {/* Temperature + GPU grid */}
-          {(temperatures.length > 0 || gpus.length > 0) && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                gap: 16,
-                marginBottom: 16,
-              }}
-            >
-              {temperatures.length > 0 && (
-                <SectionCard
-                  title={`${t.host.temperatures} (${temperatures.length})`}
-                  icon={<Thermometer size={15} />}
-                >
-                  <TemperatureDisplay temperatures={temperatures} />
-                </SectionCard>
-              )}
-              {gpus.length > 0 && (
-                <SectionCard
-                  title={`${t.host.gpu} (${gpus.length})`}
-                  icon={<Monitor size={15} />}
-                >
-                  <GpuCard gpus={gpus} />
-                </SectionCard>
-              )}
-            </div>
-          )}
-
-          {/* Docker containers */}
-          <div>
-            <SectionCard
-              title={`${t.host.dockerContainers} (${docker.length})`}
-              icon={<Layers size={15} />}
-            >
-              <DockerGrid containers={docker} stats={dockerStats} />
-            </SectionCard>
-          </div>
         </>
       )}
     </div>

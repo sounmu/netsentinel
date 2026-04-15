@@ -3,7 +3,7 @@
 import { DockerContainer, DockerContainerStats } from "@/app/types/metrics";
 import { Box, Cpu } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
-import { formatNetworkSpeed } from "@/app/lib/formatters";
+import { formatBytes } from "@/app/lib/formatters";
 
 interface DockerGridProps {
   containers: DockerContainer[];
@@ -41,7 +41,7 @@ export default function DockerGrid({ containers, stats }: DockerGridProps) {
         const stat = stats?.find((s) => s.container_name === c.container_name);
         return (
           <div
-            key={idx}
+            key={c.container_name}
             style={{
               background: isRunning ? "var(--status-online-bg)" : "var(--status-offline-bg)",
               border: `1px solid ${isRunning ? "var(--badge-online-border)" : "var(--badge-offline-border)"}`,
@@ -169,11 +169,11 @@ export default function DockerGrid({ containers, stats }: DockerGridProps) {
                 <span>
                   NET{" "}
                   <span style={{ color: "var(--accent-green)" }}>
-                    {formatNetworkSpeed(stat.net_rx_bytes)}
+                    {formatBytes(stat.net_rx_bytes)}
                   </span>
                   {" / "}
                   <span style={{ color: "var(--accent-blue)" }}>
-                    {formatNetworkSpeed(stat.net_tx_bytes)}
+                    {formatBytes(stat.net_tx_bytes)}
                   </span>
                 </span>
               </div>
