@@ -219,9 +219,10 @@ const ChartCard = memo(function ChartCard({
               labelFormatter={(label) => new Date(label as number).toLocaleString(locale === "ko" ? "ko-KR" : "en-US")}
               formatter={
                 tooltipFormatter
-                  ? (value: unknown) => {
+                  ? (value: unknown, name: string | number | undefined) => {
                       const num = typeof value === "number" ? value : Number(value);
-                      return tooltipFormatter(num);
+                      const [formatted] = tooltipFormatter(num);
+                      return [formatted, name ?? ""];
                     }
                   : undefined
               }
