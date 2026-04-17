@@ -137,6 +137,12 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} << 'EOF'
             set -euo pipefail
 
+            # IMPORTANT: never call `exit 0` mid-heredoc. The ssh client keeps
+            # feeding the remaining heredoc bytes into stdin; an early remote
+            # exit closes that FD, the client writes into a closed pipe,
+            # SIGPIPE fires, and ssh returns a non-zero status even though
+            # the remote script succeeded. Use a flag + natural EOF fallthrough.
+
             # Guard against the legacy container answering on :3000 while the
             # new netsentinel-server failed to start — previously that produced
             # a false-positive green health check.
@@ -150,14 +156,18 @@ jobs:
             fi
             echo "✅ Container up: $RUNNING"
 
+            health_ok=0
             for i in $(seq 1 30); do
               if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
                 echo "✅ Health check passed (attempt $i)"
-                exit 0
+                health_ok=1
+                break
               fi
               sleep 2
             done
-            echo "❌ Health check failed after 60s"
-            docker compose -f ~/netsentinel/docker-compose.yml logs --tail=30 server
-            exit 1
+            if [ "$health_ok" -ne 1 ]; then
+              echo "❌ Health check failed after 60s"
+              docker compose -f ~/netsentinel/docker-compose.yml logs --tail=30 server
+              exit 1
+            fi
           EOF
