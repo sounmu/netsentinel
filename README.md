@@ -138,9 +138,9 @@ cargo run
 |---|---|---|---|
 | `POSTGRES_USER` | No | `postgres` | DB username |
 | `POSTGRES_PASSWORD` | **Yes** | — | DB password |
-| `POSTGRES_DB` | No | `network_monitor` | DB name (kept for backward compat) |
+| `POSTGRES_DB` | No | `postgres` | DB name (use `postgres` for fresh installs; legacy deployments may still hold data in a differently-named DB) |
 | `CLOUDFLARE_TUNNEL_TOKEN` | No | — | Cloudflare Tunnel token |
-| `NEXT_PUBLIC_API_URL` | No | `http://localhost:3000` | Backend URL seen by browser |
+| `NEXT_PUBLIC_API_URL` | No | `http://localhost:3000` | Backend URL the **browser** fetches from. **Must** match an entry in the server's `ALLOWED_ORIGINS` verbatim (scheme + host + port, no trailing slash). Baked into the web bundle at build time — changes require `docker compose up -d --build web`. In Cloudflare-Tunnel deployments omit the `:3000` port (the tunnel exposes 443 only). |
 
 ### Server `netsentinel-server/.env`
 
@@ -148,7 +148,7 @@ cargo run
 |---|---|---|---|
 | `DATABASE_URL` | **Yes** | — | PostgreSQL connection string |
 | `JWT_SECRET` | **Yes** | — | HS256 secret (min 32 chars). `openssl rand -hex 32` |
-| `ALLOWED_ORIGINS` | No | `http://localhost:3001` | Comma-separated CORS origins |
+| `ALLOWED_ORIGINS` | No | `http://localhost:3001` | Comma-separated CORS origins. Must include (1) the site hosting the dashboard, (2) `NEXT_PUBLIC_API_URL` itself. Origins are byte-matched — no trailing slash, no wildcards (`*` is incompatible with `credentials: "include"`). |
 | `SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `SERVER_PORT` | No | `3000` | Bind port |
 | `SCRAPE_INTERVAL_SECS` | No | `10` | How often to pull each agent |
@@ -156,6 +156,7 @@ cargo run
 | `SSE_BUFFER_SIZE` | No | `128` | SSE broadcast channel buffer |
 | `TRUSTED_PROXY_COUNT` | No | `0` | Reverse proxy count for X-Forwarded-For (0 = use peer IP directly) |
 | `METRICS_CACHE_MAX_ENTRIES` | No | `200` | Max in-memory query-cache entries (oldest-inserted evicted when full; TTL 120 s) |
+| `METRICS_TOKEN` | No | — | Bearer token required to scrape `/metrics` (Prometheus). Unset = open endpoint (firewall at reverse proxy). Set = `Authorization: Bearer <token>` required. Generate with `openssl rand -hex 32`. |
 
 ### Agent `netsentinel-agent/.env`
 
@@ -214,8 +215,9 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 | `DELETE` | `/api/ping-monitors/{id}` | Delete Ping monitor |
 | `GET` | `/api/ping-monitors/{id}/results` | Ping check results |
 | `GET` | `/api/public/status` | Public status page data **(no auth)** |
-| `GET` | `/metrics` | Prometheus metrics export **(no auth)** |
+| `GET` | `/metrics` | Prometheus metrics export (**auth optional** — set `METRICS_TOKEN` to require `Bearer`) |
 | `POST` | `/api/auth/logout` | Revoke all tokens for current user |
+| `POST` | `/api/auth/refresh` | Rotate refresh cookie + mint fresh access JWT (cookie is the credential; no auth header) |
 | `POST` | `/api/auth/sse-ticket` | Mint single-use ticket for SSE |
 | `POST` | `/api/admin/users/{id}/revoke-sessions` | Admin: force-revoke user sessions |
 | `GET` | `/api/stream?key=<ticket>` | SSE stream (`metrics` + `status`) |
