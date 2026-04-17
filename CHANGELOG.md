@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — post-0.3.2 review sweep
+
+Driven by the multi-layer audit in [`docs/review-20260417.md`](docs/review-20260417.md): five parallel reviewers + a cross-layer contract reviewer produced 131 findings (2 Critical, 25 High, 55 Medium, 49 Low). This section tracks commits on `hardening` that land fixes from the **Top 10 priority TODOs** and the immediate follow-ons (UX cleanup, docs sync). Release tag is pending — see the `hardening` branch for the latest HEAD.
+
+### Security
+
+- **Remove legacy no-`aud` JWT fallback** in `decode_user_jwt` — privilege-escalation vector (any process with `JWT_SECRET` could mint admin tokens by omitting `aud`). Accepted strictly on `aud: "user"`. Review finding #3.
+- **Add SSRF protection to Email notification channels** (`services/url_validator::validate_host` applied at handler + runtime in `alert_service::send_email`); blocklist non-SMTP ports (22, 80, 443, 3306, 5432, 6379, 11211, 27017). Review finding #4.
+- **Optional bearer token on `/metrics`** via new `METRICS_TOKEN` env var; constant-time comparison. Backward-compatible (unset = open). Review finding #5.
+- **Preserve redacted `smtp_pass` on notification channel PUT** — incoming `"********"` placeholder is swapped back to the stored secret before validation so a naive "edit name → save" round-trip no longer overwrites SMTP credentials with the literal mask. Review finding #8.
+
+### Fixed
+
+- **Split 401/403** — `AdminGuard` role failures now return `AppError::Forbidden` (403) instead of `Unauthorized` (401). Web `fetcher`/`apiCall` throw typed `ApiError(status, message)` so callers distinguish "session expired" from "insufficient permissions"; viewer-role users no longer get forced to `/login` when they visit an admin page. Review finding #6.
+- **Purge deleted host from SSE maps** — new `removeHost(hostKey)` on the SSE context, called from `agents/page.tsx` after a successful delete so ghost rows no longer linger on the Overview until reload. Review finding #7.
+- **Password policy alignment on `/setup`** — client now enforces 8–128 chars + uppercase/lowercase/digit/special to match the server's password validator. Review finding #1.
+- **Canonicalize timestamps as RFC 3339 UTC end-to-end** — agent emits `Utc::now().to_rfc3339_opts(Millis, true)`; server prefers the agent-provided value when parseable; `MetricsRow.timestamp` serializer uses `%:z` instead of `%z` so round-trip through its own deserializer and browser `Date.parse` both succeed. Review findings #2 + H-X1.
+- **Sync `<html lang>` with active locale** — `I18nContext` effect updates `document.documentElement.lang` so screen readers, browser translate, and spellcheck all key off the right language. Review finding H-W1.
+- **ErrorBoundary i18n + theme tokens** — functional `ErrorFallback` child consumes `useI18n`; `color: "white"` replaced with `var(--text-on-accent, #fff)`. Review finding H-W3.
+- **Finish `network-monitor` → `netsentinel` rename** in PWA `manifest.json` name/short_name and `sw.js` `CACHE_NAME = "netsentinel-v1"` so installed PWAs show the correct brand and users pick up fresh asset bundles on next navigation. Review findings H-W4 + M-W5.
+- **Fix hydration mismatch on public `/status` page** — timestamp now seeded in a post-hydration effect (null on SSR) with a 30 s tick; `publicFetcher` rejects non-2xx instead of silently parsing error bodies as JSON. Review findings H-W5 + M-W9.
+- **Accessible names on icon-only delete buttons** (`/monitors`, `/agents` `IconButton`) + `tabIndex={-1}` on `<main id="main-content">` so the "Skip to content" link actually moves keyboard focus in Safari/older Firefox. Review findings H-W6 + L-W2 + M-W8.
+- **Agent sysinfo serialization** — new `COLLECT_GATE` async mutex around `collect_sysinfo` so concurrent scrapes cooperate in the async layer instead of piling up on the `std::Mutex<System>` inside blocking threads. Review finding #9.
+
+### Changed
+
+- **`MetricsQueryCache` entry cap** via new `METRICS_CACHE_MAX_ENTRIES` env var (default 200) — fixed the v0.3.0 RSS regression driven by per-core CPU / per-interface network / per-container docker_stats JSONB pinned in the cache within the 120 s TTL window. Previously shipped in the v0.3.2 hotfix trail.
+- **`HostsSnapshot` in-memory cache for hosts + alert_configs** (`services/hosts_snapshot.rs`, `Arc<RwLock<Arc<HostsSnapshot>>>`): the scraper now reads via `Arc::clone` every 10 s instead of running `SELECT * FROM hosts` + `SELECT * FROM alert_configs` — ~720 DB round-trips/hour eliminated. Refresh is synchronous on every mutation handler + 60 s background tick as a backstop. Review finding #10.
+- **Prometheus `/metrics` snapshot-and-release** — `store` + `last_known_status` locks are now held only long enough to clone plain `Vec<OnlineRow>` / `Vec<MetricRow>`, never across `format!()`. Eliminates per-cycle scraper contention and removes a latent lock-ordering hazard. Review finding H-SP1.
+- **Server `[profile.release]`** — added LTO + `codegen-units = 1` + `strip = true` to match the agent. Review finding M-SP7.
+- **TimescaleDB `metrics_5min` CA compression** — new migration `015_metrics_5min_compression.sql` sets `compress = true, compress_segmentby = 'host_key'` with a 14-day policy. Caps unbounded CA growth from the v0.3.0 JSONB snapshot columns. Review finding M-SP9.
+- **Auth UX in `AuthProvider`** — public paths (`/login`, `/setup`, `/status`) render eagerly regardless of `isLoading`; login/setup/status pages use a new `publicFetcher` helper (no refresh-then-logout on 401); `serverLogout` gets a 4 s `AbortController` timeout. Review findings M-W2 + M-W3 + L-W1 + L-W4.
+- **Theming sweep** — 17+ hardcoded `"white"` / `"#fff"` sites across `alerts`, `agents`, `monitors`, `setup`, `DashboardWidgets`, `DockerCharts`, `DateTimePicker`, `NetworkInterfaceTable` replaced with `var(--text-on-accent, #fff)`. Review finding M-W1.
+- **GitHub Actions verify step** — drop early `exit 0` inside the ssh heredoc to stop false-red SIGPIPE when the health check passes on the first attempt.
+- **ESLint rules pinned** — `react-hooks/rules-of-hooks`, `exhaustive-deps`, `set-state-in-effect` declared as errors explicitly so `eslint-config-next` minor bumps can't silently downgrade them.
+- **Bump LaunchDaemon label** `com.user.netsentinel` → `com.sounmu.netsentinel`, moved deploy assets to `netsentinel-agent/deploy/macos/`. Previously shipped in the v0.3.2 hotfix trail.
+
+### Removed
+
+- **Orphaned `Sidebar.tsx` + `SidebarShell.tsx`** (−448 lines) from the pre-Navbar migration. Review finding M-W4.
+
+### Docs
+
+- **`/api/auth/refresh` documented in CLAUDE.md** under REST API Endpoints. Previously load-bearing but absent. Review finding H-X3.
+- **Notification channel SMTP field names corrected** in CLAUDE.md — actual implementation uses `smtp_host`, `smtp_port`, `smtp_user`, `smtp_pass`, `from`, `to` (not the `host/username/password/...` names the doc claimed). Review finding M-X1.
+- **Frontend ↔ Server origin contract paragraph** added to CLAUDE.md and README — explicitly documents that `NEXT_PUBLIC_API_URL` must appear in `ALLOWED_ORIGINS` byte-for-byte, with the Cloudflare-Tunnel port-caveat called out. Review finding L-X1.
+- **New `METRICS_CACHE_MAX_ENTRIES`, `METRICS_TOKEN` env vars** documented in both CLAUDE.md and README.
+
 ## [0.3.2] — 2026-04-17
 
 Operational patch release. Fixes two deploy-blocking bugs that surfaced only after a real first-time install on a fresh host: the Mac agent couldn't load as a LaunchDaemon under the `network-monitor → netsentinel` rename, and the web client hung on a blank screen when the server was unreachable instead of falling through to `/login`. Also promotes the shipped `.env.example` to match the actual DB bootstrapping behavior.
