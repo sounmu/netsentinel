@@ -36,7 +36,7 @@ export default function DockerGrid({ containers, stats }: DockerGridProps) {
         gap: 10,
       }}
     >
-      {containers.map((c, idx) => {
+      {containers.map((c) => {
         const isRunning = c.state === "running";
         const stat = stats?.find((s) => s.container_name === c.container_name);
         return (

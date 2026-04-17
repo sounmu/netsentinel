@@ -18,7 +18,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>("light");
   const [mounted, setMounted] = useState(false);
 
-  // Read stored theme on mount to avoid SSR hydration mismatch
+  // Read stored theme on mount to avoid SSR hydration mismatch.
+  // localStorage / matchMedia are browser-only — we must initialise state
+  // after hydration, which is exactly the shape react-hooks/set-state-in-effect
+  // flags. The rule is intentionally suppressed here.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const stored = localStorage.getItem("theme");
     if (stored === "dark" || stored === "light") {
@@ -28,6 +32,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
     setMounted(true);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Sync data-theme attribute
   useEffect(() => {

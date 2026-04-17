@@ -26,9 +26,8 @@ export default function NetworkInterfaceTable({ interfaces }: NetworkInterfaceTa
     return sorted.slice(0, TOP_N);
   }, [interfaces, mode]);
 
-  if (!interfaces || interfaces.length === 0) return null;
-
-  // Find max value for relative bar sizing
+  // Find max value for relative bar sizing — must run before any early return
+  // to keep Hook call order stable across renders (react-hooks/rules-of-hooks).
   const maxVal = useMemo(() => {
     let m = 0;
     for (const iface of top5) {
@@ -37,6 +36,8 @@ export default function NetworkInterfaceTable({ interfaces }: NetworkInterfaceTa
     }
     return m || 1;
   }, [top5, mode]);
+
+  if (!interfaces || interfaces.length === 0) return null;
 
   const accentColor = mode === "rx" ? "var(--accent-green)" : "var(--accent-blue)";
 

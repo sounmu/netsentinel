@@ -29,13 +29,17 @@ export default function DashboardWidgets() {
   const [editing, setEditing] = useState(false);
   const [initialized, setInitialized] = useState(false);
 
-  // Sync from server on first load
+  // Sync from server on first load. SWR returns savedWidgets asynchronously
+  // after mount, so we bootstrap local edit state from it exactly once —
+  // the set-state-in-effect rule is intentionally suppressed.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (savedWidgets && !initialized) {
       setWidgets(savedWidgets);
       setInitialized(true);
     }
   }, [savedWidgets, initialized]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const handleSave = useCallback(async () => {
     setEditing(false);

@@ -71,8 +71,13 @@ export default function DockerCharts({ hostKey }: DockerChartsProps) {
     keepPreviousData: true,
   });
 
-  // Live docker_stats from SSE for the latest point
-  const liveStats = statusMap[hostKey]?.docker_stats ?? [];
+  // Live docker_stats from SSE for the latest point.
+  // Wrapped in useMemo so the `[] fallback` doesn't allocate a new array
+  // on every render — that would invalidate the downstream useMemo deps.
+  const liveStats = useMemo(
+    () => statusMap[hostKey]?.docker_stats ?? [],
+    [statusMap, hostKey]
+  );
 
   // Build per-container time-series from historical MetricsRow.docker_stats
   const { chartData, containerNames } = useMemo(() => {
@@ -137,7 +142,6 @@ export default function DockerCharts({ hostKey }: DockerChartsProps) {
 
   if (containerNames.length === 0) return null;
 
-  const yLabel = mode === "cpu" ? "CPU %" : "MB";
   const yFormatter = mode === "cpu"
     ? (v: number) => `${v.toFixed(1)}%`
     : (v: number) => `${v}`;

@@ -12,8 +12,6 @@ import {
 // ──────────────────────────────────────────────
 
 describe("getMetricsRangeUrl", () => {
-  const API_BASE = "http://localhost:3000";
-
   it("floors start to the nearest minute", () => {
     // 2025-01-15T10:05:30.500Z → should floor to 10:05:00.000Z
     const start = new Date("2025-01-15T10:05:30.500Z");
