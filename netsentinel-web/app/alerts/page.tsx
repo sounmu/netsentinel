@@ -111,7 +111,7 @@ export default function AlertsPage() {
           <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
             {t.alerts.globalDefaults}
           </h2>
-          <button onClick={handleGlobalSave} disabled={saving || !globalForm} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid var(--accent-blue)", background: saving ? "var(--preset-hover-border)" : "var(--accent-blue)", color: "white", fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}>
+          <button onClick={handleGlobalSave} disabled={saving || !globalForm} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid var(--accent-blue)", background: saving ? "var(--preset-hover-border)" : "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}>
             <Save size={14} /> {saving ? t.alerts.saving : t.alerts.save}
           </button>
         </div>
@@ -252,7 +252,7 @@ function HostAlertOverride({ host, globalConfigs }: { host: HostSummary; globalC
                 <Trash2 size={12} /> {t.alerts.deleteOverride}
               </button>
             )}
-            <button onClick={handleSave} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 14px", borderRadius: 6, border: "1px solid var(--accent-blue)", background: "var(--accent-blue)", color: "white", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            <button onClick={handleSave} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 14px", borderRadius: 6, border: "1px solid var(--accent-blue)", background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
               <Save size={12} /> {saving ? t.alerts.saving : t.alerts.save}
             </button>
           </div>
@@ -450,7 +450,7 @@ function NotificationChannelsSection() {
           style={{
             display: "flex", alignItems: "center", gap: 6, padding: "6px 14px",
             borderRadius: 8, border: "1px solid var(--accent-blue)",
-            background: "var(--accent-blue)", color: "white", fontSize: 12,
+            background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 12,
             fontWeight: 600, cursor: "pointer",
           }}
         >
@@ -494,7 +494,7 @@ function NotificationChannelsSection() {
             <button onClick={() => setShowForm(false)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 12, cursor: "pointer" }}>
               {t.common.cancel}
             </button>
-            <button onClick={handleCreate} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--accent-blue)", background: "var(--accent-blue)", color: "white", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            <button onClick={handleCreate} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--accent-blue)", background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
               <Save size={12} /> {t.alerts.save}
             </button>
           </div>

@@ -10,7 +10,7 @@ import {
   setupAdmin,
   AuthStatus,
   getAuthStatusUrl,
-  fetcher,
+  publicFetcher,
 } from "@/app/lib/api";
 
 export default function SetupPage() {
@@ -24,7 +24,11 @@ export default function SetupPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const { data: authStatus } = useSWR<AuthStatus>(getAuthStatusUrl(), fetcher);
+  const { data: authStatus } = useSWR<AuthStatus>(
+    getAuthStatusUrl(),
+    publicFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
+  );
 
   // If setup is not required (users already exist), redirect to login
   useEffect(() => {
@@ -201,7 +205,7 @@ export default function SetupPage() {
               width: "100%",
               padding: "10px 16px",
               backgroundColor: "var(--accent-blue)",
-              color: "#fff",
+              color: "var(--text-on-accent, #fff)",
               border: "none",
               borderRadius: 6,
               fontSize: 15,

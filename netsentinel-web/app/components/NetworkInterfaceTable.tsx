@@ -62,7 +62,7 @@ export default function NetworkInterfaceTable({ interfaces }: NetworkInterfaceTa
             border: "none",
             cursor: "pointer",
             background: mode === "rx" ? "var(--accent-green)" : "transparent",
-            color: mode === "rx" ? "white" : "var(--text-muted)",
+            color: mode === "rx" ? "var(--text-on-accent, #fff)" : "var(--text-muted)",
             transition: "all 0.15s ease",
           }}
         >
@@ -76,7 +76,7 @@ export default function NetworkInterfaceTable({ interfaces }: NetworkInterfaceTa
             borderLeft: "1px solid var(--border-subtle)",
             cursor: "pointer",
             background: mode === "tx" ? "var(--accent-blue)" : "transparent",
-            color: mode === "tx" ? "white" : "var(--text-muted)",
+            color: mode === "tx" ? "var(--text-on-accent, #fff)" : "var(--text-muted)",
             transition: "all 0.15s ease",
           }}
         >
