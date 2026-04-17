@@ -279,14 +279,61 @@ pub async fn prometheus_metrics(
 ) -> Result<impl IntoResponse, AppError> {
     check_metrics_auth(&headers)?;
 
-    let store = state
+    // Snapshot both maps into plain Vecs under separate, minimal lock scopes —
+    // then drop every lock before any formatting happens. Holding `store.read()`
+    // while building O(hosts) format!() strings blocks the scraper (which takes
+    // `store.write()` every cycle), and the old code nested `last_known_status`
+    // inside `store` which also established a lock-ordering trap the scraper
+    // doesn't follow.
+    struct OnlineRow {
+        host_key: String,
+        display_name: String,
+        is_online: bool,
+    }
+    struct MetricRow {
+        host_key: String,
+        display_name: String,
+        cpu_usage_percent: f32,
+        memory_usage_percent: f32,
+    }
+
+    let status_snapshot: Vec<OnlineRow> = state
+        .last_known_status
+        .read()
+        .map(|lks| {
+            lks.iter()
+                .map(|(k, s)| OnlineRow {
+                    host_key: k.clone(),
+                    display_name: s.display_name.clone(),
+                    is_online: s.is_online,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let metric_snapshot: Vec<MetricRow> = state
         .store
         .read()
-        .map_err(|e| AppError::Internal(format!("Failed to acquire store read lock: {}", e)))?;
+        .map(|store| {
+            store
+                .hosts
+                .iter()
+                .filter_map(|(k, record)| {
+                    record.alert_history.back().map(|latest| MetricRow {
+                        host_key: k.clone(),
+                        display_name: record.last_known_hostname.clone(),
+                        cpu_usage_percent: latest.cpu_usage_percent,
+                        memory_usage_percent: latest.memory_usage_percent,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let mut output = String::new();
-
-    // HELP and TYPE declarations
+    // Build the exposition text without any lock held. Pre-size the output
+    // to avoid repeated allocations for large host counts.
+    let mut output =
+        String::with_capacity(256 + status_snapshot.len() * 96 + metric_snapshot.len() * 192);
     output
         .push_str("# HELP netmonitor_host_online Whether the host is online (1) or offline (0).\n");
     output.push_str("# TYPE netmonitor_host_online gauge\n");
@@ -301,40 +348,33 @@ pub async fn prometheus_metrics(
     output.push_str("# HELP netmonitor_load_15min Load average (15 minutes).\n");
     output.push_str("# TYPE netmonitor_load_15min gauge\n");
 
-    // Read latest metrics from the SSE status + metrics maps
-    if let Ok(lks) = state.last_known_status.read() {
-        for (host_key, status) in lks.iter() {
-            let labels = format!(
-                "host_key=\"{}\",display_name=\"{}\"",
-                escape_prom_label(host_key),
-                escape_prom_label(&status.display_name),
-            );
-            let online = if status.is_online { 1 } else { 0 };
-            output.push_str(&format!(
-                "netmonitor_host_online{{{}}} {}\n",
-                labels, online
-            ));
-        }
-    }
-
-    // Per-host metric values from in-memory store
-    for (host_key, record) in &store.hosts {
+    for row in &status_snapshot {
         let labels = format!(
             "host_key=\"{}\",display_name=\"{}\"",
-            escape_prom_label(host_key),
-            escape_prom_label(&record.last_known_hostname),
+            escape_prom_label(&row.host_key),
+            escape_prom_label(&row.display_name),
         );
+        let online = if row.is_online { 1 } else { 0 };
+        output.push_str(&format!(
+            "netmonitor_host_online{{{}}} {}\n",
+            labels, online
+        ));
+    }
 
-        if let Some(latest) = record.alert_history.back() {
-            output.push_str(&format!(
-                "netmonitor_cpu_usage_percent{{{}}} {:.2}\n",
-                labels, latest.cpu_usage_percent
-            ));
-            output.push_str(&format!(
-                "netmonitor_memory_usage_percent{{{}}} {:.2}\n",
-                labels, latest.memory_usage_percent
-            ));
-        }
+    for row in &metric_snapshot {
+        let labels = format!(
+            "host_key=\"{}\",display_name=\"{}\"",
+            escape_prom_label(&row.host_key),
+            escape_prom_label(&row.display_name),
+        );
+        output.push_str(&format!(
+            "netmonitor_cpu_usage_percent{{{}}} {:.2}\n",
+            labels, row.cpu_usage_percent
+        ));
+        output.push_str(&format!(
+            "netmonitor_memory_usage_percent{{{}}} {:.2}\n",
+            labels, row.memory_usage_percent
+        ));
     }
 
     Ok((
