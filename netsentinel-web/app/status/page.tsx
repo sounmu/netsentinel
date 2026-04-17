@@ -1,12 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { CheckCircle, XCircle, Shield } from "lucide-react";
-import { PublicHostStatus, getPublicStatusUrl } from "@/app/lib/api";
+import { PublicHostStatus, getPublicStatusUrl, publicFetcher } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
-
-// Public status page — fetches from unauthenticated /api/public/status endpoint
-const publicFetcher = (url: string) => fetch(url).then((r) => r.json());
 
 function getUptimeColor(pct: number): string {
   if (pct >= 99.5) return "var(--accent-green)";
@@ -22,7 +20,21 @@ export default function StatusPage() {
   );
 
   const allOnline = hosts?.every((h) => h.is_online) ?? true;
-  const now = new Date();
+
+  // Rendering `new Date()` during the render body produces a hydration
+  // mismatch on /status (a public SSR-able page) — server wall-clock !==
+  // client wall-clock even by a few ms. Keep the timestamp out of the
+  // SSR'd HTML until after hydration; `null` on the server, then a real
+  // Date on the client. set-state-in-effect is exactly the shape the rule
+  // flags, but post-hydration state-seeding is the documented valid escape.
+  const [now, setNow] = useState<Date | null>(null);
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
     <div className="page-content fade-in" style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -136,7 +148,7 @@ export default function StatusPage() {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: "var(--text-muted)" }}>
-        {t.statusPage.lastUpdated}: {now.toLocaleString(locale === "ko" ? "ko-KR" : "en-US")}
+        {t.statusPage.lastUpdated}: {now ? now.toLocaleString(locale === "ko" ? "ko-KR" : "en-US") : ""}
       </div>
     </div>
   );
