@@ -262,7 +262,7 @@ export default function DateTimePicker({ value, onChange }: DateTimePickerProps)
                     borderRadius: 8,
                     border: isToday && !isSelected ? "1px solid var(--accent-blue)" : "1px solid transparent",
                     background: isSelected ? "var(--accent-blue)" : "transparent",
-                    color: isSelected ? "white" : isToday ? "var(--accent-blue)" : "var(--text-primary)",
+                    color: isSelected ? "var(--text-on-accent, #fff)" : isToday ? "var(--accent-blue)" : "var(--text-primary)",
                     fontSize: 13,
                     fontWeight: isSelected || isToday ? 600 : 400,
                     cursor: "pointer",

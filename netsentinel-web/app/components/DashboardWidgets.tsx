@@ -125,7 +125,7 @@ export default function DashboardWidgets() {
               style={{
                 padding: "4px 14px", borderRadius: 6,
                 border: "1px solid var(--accent-blue)",
-                background: "var(--accent-blue)", color: "white",
+                background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)",
                 fontSize: 12, fontWeight: 600, cursor: "pointer",
               }}
             >

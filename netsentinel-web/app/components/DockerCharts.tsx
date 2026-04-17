@@ -167,7 +167,7 @@ export default function DockerCharts({ hostKey }: DockerChartsProps) {
               border: "none",
               cursor: "pointer",
               background: mode === "cpu" ? "var(--accent-blue)" : "transparent",
-              color: mode === "cpu" ? "white" : "var(--text-muted)",
+              color: mode === "cpu" ? "var(--text-on-accent, #fff)" : "var(--text-muted)",
               transition: "all 0.15s ease",
             }}
           >
@@ -181,7 +181,7 @@ export default function DockerCharts({ hostKey }: DockerChartsProps) {
               borderLeft: "1px solid var(--border-subtle)",
               cursor: "pointer",
               background: mode === "memory" ? "var(--accent-purple)" : "transparent",
-              color: mode === "memory" ? "white" : "var(--text-muted)",
+              color: mode === "memory" ? "var(--text-on-accent, #fff)" : "var(--text-muted)",
               transition: "all 0.15s ease",
             }}
           >
