@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-04-17
+
+Patch release fixing two defects introduced by the v0.3.0 bump that escaped the pre-release checks. No runtime behavior changes; a fresh install that previously failed (`npm ci`, `cargo test`) now succeeds.
+
+### Fixed
+
+- **`npm ci` fails with `EUSAGE`** after v0.3.0 — the v0.3.0 version-bump regex substituted `"version": "1.2.0"` globally inside `netsentinel-web/package-lock.json`, hitting five unrelated transitive dependencies whose `resolved` URLs still pointed to their real versions (`@emnapi/wasi-threads`, `gopd`, `has-proto`, `run-parallel` at `1.2.0`; `safe-array-concat` at `1.1.3`). The lock file's own self-consistency check failed. `npm install` papered over it locally by re-deriving the tree; `npm ci` (used by CI and fresh clones) rejected the lock outright. Restored each entry's `version` field from the version encoded in its `resolved` URL — no dependency version was actually changed.
+- **`cargo test` fails with `E0308`** in `alert_configs_handler.rs` after the `MetricType` / `ChannelType` enum migration (v0.3.0 commit `4242bd6`). The test helper `make_request()` was still constructing `UpsertAlertRequest { metric_type: String, ... }` via `.to_string()`, while the production struct had moved to `metric_type: MetricType`. The failure was masked by incremental-build caches during `cargo check` and `cargo clippy --all-targets` — only a fresh `cargo test` (which links a new test binary) surfaced the type error. Test helper now takes `MetricType`; obsolete `test_invalid_metric_type` removed since the invalid branch is no longer expressible in Rust once the enum is closed (serde rejects unknown variants before the handler runs).
+
+### Changed
+
+- Version bumped to `0.3.1` across `netsentinel-server/Cargo.toml`, `netsentinel-agent/Cargo.toml`, `netsentinel-web/package.json`, and the two lock file root entries. Cargo.lock files refreshed accordingly.
+
+### Notes for downstream
+
+- If you successfully installed v0.3.0 via `npm install` (no error shown), you are already running on the exact same tarballs v0.3.1 locks — the fix is purely metadata. A fresh `npm ci` on v0.3.1 installs the identical node_modules tree.
+- No DB migrations, no config changes, no API changes. Drop-in upgrade.
+
 ## [0.3.0] — 2026-04-17
 
 Second release under the **NetSentinel** name (post-rename from `network-monitor`, baseline v0.2.0 ≡ v1.2.0). Focus: **expanded metrics surface, real-time SSE richness, M3-aligned UI**, and a broad **security + code-quality sweep**.
