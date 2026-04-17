@@ -155,6 +155,7 @@ cargo run
 | `MAX_DB_CONNECTIONS` | No | `10` | PostgreSQL pool size |
 | `SSE_BUFFER_SIZE` | No | `128` | SSE broadcast channel buffer |
 | `TRUSTED_PROXY_COUNT` | No | `0` | Reverse proxy count for X-Forwarded-For (0 = use peer IP directly) |
+| `METRICS_CACHE_MAX_ENTRIES` | No | `200` | Max in-memory query-cache entries (oldest-inserted evicted when full; TTL 120 s) |
 
 ### Agent `netsentinel-agent/.env`
 

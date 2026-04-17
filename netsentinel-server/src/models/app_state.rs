@@ -249,16 +249,24 @@ struct CacheEntry {
 ///
 /// Prevents repeated DB scans when multiple users view the same dashboard range.
 /// Entries expire after `ttl` and are lazily evicted on the next `get` or periodic cleanup.
+///
+/// Bounded by `max_entries` to cap worst-case memory: v0.3.0 grew the per-sample
+/// payload (per-core CPU, per-interface network, per-container docker_stats JSONB)
+/// 3–5×, so a previously-cheap unbounded cache now pins multi-MB Vecs and could
+/// trivially hit hundreds of MB under concurrent dashboard load within one TTL
+/// window. On insert, oldest-inserted entries are evicted first once the cap is hit.
 pub struct MetricsQueryCache {
     entries: RwLock<HashMap<String, CacheEntry>>,
     ttl: Duration,
+    max_entries: usize,
 }
 
 impl MetricsQueryCache {
-    pub fn new(ttl: Duration) -> Self {
+    pub fn new(ttl: Duration, max_entries: usize) -> Self {
         Self {
             entries: RwLock::new(HashMap::new()),
             ttl,
+            max_entries: max_entries.max(1),
         }
     }
 
@@ -284,9 +292,25 @@ impl MetricsQueryCache {
 
     /// Insert a query result into the cache and return the Arc-wrapped data.
     /// Avoids the caller needing to clone the Vec before insertion.
+    ///
+    /// Enforces `max_entries` by first draining expired rows, then — if still at
+    /// capacity — evicting the single oldest-inserted entry. O(n) scan only
+    /// fires when over capacity, so the common path stays cheap.
     pub fn insert(&self, key: String, data: Vec<MetricsRow>) -> Arc<Vec<MetricsRow>> {
         let arc = Arc::new(data);
         if let Ok(mut entries) = self.entries.write() {
+            if entries.len() >= self.max_entries {
+                let now = Instant::now();
+                entries.retain(|_, entry| now.duration_since(entry.inserted_at) < self.ttl);
+            }
+            if entries.len() >= self.max_entries
+                && let Some(oldest_key) = entries
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.inserted_at)
+                    .map(|(k, _)| k.clone())
+            {
+                entries.remove(&oldest_key);
+            }
             entries.insert(
                 key,
                 CacheEntry {
@@ -296,6 +320,14 @@ impl MetricsQueryCache {
             );
         }
         arc
+    }
+
+    /// Current number of entries. Only called from tests today; exposed on
+    /// the public API so ops can wire it into `/metrics` later without having
+    /// to re-plumb visibility.
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.entries.read().map(|e| e.len()).unwrap_or(0)
     }
 
     /// Remove expired entries. Called periodically from a background task.
@@ -427,5 +459,45 @@ mod tests {
             limiter.check("10.0.0.1").is_ok(),
             "Expired attempts should be cleaned up, allowing new ones"
         );
+    }
+
+    #[test]
+    fn metrics_query_cache_enforces_max_entries() {
+        // Long TTL so entries never expire — this test exclusively exercises
+        // the capacity-based eviction path.
+        let cache = MetricsQueryCache::new(Duration::from_secs(600), 3);
+        for i in 0..10 {
+            cache.insert(format!("k{i}"), vec![]);
+        }
+        assert_eq!(
+            cache.len(),
+            3,
+            "cache must stay at max_entries under flood insert"
+        );
+        // The most recent three keys are the ones that survive (oldest-first eviction).
+        for i in 7..10 {
+            assert!(cache.get(&format!("k{i}")).is_some());
+        }
+        for i in 0..7 {
+            assert!(cache.get(&format!("k{i}")).is_none());
+        }
+    }
+
+    #[test]
+    fn metrics_query_cache_eviction_prefers_expired_over_fresh() {
+        // Short TTL; insert two entries, wait past TTL, insert more up to the
+        // cap. Expired entries should be purged first, leaving the fresh ones.
+        let cache = MetricsQueryCache::new(Duration::from_millis(10), 3);
+        cache.insert("old1".into(), vec![]);
+        cache.insert("old2".into(), vec![]);
+        std::thread::sleep(Duration::from_millis(20));
+        cache.insert("fresh1".into(), vec![]);
+        cache.insert("fresh2".into(), vec![]);
+        cache.insert("fresh3".into(), vec![]);
+        assert!(cache.get("old1").is_none());
+        assert!(cache.get("old2").is_none());
+        assert!(cache.get("fresh1").is_some());
+        assert!(cache.get("fresh2").is_some());
+        assert!(cache.get("fresh3").is_some());
     }
 }

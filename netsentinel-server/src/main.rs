@@ -122,8 +122,19 @@ async fn main() -> anyhow::Result<()> {
     let (sse_tx, _) = tokio::sync::broadcast::channel(sse_buffer);
 
     // ── Shared application state ──
+    // Cap the query cache size. v0.3.0 multiplied per-sample payload size by
+    // adding per-core CPU, per-interface network, and per-container docker_stats
+    // JSONB — an unbounded cache here was the primary driver of the v0.3.x
+    // RSS regression observed in production. 200 entries ≈ a few hundred MB
+    // worst case and is generous for typical dashboard usage (a handful of
+    // hosts × a few range presets × a few concurrent viewers).
+    let metrics_cache_max_entries: usize = std::env::var("METRICS_CACHE_MAX_ENTRIES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(200);
     let metrics_query_cache = Arc::new(models::app_state::MetricsQueryCache::new(
         std::time::Duration::from_secs(120),
+        metrics_cache_max_entries,
     ));
 
     let trusted_proxy_count: usize = std::env::var("TRUSTED_PROXY_COUNT")
