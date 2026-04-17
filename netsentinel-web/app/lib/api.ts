@@ -44,11 +44,17 @@ export const getUserToken = getAccessToken;
 let inflightRefresh: Promise<LoginResponse | null> | null = null;
 
 async function doRefreshOnce(): Promise<LoginResponse | null> {
+  // Bound the wait. A hung refresh call would otherwise freeze the entire
+  // AuthProvider (isLoading=true → null render) until the browser's default
+  // fetch timeout fires, minutes later. "No session" is the safe fallback.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 4000);
   try {
     const res = await fetch(`${API_BASE}/api/auth/refresh`, {
       method: "POST",
       credentials: "include",
       headers: { Accept: "application/json" },
+      signal: controller.signal,
     });
     if (!res.ok) return null;
     const body: LoginResponse = await res.json();
@@ -56,6 +62,8 @@ async function doRefreshOnce(): Promise<LoginResponse | null> {
     return body;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] — 2026-04-17
+
+Operational patch release. Fixes two deploy-blocking bugs that surfaced only after a real first-time install on a fresh host: the Mac agent couldn't load as a LaunchDaemon under the `network-monitor → netsentinel` rename, and the web client hung on a blank screen when the server was unreachable instead of falling through to `/login`. Also promotes the shipped `.env.example` to match the actual DB bootstrapping behavior.
+
+### Fixed
+
+- **Web hangs on a blank screen when the backend is unreachable.** `AuthContext` renders `null` while `isLoading=true`, and the loading flag is only flipped off after `POST /api/auth/refresh` resolves. `fetch()` has no default timeout, so a misrouted `NEXT_PUBLIC_API_URL` (e.g. `https://api.example.com:3000` where only `:443` is exposed by Cloudflare Tunnel) leaves the request in `pending` for Chrome's full ~300 s fetch timeout, freezing the provider on a blank frame the entire time. `doRefreshOnce()` now wraps the call in an `AbortController` with a 4 s cap; on timeout the refresh resolves to `null`, `isLoading` drops to `false`, and the `/login` redirect effect fires immediately. "No session" was already the safe fallback for any refresh error, so bounding the wait is pure UX reclaim.
+- **macOS agent deploy script cannot load the daemon after the project rename.** `netsentinel-agent/deploy.sh` referenced a plist template (`com.user.netsentinel.plist`) that was never added to the repo — the legacy installation on disk was `com.user.network-monitor.plist`, so `launchctl load` failed silently under `set -e` and the new `netsentinel-agent` binary was copied but never started. Added a committed plist template, rewrote `deploy.sh` to actually install it, and expanded legacy cleanup to also unload/remove the prior `com.user.network-monitor.plist` daemon and `/usr/local/bin/network-monitor-agent` binary on first run.
+- **`POSTGRES_DB=network_monitor` in the root `.env.example` was a trap for anyone following the README.** The pre-rename stack initialised Postgres with `POSTGRES_DB=postgres` (default), so every existing deploy actually holds its operational data in the `postgres` database. A fresh install guided by the example ended up creating a second empty `network_monitor` DB while the server connected to it and failed because the schema was elsewhere — visible as `FATAL: database "network_monitor" does not exist` when the server pointed at the legacy data. Example now defaults to `postgres` to match reality.
+
+### Changed
+
+- **Agent deploy artifacts moved under `netsentinel-agent/deploy/macos/`** (`deploy.sh`, `com.sounmu.netsentinel.plist`) to make room for a future `deploy/windows/install.ps1` without cluttering the agent root. Script uses `$(cd "$(dirname "$0")" && pwd)`-based path resolution, so it can be invoked from any CWD.
+- **LaunchDaemon label renamed `com.user.netsentinel` → `com.sounmu.netsentinel`** (reverse-DNS against the actual GitHub owner, avoids collision with any other app using the generic `com.user` prefix). The deploy script cleans up every historical label automatically, so upgrades from v0.3.0 or v0.3.1 in the wild are a single `./deploy/macos/deploy.sh` invocation.
+- Plist now declares `WorkingDirectory=/usr/local/etc/netsentinel`, where `deploy.sh` seeds a protected (`600 root:wheel`) `.env` from the project root on first install and preserves it on re-runs — `dotenvy::dotenv()` is CWD-based, and this is the only reliable way to make LaunchDaemon-invoked agents pick up secrets without baking them into the plist (which is world-readable).
+- Version bumped to `0.3.2` across `netsentinel-server/Cargo.toml`, `netsentinel-agent/Cargo.toml`, `netsentinel-web/package.json`, both `Cargo.lock`s, and `package-lock.json`.
+
+### Notes for downstream
+
+- **Existing deployments** (Docker Compose server side): the `POSTGRES_DB` example change has no effect on already-initialised clusters — Postgres `initdb` runs exactly once. If your container was started with `POSTGRES_DB` unset or blank, your data is in the `postgres` database; keep `POSTGRES_DB=postgres` (or unset) to match. If you explicitly set `POSTGRES_DB=network_monitor` at first boot, leave that value — your data is actually there.
+- **Existing Mac agents** running the legacy `com.user.network-monitor` daemon: just run the new `./deploy/macos/deploy.sh` — the script's cleanup phase handles unload + removal of both the legacy plist and the legacy binary before installing the renamed daemon.
+- No server/DB schema changes, no API changes.
+
 ## [0.3.1] — 2026-04-17
 
 Patch release fixing two defects introduced by the v0.3.0 bump that escaped the pre-release checks. No runtime behavior changes; a fresh install that previously failed (`npm ci`, `cargo test`) now succeeds.
