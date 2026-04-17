@@ -28,6 +28,7 @@ Driven by the multi-layer audit in [`docs/review-20260417.md`](docs/review-20260
 - **Fix hydration mismatch on public `/status` page** — timestamp now seeded in a post-hydration effect (null on SSR) with a 30 s tick; `publicFetcher` rejects non-2xx instead of silently parsing error bodies as JSON. Review findings H-W5 + M-W9.
 - **Accessible names on icon-only delete buttons** (`/monitors`, `/agents` `IconButton`) + `tabIndex={-1}` on `<main id="main-content">` so the "Skip to content" link actually moves keyboard focus in Safari/older Firefox. Review findings H-W6 + L-W2 + M-W8.
 - **Agent sysinfo serialization** — new `COLLECT_GATE` async mutex around `collect_sysinfo` so concurrent scrapes cooperate in the async layer instead of piling up on the `std::Mutex<System>` inside blocking threads. Review finding #9.
+- **Agent disk I/O rate impossible values** — user-reported bug where disks showed ~500 GB/s on ordinary SSDs. `compute_disk_io` cached prev-counters under a block-device key that collapsed `sda1`+`sda2` → `"sda"`; the second partition in the same cycle saw `prev_t` from μs ago, dividing a byte delta by ~10 μs → TB/s rates. Key changed to the raw partition name so each partition has its own temporal baseline; added a 500 ms min-elapsed floor as belt-and-braces. Escalation of review finding M-A2.
 
 ### Changed
 
