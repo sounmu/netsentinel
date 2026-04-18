@@ -1308,16 +1308,14 @@ body {
 .alerts-metric__enable {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-muted);
+  gap: 10px;
 }
-.alerts-metric__enable-input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent-blue);
-  cursor: pointer;
+.alerts-metric__enable-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
 }
 .alerts-metric__fields {
   display: flex;

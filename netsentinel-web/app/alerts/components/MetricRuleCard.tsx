@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { Switch } from "@/app/components/Switch";
 import type { AlertFormData, MetricPrefix } from "./shared";
 
 interface Props {
@@ -32,19 +33,22 @@ export function MetricRuleCard({ label, prefix, form, setForm, showPreview = tru
         .replace("{cooldown}", String(cooldown))
     : t.alerts.preview.sentenceDisabled.replace("{metric}", label);
 
+  const enableLabelId = `alert-${prefix}-enable-label`;
+
   return (
     <div className={`alerts-metric ${enabled ? "" : "alerts-metric--disabled"}`}>
       <div className="alerts-metric__head">
         <span className="alerts-metric__label">{label}</span>
-        <label className="alerts-metric__enable">
-          <input
-            type="checkbox"
-            className="alerts-metric__enable-input"
+        <div className="alerts-metric__enable">
+          <span id={enableLabelId} className="alerts-metric__enable-text">
+            {t.alerts.enabled}
+          </span>
+          <Switch
             checked={enabled}
-            onChange={(e) => update("enabled", e.target.checked)}
+            onChange={(next) => update("enabled", next)}
+            aria-labelledby={enableLabelId}
           />
-          {t.alerts.enabled}
-        </label>
+        </div>
       </div>
 
       <div className="alerts-metric__fields">

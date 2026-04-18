@@ -14,6 +14,7 @@ import {
   testNotificationChannel,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { Switch } from "@/app/components/Switch";
 import { apiErrorMessage } from "./shared";
 
 interface Props {
@@ -201,13 +202,10 @@ export function ChannelsPanel({ onCountChange }: Props) {
 
       {channels?.map((ch) => (
         <div key={ch.id} className="glass-card alerts-channel-card" style={{ marginBottom: 8 }}>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={ch.enabled}
+          <Switch
+            checked={ch.enabled}
+            onChange={() => handleToggle(ch)}
             aria-label={ch.name}
-            onClick={() => handleToggle(ch)}
-            className="switch"
           />
           <div className="alerts-row__grow">
             <div className="alerts-channel__name">{ch.name}</div>
