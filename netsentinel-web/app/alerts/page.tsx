@@ -67,7 +67,6 @@ export default function AlertsPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
-  // Initialize global form when configs load
   useEffect(() => {
     if (globalConfigs) {
       setGlobalForm(configsToForm(globalConfigs));
@@ -90,73 +89,72 @@ export default function AlertsPage() {
     }
   }, [globalForm, mutateGlobal, t]);
 
+  const saveFailed = saveMsg === t.alerts.saveFailed;
+
   return (
     <div className="page-content fade-in">
-      {/* Header */}
-      <div style={{ marginBottom: 28 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-          <Bell size={20} color="var(--accent-blue)" />
-          <h1 style={{ fontSize: 22, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.3px" }}>
-            {t.alerts.title}
-          </h1>
+      <header className="alerts-header">
+        <div className="alerts-header__title-row">
+          <Bell size={20} color="var(--md-sys-color-primary)" aria-hidden="true" />
+          <h1 className="alerts-header__title">{t.alerts.title}</h1>
         </div>
-        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-          {t.alerts.description}
-        </p>
-      </div>
+        <p className="alerts-header__description">{t.alerts.description}</p>
+      </header>
 
       {/* Global defaults */}
-      <div className="glass-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
+      <section className="alerts-card alerts-card--padded">
+        <div className="alerts-row alerts-row--between" style={{ marginBottom: "var(--md-sys-spacing-lg)" }}>
+          <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
             {t.alerts.globalDefaults}
           </h2>
-          <button onClick={handleGlobalSave} disabled={saving || !globalForm} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid var(--accent-blue)", background: saving ? "var(--preset-hover-border)" : "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}>
-            <Save size={14} /> {saving ? t.alerts.saving : t.alerts.save}
+          <button
+            type="button"
+            onClick={handleGlobalSave}
+            disabled={saving || !globalForm}
+            className="alerts-btn alerts-btn--filled"
+          >
+            <Save size={14} aria-hidden="true" />
+            {saving ? t.alerts.saving : t.alerts.save}
           </button>
         </div>
 
         {saveMsg && (
-          <div style={{ marginBottom: 16, padding: "8px 14px", borderRadius: 8, background: saveMsg === t.alerts.saveFailed ? "var(--status-offline-bg)" : "var(--status-online-bg)", color: saveMsg === t.alerts.saveFailed ? "var(--badge-offline-text)" : "var(--badge-online-text)", fontSize: 13, fontWeight: 500 }}>
+          <div
+            role="status"
+            aria-live="polite"
+            className={`alerts-feedback ${saveFailed ? "alerts-feedback--error" : "alerts-feedback--success"}`}
+          >
             {saveMsg}
           </div>
         )}
 
-        {globalForm && (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20 }}>
+        {globalForm ? (
+          <div className="alerts-metric-grid">
             <MetricAlertForm label={t.alerts.cpuAlert} prefix="cpu" form={globalForm} setForm={setGlobalForm} />
             <MetricAlertForm label={t.alerts.memoryAlert} prefix="memory" form={globalForm} setForm={setGlobalForm} />
             <MetricAlertForm label={t.alerts.diskAlert} prefix="disk" form={globalForm} setForm={setGlobalForm} />
           </div>
+        ) : (
+          <div className="skeleton" style={{ height: 200 }} />
         )}
-
-        {!globalForm && <div className="skeleton" style={{ height: 200 }} />}
-      </div>
+      </section>
 
       {/* Per-host overrides */}
-      <div>
-        <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14 }}>
-          {t.alerts.perHostOverrides}
-        </h2>
-        <p style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 16 }}>
-          {t.alerts.perHostDescription}
-        </p>
+      <section className="alerts-section">
+        <h2 className="alerts-section-title">{t.alerts.perHostOverrides}</h2>
+        <p className="alerts-section-description">{t.alerts.perHostDescription}</p>
 
         {hosts?.map((host) => (
           <HostAlertOverride key={host.host_key} host={host} globalConfigs={globalConfigs ?? []} />
         ))}
 
         {(!hosts || hosts.length === 0) && (
-          <div className="glass-card" style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-            {t.alerts.noHosts}
-          </div>
+          <div className="alerts-card alerts-card--empty">{t.alerts.noHosts}</div>
         )}
-      </div>
+      </section>
 
-      {/* Alert history */}
       <AlertHistorySection />
 
-      {/* Notification channels */}
       <NotificationChannelsSection />
     </div>
   );
@@ -177,7 +175,6 @@ function HostAlertOverride({ host, globalConfigs }: { host: HostSummary; globalC
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // Initialize form: use override values if they exist, otherwise use global defaults
   useEffect(() => {
     if (expanded && hostConfigs !== undefined) {
       const hasOvr = hostConfigs.length > 0;
@@ -218,42 +215,75 @@ function HostAlertOverride({ host, globalConfigs }: { host: HostSummary; globalC
     if (expanded) { setForm(null); setMsg(null); }
   };
 
+  const msgFailed = msg === t.alerts.saveFailed;
+
   return (
-    <div className="glass-card" style={{ marginBottom: 8, overflow: "hidden" }}>
-      <button onClick={toggle} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "14px 20px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
-        <div style={{ width: 8, height: 8, borderRadius: "50%", background: host.is_online ? "var(--accent-green)" : "var(--accent-red)", flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{host.display_name}</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono), monospace" }}>{host.host_key}</div>
+    <div className="alerts-card" style={{ overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={toggle}
+        className="alerts-host-toggle"
+        aria-expanded={expanded}
+      >
+        <span
+          className={`alerts-host-toggle__dot ${
+            host.is_online
+              ? "alerts-host-toggle__dot--online"
+              : "alerts-host-toggle__dot--offline"
+          }`}
+          aria-hidden="true"
+        />
+        <div className="alerts-row__grow">
+          <div className="alerts-host-toggle__name">{host.display_name}</div>
+          <div className="alerts-host-toggle__key">{host.host_key}</div>
         </div>
         {hasOverride && (
-          <span style={{ padding: "2px 8px", borderRadius: 6, background: "var(--preset-hover-bg)", color: "var(--accent-blue)", fontSize: 10, fontWeight: 600 }}>{t.alerts.override}</span>
+          <span className="alerts-override-chip">{t.alerts.override}</span>
         )}
-        {expanded ? <ChevronUp size={16} color="var(--text-muted)" /> : <ChevronDown size={16} color="var(--text-muted)" />}
+        {expanded
+          ? <ChevronUp size={16} color="var(--md-sys-color-on-surface-variant)" aria-hidden="true" />
+          : <ChevronDown size={16} color="var(--md-sys-color-on-surface-variant)" aria-hidden="true" />}
       </button>
 
       {expanded && form && (
-        <div style={{ padding: "0 20px 20px", borderTop: "1px solid var(--border-subtle)" }}>
-          <div style={{ paddingTop: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 20 }}>
+        <div className="alerts-host-body">
+          <div className="alerts-metric-grid alerts-host-body__grid">
             <MetricAlertForm label={t.alerts.cpu} prefix="cpu" form={form} setForm={setForm} />
             <MetricAlertForm label={t.alerts.memory} prefix="memory" form={form} setForm={setForm} />
             <MetricAlertForm label={t.alerts.disk} prefix="disk" form={form} setForm={setForm} />
           </div>
 
           {msg && (
-            <div style={{ marginTop: 12, fontSize: 12, color: msg === t.alerts.saveFailed ? "var(--accent-red)" : "var(--accent-green)", fontWeight: 500 }}>
+            <div
+              role="status"
+              aria-live="polite"
+              className={`alerts-feedback alerts-feedback--inline ${
+                msgFailed ? "alerts-feedback--error" : "alerts-feedback--success"
+              }`}
+            >
               {msg}
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+          <div className="alerts-row alerts-row--end alerts-row--tight" style={{ marginTop: "var(--md-sys-spacing-lg)" }}>
             {hasOverride && (
-              <button onClick={handleDelete} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 14px", borderRadius: 6, border: "1px solid var(--badge-offline-border)", background: "var(--status-offline-bg)", color: "var(--accent-red)", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
-                <Trash2 size={12} /> {t.alerts.deleteOverride}
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="alerts-btn alerts-btn--sm alerts-btn--danger"
+              >
+                <Trash2 size={12} aria-hidden="true" />
+                {t.alerts.deleteOverride}
               </button>
             )}
-            <button onClick={handleSave} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 14px", borderRadius: 6, border: "1px solid var(--accent-blue)", background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              <Save size={12} /> {saving ? t.alerts.saving : t.alerts.save}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+            >
+              <Save size={12} aria-hidden="true" />
+              {saving ? t.alerts.saving : t.alerts.save}
             </button>
           </div>
         </div>
@@ -280,27 +310,47 @@ function MetricAlertForm({ label, prefix, form, setForm }: {
   };
 
   return (
-    <div style={{ opacity: enabled ? 1 : 0.5, transition: "opacity 0.2s" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{label}</span>
-        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, color: "var(--text-muted)" }}>
-          <input type="checkbox" checked={enabled} onChange={(e) => update("enabled", e.target.checked)}
-            style={{ width: 16, height: 16, accentColor: "var(--accent-blue)" }} />
+    <div className={`alerts-metric ${enabled ? "" : "alerts-metric--disabled"}`}>
+      <div className="alerts-metric__head">
+        <span className="alerts-metric__label">{label}</span>
+        <label className="alerts-metric__enable">
+          <input
+            type="checkbox"
+            className="alerts-metric__enable-input"
+            checked={enabled}
+            onChange={(e) => update("enabled", e.target.checked)}
+          />
           {t.alerts.enabled}
         </label>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div className="alerts-metric__fields">
         <MiniField label={t.alerts.threshold} id={`alert-${prefix}-threshold`}>
-          <input id={`alert-${prefix}-threshold`} className="date-input" style={{ width: "100%" }} type="number" step="0.1"
-            value={threshold} onChange={(e) => update("threshold", parseFloat(e.target.value) || 0)} />
+          <input
+            id={`alert-${prefix}-threshold`}
+            className="alerts-field__input"
+            type="number"
+            step="0.1"
+            value={threshold}
+            onChange={(e) => update("threshold", parseFloat(e.target.value) || 0)}
+          />
         </MiniField>
         <MiniField label={t.alerts.sustained} id={`alert-${prefix}-sustained`}>
-          <input id={`alert-${prefix}-sustained`} className="date-input" style={{ width: "100%" }} type="number"
-            value={sustained} onChange={(e) => update("sustained_secs", parseInt(e.target.value) || 0)} />
+          <input
+            id={`alert-${prefix}-sustained`}
+            className="alerts-field__input"
+            type="number"
+            value={sustained}
+            onChange={(e) => update("sustained_secs", parseInt(e.target.value) || 0)}
+          />
         </MiniField>
         <MiniField label={t.alerts.cooldown} id={`alert-${prefix}-cooldown`}>
-          <input id={`alert-${prefix}-cooldown`} className="date-input" style={{ width: "100%" }} type="number"
-            value={cooldown} onChange={(e) => update("cooldown_secs", parseInt(e.target.value) || 0)} />
+          <input
+            id={`alert-${prefix}-cooldown`}
+            className="alerts-field__input"
+            type="number"
+            value={cooldown}
+            onChange={(e) => update("cooldown_secs", parseInt(e.target.value) || 0)}
+          />
         </MiniField>
       </div>
     </div>
@@ -310,7 +360,7 @@ function MetricAlertForm({ label, prefix, form, setForm }: {
 function MiniField({ label, id, children }: { label: string; id?: string; children: React.ReactNode }) {
   return (
     <div>
-      <label htmlFor={id} style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4, display: "block" }}>{label}</label>
+      <label htmlFor={id} className="alerts-field__label">{label}</label>
       {children}
     </div>
   );
@@ -334,33 +384,27 @@ function AlertHistorySection() {
   };
 
   return (
-    <div style={{ marginTop: 32 }}>
-      <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14 }}>
-        {t.alertHistory.title}
-      </h2>
+    <section className="alerts-section">
+      <h2 className="alerts-section-title">{t.alertHistory.title}</h2>
 
-      <div className="glass-card" style={{ overflow: "hidden" }}>
+      <div className="alerts-card alerts-history-list">
         {(!alerts || alerts.length === 0) && (
-          <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+          <div className="alerts-card--empty" style={{ padding: "var(--md-sys-spacing-xl)" }}>
             {t.alertHistory.noAlerts}
           </div>
         )}
 
         {alerts?.map((alert) => (
-          <div key={alert.id} style={{
-            display: "flex", alignItems: "flex-start", gap: 10,
-            padding: "10px 20px", borderBottom: "1px solid var(--border-subtle)",
-            fontSize: 13,
-          }}>
-            <span style={{ fontSize: 14, flexShrink: 0 }}>
+          <div key={alert.id} className="alerts-history-row">
+            <span className="alerts-history-row__icon" aria-hidden="true">
               {alertTypeEmoji[alert.alert_type] ?? "🔔"}
             </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ color: "var(--text-primary)", lineHeight: 1.4 }}>
+            <div className="alerts-row__grow">
+              <div className="alerts-history-row__message">
                 {alert.message.replace(/\*\*/g, "").replace(/`/g, "")}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                <span style={{ fontFamily: "var(--font-mono), monospace" }}>{alert.host_key}</span>
+              <div className="alerts-history-row__meta">
+                <span className="alerts-history-row__host-key">{alert.host_key}</span>
                 {" · "}
                 {new Date(alert.created_at).toLocaleString(locale === "ko" ? "ko-KR" : "en-US")}
               </div>
@@ -368,7 +412,7 @@ function AlertHistorySection() {
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -440,49 +484,54 @@ function NotificationChannelsSection() {
   };
 
   return (
-    <div style={{ marginTop: 32 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
+    <section className="alerts-section">
+      <div className="alerts-row alerts-row--between" style={{ marginBottom: "var(--md-sys-spacing-sm)" }}>
+        <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
           {t.notifications.title}
         </h2>
         <button
+          type="button"
           onClick={() => setShowForm((v) => !v)}
-          style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "6px 14px",
-            borderRadius: 8, border: "1px solid var(--accent-blue)",
-            background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 12,
-            fontWeight: 600, cursor: "pointer",
-          }}
+          className="alerts-btn alerts-btn--sm alerts-btn--filled"
         >
-          <Plus size={14} /> {t.notifications.addChannel}
+          <Plus size={14} aria-hidden="true" />
+          {t.notifications.addChannel}
         </button>
       </div>
 
-      <p style={{ color: "var(--text-muted)", fontSize: 12, marginBottom: 16 }}>
-        {t.notifications.description}
-      </p>
+      <p className="alerts-section-description">{t.notifications.description}</p>
 
-      {/* Add channel form */}
       {showForm && (
-        <div className="glass-card" style={{ padding: 20, marginBottom: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <div className="alerts-card alerts-card--padded" style={{ marginBottom: "var(--md-sys-spacing-md)" }}>
+          <div className="alerts-form-grid-2">
             <MiniField label={t.notifications.channelName} id="notif-channel-name">
-              <input id="notif-channel-name" className="date-input" style={{ width: "100%" }} value={formName}
-                onChange={(e) => setFormName(e.target.value)} placeholder="My Slack" />
+              <input
+                id="notif-channel-name"
+                className="alerts-field__input"
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
+                placeholder="My Slack"
+              />
             </MiniField>
             <MiniField label={t.notifications.channelType} id="notif-channel-type">
-              <select id="notif-channel-type" className="date-input" style={{ width: "100%" }} value={formType}
-                onChange={(e) => { setFormType(e.target.value as "discord" | "slack" | "email"); setFormConfig({}); }}>
+              <select
+                id="notif-channel-type"
+                className="alerts-field__input"
+                value={formType}
+                onChange={(e) => { setFormType(e.target.value as "discord" | "slack" | "email"); setFormConfig({}); }}
+              >
                 <option value="discord">Discord</option>
                 <option value="slack">Slack</option>
                 <option value="email">Email</option>
               </select>
             </MiniField>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12, marginBottom: 16 }}>
+          <div className="alerts-form-grid-auto">
             {configFields.map((field) => (
               <MiniField key={field} label={configLabels[field] ?? field} id={`notif-${field}`}>
-                <input id={`notif-${field}`} className="date-input" style={{ width: "100%" }}
+                <input
+                  id={`notif-${field}`}
+                  className="alerts-field__input"
                   type={field === "smtp_pass" ? "password" : "text"}
                   value={formConfig[field] ?? ""}
                   onChange={(e) => setFormConfig((prev) => ({ ...prev, [field]: e.target.value }))}
@@ -490,49 +539,74 @@ function NotificationChannelsSection() {
               </MiniField>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button onClick={() => setShowForm(false)} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 12, cursor: "pointer" }}>
+          <div className="alerts-row alerts-row--end alerts-row--tight">
+            <button
+              type="button"
+              onClick={() => setShowForm(false)}
+              className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+            >
               {t.common.cancel}
             </button>
-            <button onClick={handleCreate} style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--accent-blue)", background: "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              <Save size={12} /> {t.alerts.save}
+            <button
+              type="button"
+              onClick={handleCreate}
+              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+            >
+              <Save size={12} aria-hidden="true" />
+              {t.alerts.save}
             </button>
           </div>
         </div>
       )}
 
-      {/* Channel list */}
       {channels?.map((ch) => (
-        <div key={ch.id} className="glass-card" style={{ padding: "14px 20px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
+        <div key={ch.id} className="alerts-card alerts-channel-card">
           <button
+            type="button"
             role="switch"
             aria-checked={ch.enabled}
+            aria-label={ch.name}
             onClick={() => handleToggle(ch)}
             className="switch"
           />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{ch.name}</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{ch.channel_type}</div>
+          <div className="alerts-row__grow">
+            <div className="alerts-channel__name">{ch.name}</div>
+            <div className="alerts-channel__type">{ch.channel_type}</div>
           </div>
           {testMsg[ch.id] && (
-            <span style={{ fontSize: 11, color: testMsg[ch.id] === t.notifications.testSuccess ? "var(--accent-green)" : "var(--accent-red)", fontWeight: 500 }}>
+            <span
+              className={`alerts-channel__test-msg ${
+                testMsg[ch.id] === t.notifications.testSuccess
+                  ? "alerts-channel__test-msg--success"
+                  : "alerts-channel__test-msg--error"
+              }`}
+            >
               {testMsg[ch.id]}
             </span>
           )}
-          <button onClick={() => handleTest(ch.id)} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-            <Send size={10} /> {t.notifications.testSend}
+          <button
+            type="button"
+            onClick={() => handleTest(ch.id)}
+            className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+            aria-label={`${t.notifications.testSend}: ${ch.name}`}
+          >
+            <Send size={10} aria-hidden="true" />
+            {t.notifications.testSend}
           </button>
-          <button onClick={() => handleDelete(ch.id)} style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid var(--badge-offline-border)", background: "var(--status-offline-bg)", color: "var(--accent-red)", fontSize: 11, cursor: "pointer" }}>
-            <Trash2 size={10} />
+          <button
+            type="button"
+            onClick={() => handleDelete(ch.id)}
+            className="alerts-icon-btn alerts-icon-btn--danger"
+            aria-label={`Delete ${ch.name}`}
+          >
+            <Trash2 size={14} aria-hidden="true" />
           </button>
         </div>
       ))}
 
       {(!channels || channels.length === 0) && !showForm && (
-        <div className="glass-card" style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-          {t.notifications.noChannels}
-        </div>
+        <div className="alerts-card alerts-card--empty">{t.notifications.noChannels}</div>
       )}
-    </div>
+    </section>
   );
 }
