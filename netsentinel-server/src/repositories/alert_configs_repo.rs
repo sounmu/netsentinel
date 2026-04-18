@@ -8,12 +8,13 @@ use crate::models::app_state::{AlertConfig, MetricAlertRule};
 
 /// Alert metric type — compile-time exhaustive matching.
 ///
-/// The first three variants (Cpu/Memory/Disk) are the legacy metrics whose
-/// thresholds the scraper evaluates every cycle. The remaining variants were
-/// introduced to let operators store rules for sensors that the agent already
-/// reports (Load/Network/Temperature/Gpu). Their scraper-side evaluation is
-/// scheduled for a later milestone — today the server just persists and
-/// surfaces them so the UI can show a complete rule catalog.
+/// Every variant is evaluated by the scraper each cycle. Load/Network/Temperature/Gpu
+/// rules ship disabled by default (see `AlertConfig::default()`) so existing
+/// deployments keep the historical CPU/Memory/Disk behaviour until operators
+/// opt in from the /alerts page. Sub-scoped rules (per sensor / interface /
+/// GPU) are persisted via `sub_key` but not yet routed into the runtime rule
+/// map — rules with a non-null `sub_key` are stored and surfaced in the API
+/// only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
@@ -83,10 +84,12 @@ pub async fn get_host_configs(
 
 /// Load all alert configs and build a per-host AlertConfig map.
 ///
-/// Only the legacy Cpu/Memory/Disk variants feed `MetricAlertRule` here;
-/// the extended metric types are stored but not yet evaluated by the
-/// scraper, so they are intentionally ignored when materialising runtime
-/// rules.
+/// All seven metric variants feed `MetricAlertRule`s in the returned
+/// `AlertConfig`. For each (host, metric) we pick the host-scoped override
+/// when present, else fall back to the global default (sub_key NULL) row,
+/// else the hard-coded `AlertConfig::default()` rule. Sub-scoped rows
+/// (sub_key IS NOT NULL) are intentionally ignored here — scraper
+/// evaluation currently applies a single threshold per metric category.
 pub async fn load_all_as_map(pool: &PgPool) -> Result<HashMap<String, AlertConfig>, sqlx::Error> {
     let rows = sqlx::query_as::<_, AlertConfigRow>(
         "SELECT * FROM alert_configs ORDER BY host_key NULLS FIRST, metric_type",
@@ -94,9 +97,15 @@ pub async fn load_all_as_map(pool: &PgPool) -> Result<HashMap<String, AlertConfi
     .fetch_all(pool)
     .await?;
 
-    let mut global_cpu = default_cpu_rule();
-    let mut global_mem = default_memory_rule();
-    let mut global_disk = default_disk_rule();
+    // Seed globals with the hard-coded defaults, then overwrite from DB globals (sub_key NULL).
+    let default_cfg = AlertConfig::default();
+    let mut global_cpu = default_cfg.cpu;
+    let mut global_mem = default_cfg.memory;
+    let mut global_disk = default_cfg.disk;
+    let mut global_load = default_cfg.load;
+    let mut global_network = default_cfg.network;
+    let mut global_temperature = default_cfg.temperature;
+    let mut global_gpu = default_cfg.gpu;
 
     for row in &rows {
         if row.host_key.is_none() && row.sub_key.is_none() {
@@ -104,7 +113,10 @@ pub async fn load_all_as_map(pool: &PgPool) -> Result<HashMap<String, AlertConfi
                 MetricType::Cpu => global_cpu = row_to_rule(row),
                 MetricType::Memory => global_mem = row_to_rule(row),
                 MetricType::Disk => global_disk = row_to_rule(row),
-                _ => {}
+                MetricType::Load => global_load = row_to_rule(row),
+                MetricType::Network => global_network = row_to_rule(row),
+                MetricType::Temperature => global_temperature = row_to_rule(row),
+                MetricType::Gpu => global_gpu = row_to_rule(row),
             }
         }
     }
@@ -126,25 +138,23 @@ pub async fn load_all_as_map(pool: &PgPool) -> Result<HashMap<String, AlertConfi
     }
 
     for hk in host_keys_set {
-        let cpu = host_overrides
-            .get(&(hk, MetricType::Cpu))
-            .copied()
-            .unwrap_or(global_cpu);
-        let mem = host_overrides
-            .get(&(hk, MetricType::Memory))
-            .copied()
-            .unwrap_or(global_mem);
-        let disk = host_overrides
-            .get(&(hk, MetricType::Disk))
-            .copied()
-            .unwrap_or(global_disk);
+        let pick = |metric: MetricType, fallback: MetricAlertRule| -> MetricAlertRule {
+            host_overrides
+                .get(&(hk, metric))
+                .copied()
+                .unwrap_or(fallback)
+        };
 
         map.insert(
             hk.to_string(),
             AlertConfig {
-                cpu,
-                memory: mem,
-                disk,
+                cpu: pick(MetricType::Cpu, global_cpu),
+                memory: pick(MetricType::Memory, global_mem),
+                disk: pick(MetricType::Disk, global_disk),
+                load: pick(MetricType::Load, global_load),
+                network: pick(MetricType::Network, global_network),
+                temperature: pick(MetricType::Temperature, global_temperature),
+                gpu: pick(MetricType::Gpu, global_gpu),
                 load_threshold: 4.0,
                 load_cooldown_secs: 60,
             },
@@ -157,6 +167,10 @@ pub async fn load_all_as_map(pool: &PgPool) -> Result<HashMap<String, AlertConfi
             cpu: global_cpu,
             memory: global_mem,
             disk: global_disk,
+            load: global_load,
+            network: global_network,
+            temperature: global_temperature,
+            gpu: global_gpu,
             load_threshold: 4.0,
             load_cooldown_secs: 60,
         },
@@ -286,32 +300,5 @@ fn row_to_rule(row: &AlertConfigRow) -> MetricAlertRule {
         threshold: row.threshold,
         sustained_secs: row.sustained_secs as u64,
         cooldown_secs: row.cooldown_secs as u64,
-    }
-}
-
-fn default_cpu_rule() -> MetricAlertRule {
-    MetricAlertRule {
-        enabled: true,
-        threshold: 80.0,
-        sustained_secs: 300,
-        cooldown_secs: 60,
-    }
-}
-
-fn default_memory_rule() -> MetricAlertRule {
-    MetricAlertRule {
-        enabled: true,
-        threshold: 90.0,
-        sustained_secs: 300,
-        cooldown_secs: 60,
-    }
-}
-
-fn default_disk_rule() -> MetricAlertRule {
-    MetricAlertRule {
-        enabled: true,
-        threshold: 90.0,
-        sustained_secs: 0,
-        cooldown_secs: 300,
     }
 }

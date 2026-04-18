@@ -205,13 +205,11 @@ export function HistoryPanel() {
         )}
       </div>
 
-      <div className="alerts-card alerts-history-list">
+      <div className="glass-card alerts-history-list" style={{ overflow: "hidden" }}>
         {visible === null && <div className="skeleton" style={{ height: 200 }} />}
 
         {visible && visible.length === 0 && (
-          <div className="alerts-card--empty" style={{ padding: "var(--md-sys-spacing-xl)" }}>
-            {t.alerts.history.noResults}
-          </div>
+          <div className="alerts-card-empty">{t.alerts.history.noResults}</div>
         )}
 
         {visible?.map((alert) => {
@@ -227,19 +225,25 @@ export function HistoryPanel() {
                     {alert.alert_type}
                   </span>
                 </div>
-                <div className="alerts-history-row__message" style={{ marginTop: 4 }}>
+                <div className="alerts-history-row__message" style={{ marginTop: 6 }}>
                   {sanitizeMarkdown(alert.message)}
                 </div>
                 <div className="alerts-history-row__meta">
                   <span className="alerts-history-row__host-key">{alert.host_key}</span>
-                  {" · "}
-                  {formatRelative(
-                    alert.created_at,
-                    locale,
-                    nowTick || Date.parse(alert.created_at),
-                  )}
-                  {" · "}
-                  {new Date(alert.created_at).toLocaleString(locale === "ko" ? "ko-KR" : "en-US")}
+                  <span className="alerts-history-row__sep">·</span>
+                  <span>
+                    {formatRelative(
+                      alert.created_at,
+                      locale,
+                      nowTick || Date.parse(alert.created_at),
+                    )}
+                  </span>
+                  <span className="alerts-history-row__sep">·</span>
+                  <span>
+                    {new Date(alert.created_at).toLocaleString(
+                      locale === "ko" ? "ko-KR" : "en-US",
+                    )}
+                  </span>
                 </div>
               </div>
             </div>

@@ -106,10 +106,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
       role="tabpanel"
       aria-labelledby="alerts-tab-channels"
     >
-      <div
-        className="alerts-row alerts-row--between"
-        style={{ marginBottom: "var(--md-sys-spacing-sm)" }}
-      >
+      <div className="alerts-row alerts-row--between" style={{ marginBottom: 6 }}>
         <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
           {t.notifications.title}
         </h2>
@@ -126,10 +123,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
       <p className="alerts-section-description">{t.notifications.description}</p>
 
       {showForm && (
-        <div
-          className="alerts-card alerts-card--padded"
-          style={{ marginBottom: "var(--md-sys-spacing-md)" }}
-        >
+        <div className="glass-card alerts-section-card" style={{ marginBottom: 12 }}>
           <div className="alerts-form-grid-2">
             <div>
               <label htmlFor="notif-channel-name" className="alerts-field__label">
@@ -201,7 +195,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
       )}
 
       {channels?.map((ch) => (
-        <div key={ch.id} className="alerts-card alerts-channel-card">
+        <div key={ch.id} className="glass-card alerts-channel-card" style={{ marginBottom: 8 }}>
           <button
             type="button"
             role="switch"
@@ -246,7 +240,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
       ))}
 
       {(!channels || channels.length === 0) && !showForm && (
-        <div className="alerts-card alerts-card--empty">{t.notifications.noChannels}</div>
+        <div className="glass-card alerts-card-empty">{t.notifications.noChannels}</div>
       )}
     </div>
   );

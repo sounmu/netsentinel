@@ -15,10 +15,11 @@ import {
 } from "@/app/lib/api";
 import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
-import { AlertFormData, configsToForm, formToRequests } from "./shared";
+import { AlertFormData, configsToForm, formToRequests, type MetricPrefix } from "./shared";
 import { MetricRuleCard } from "./MetricRuleCard";
 import { RulesMatrix } from "./RulesMatrix";
 import { BulkApplyBar } from "./BulkApplyBar";
+import { RuleDrawer } from "./RuleDrawer";
 
 export function RulesPanel() {
   const { t } = useI18n();
@@ -33,6 +34,7 @@ export function RulesPanel() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [drawer, setDrawer] = useState<{ host: HostSummary; metric: MetricPrefix } | null>(null);
 
   useEffect(() => {
     if (globalConfigs) setGlobalForm(configsToForm(globalConfigs));
@@ -54,9 +56,8 @@ export function RulesPanel() {
     }
   }, [globalForm, mutateGlobal, t]);
 
-  const onBulkApplied = useCallback(() => {
-    setSelected(new Set());
-  }, []);
+  const clearSelection = useCallback(() => setSelected(new Set()), []);
+  const onBulkApplied = useCallback(() => setSelected(new Set()), []);
 
   const toggleSelect = useCallback((hostKey: string, checked: boolean) => {
     setSelected((prev) => {
@@ -65,6 +66,10 @@ export function RulesPanel() {
       else next.delete(hostKey);
       return next;
     });
+  }, []);
+
+  const handleEdit = useCallback((host: HostSummary, metric: MetricPrefix) => {
+    setDrawer({ host, metric });
   }, []);
 
   const saveFailed = saveMsg === t.alerts.saveFailed;
@@ -76,16 +81,14 @@ export function RulesPanel() {
           selectedCount={selected.size}
           selectedHosts={Array.from(selected)}
           form={globalForm}
-          onClear={() => setSelected(new Set())}
+          onClear={clearSelection}
           onApplied={onBulkApplied}
         />
       )}
 
-      <section className="alerts-card alerts-card--padded">
-        <div className="alerts-row alerts-row--between" style={{ marginBottom: "var(--md-sys-spacing-lg)" }}>
-          <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
-            {t.alerts.globalDefaults}
-          </h2>
+      <section className="glass-card alerts-section-card">
+        <div className="alerts-section-card__head">
+          <h2 className="alerts-section-card__title">{t.alerts.globalDefaults}</h2>
           <button
             type="button"
             onClick={handleGlobalSave}
@@ -129,6 +132,7 @@ export function RulesPanel() {
           globalConfigs={globalConfigs ?? []}
           selected={selected}
           onToggle={toggleSelect}
+          onEdit={handleEdit}
         />
       </section>
 
@@ -145,9 +149,17 @@ export function RulesPanel() {
         ))}
 
         {(!hosts || hosts.length === 0) && (
-          <div className="alerts-card alerts-card--empty">{t.alerts.noHosts}</div>
+          <div className="glass-card alerts-card-empty">{t.alerts.noHosts}</div>
         )}
       </section>
+
+      {drawer && (
+        <RuleDrawer
+          host={drawer.host}
+          metric={drawer.metric}
+          onClose={() => setDrawer(null)}
+        />
+      )}
     </div>
   );
 }
@@ -220,7 +232,7 @@ function HostAlertOverride({
   const msgFailed = msg === t.alerts.saveFailed;
 
   return (
-    <div className="alerts-card" style={{ overflow: "hidden" }}>
+    <div className="glass-card" style={{ overflow: "hidden", marginBottom: 8 }}>
       <button
         type="button"
         onClick={toggle}
@@ -241,9 +253,9 @@ function HostAlertOverride({
         </div>
         {hasOverride && <span className="alerts-override-chip">{t.alerts.override}</span>}
         {expanded ? (
-          <ChevronUp size={16} color="var(--md-sys-color-on-surface-variant)" aria-hidden="true" />
+          <ChevronUp size={16} color="var(--text-muted)" aria-hidden="true" />
         ) : (
-          <ChevronDown size={16} color="var(--md-sys-color-on-surface-variant)" aria-hidden="true" />
+          <ChevronDown size={16} color="var(--text-muted)" aria-hidden="true" />
         )}
       </button>
 
@@ -269,7 +281,7 @@ function HostAlertOverride({
 
           <div
             className="alerts-row alerts-row--end alerts-row--tight"
-            style={{ marginTop: "var(--md-sys-spacing-lg)" }}
+            style={{ marginTop: 16 }}
           >
             {hasOverride && (
               <button

@@ -47,7 +47,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
       {active === undefined && <div className="skeleton" style={{ height: 220 }} />}
 
       {active && active.length === 0 && (
-        <div className="alerts-card alerts-empty" role="status">
+        <div className="alerts-empty" role="status">
           <span className="alerts-empty__icon" aria-hidden="true">
             <ShieldCheck size={28} />
           </span>

@@ -38,7 +38,6 @@ function AlertsPageInner() {
   const { t } = useI18n();
   const [tab, setTab] = useAlertsTab();
 
-  // Shared data for summary bar — keep key stability so SWR dedupes across tabs.
   const { data: hosts } = useSWR<HostSummary[]>(getHostsUrl(), fetcher, {
     revalidateOnFocus: false,
   });
@@ -57,7 +56,6 @@ function AlertsPageInner() {
 
   const rulesCount = globalConfigs ? globalConfigs.filter((c) => c.enabled).length : null;
   const hostsCount = hosts?.length ?? null;
-  // Prefer live data over tab-scoped state when available.
   const channelsLive = channels?.length ?? channelsCount;
 
   const counts: Record<AlertTab, number | null> = {
@@ -69,13 +67,26 @@ function AlertsPageInner() {
 
   return (
     <div className="page-content fade-in">
-      <header className="alerts-header">
-        <div className="alerts-header__title-row">
-          <Bell size={20} color="var(--md-sys-color-primary)" aria-hidden="true" />
-          <h1 className="alerts-header__title">{t.alerts.title}</h1>
+      {/* Header — matches monitors/agents pattern */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <Bell size={20} color="var(--accent-blue)" aria-hidden="true" />
+          <h1
+            style={{
+              fontSize: 22,
+              fontWeight: 800,
+              color: "var(--text-primary)",
+              letterSpacing: "-0.3px",
+              margin: 0,
+            }}
+          >
+            {t.alerts.title}
+          </h1>
         </div>
-        <p className="alerts-header__description">{t.alerts.description}</p>
-      </header>
+        <p style={{ color: "var(--text-muted)", fontSize: 13, margin: 0 }}>
+          {t.alerts.description}
+        </p>
+      </div>
 
       <AlertsSummaryBar
         rulesCount={rulesCount}
