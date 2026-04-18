@@ -1,0 +1,298 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
+import { Save, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  AlertConfigRow,
+  getAlertConfigsUrl,
+  getHostAlertConfigsUrl,
+  getHostsUrl,
+  fetcher,
+  updateGlobalAlertConfigs,
+  updateHostAlertConfigs,
+  deleteHostAlertConfigs,
+} from "@/app/lib/api";
+import { HostSummary } from "@/app/types/metrics";
+import { useI18n } from "@/app/i18n/I18nContext";
+import { AlertFormData, configsToForm, formToRequests } from "./shared";
+import { MetricRuleCard } from "./MetricRuleCard";
+import { RulesMatrix } from "./RulesMatrix";
+import { BulkApplyBar } from "./BulkApplyBar";
+
+export function RulesPanel() {
+  const { t } = useI18n();
+  const { data: globalConfigs, mutate: mutateGlobal } = useSWR<AlertConfigRow[]>(
+    getAlertConfigsUrl(),
+    fetcher,
+    { revalidateOnFocus: false },
+  );
+  const { data: hosts } = useSWR<HostSummary[]>(getHostsUrl(), fetcher, { revalidateOnFocus: false });
+
+  const [globalForm, setGlobalForm] = useState<AlertFormData | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (globalConfigs) setGlobalForm(configsToForm(globalConfigs));
+  }, [globalConfigs]);
+
+  const handleGlobalSave = useCallback(async () => {
+    if (!globalForm) return;
+    setSaving(true);
+    setSaveMsg(null);
+    try {
+      await updateGlobalAlertConfigs(formToRequests(globalForm));
+      await mutateGlobal();
+      setSaveMsg(t.alerts.globalSaved);
+      setTimeout(() => setSaveMsg(null), 3000);
+    } catch (e) {
+      setSaveMsg(e instanceof Error ? e.message : t.alerts.saveFailed);
+    } finally {
+      setSaving(false);
+    }
+  }, [globalForm, mutateGlobal, t]);
+
+  const onBulkApplied = useCallback(() => {
+    setSelected(new Set());
+  }, []);
+
+  const toggleSelect = useCallback((hostKey: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(hostKey);
+      else next.delete(hostKey);
+      return next;
+    });
+  }, []);
+
+  const saveFailed = saveMsg === t.alerts.saveFailed;
+
+  return (
+    <div className="alerts-panel" id="alerts-panel-rules" role="tabpanel" aria-labelledby="alerts-tab-rules">
+      {selected.size > 0 && globalForm && (
+        <BulkApplyBar
+          selectedCount={selected.size}
+          selectedHosts={Array.from(selected)}
+          form={globalForm}
+          onClear={() => setSelected(new Set())}
+          onApplied={onBulkApplied}
+        />
+      )}
+
+      <section className="alerts-card alerts-card--padded">
+        <div className="alerts-row alerts-row--between" style={{ marginBottom: "var(--md-sys-spacing-lg)" }}>
+          <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
+            {t.alerts.globalDefaults}
+          </h2>
+          <button
+            type="button"
+            onClick={handleGlobalSave}
+            disabled={saving || !globalForm}
+            className="alerts-btn alerts-btn--filled"
+          >
+            <Save size={14} aria-hidden="true" />
+            {saving ? t.alerts.saving : t.alerts.save}
+          </button>
+        </div>
+
+        {saveMsg && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`alerts-feedback ${
+              saveFailed ? "alerts-feedback--error" : "alerts-feedback--success"
+            }`}
+          >
+            {saveMsg}
+          </div>
+        )}
+
+        {globalForm ? (
+          <div className="alerts-metric-grid">
+            <MetricRuleCard label={t.alerts.cpuAlert} prefix="cpu" form={globalForm} setForm={setGlobalForm} />
+            <MetricRuleCard label={t.alerts.memoryAlert} prefix="memory" form={globalForm} setForm={setGlobalForm} />
+            <MetricRuleCard label={t.alerts.diskAlert} prefix="disk" form={globalForm} setForm={setGlobalForm} />
+          </div>
+        ) : (
+          <div className="skeleton" style={{ height: 200 }} />
+        )}
+      </section>
+
+      <section className="alerts-section">
+        <h2 className="alerts-section-title">{t.alerts.rules.matrix}</h2>
+        <p className="alerts-section-description">{t.alerts.rules.matrixDescription}</p>
+
+        <RulesMatrix
+          hosts={hosts ?? []}
+          globalConfigs={globalConfigs ?? []}
+          selected={selected}
+          onToggle={toggleSelect}
+        />
+      </section>
+
+      <section className="alerts-section">
+        <h2 className="alerts-section-title">{t.alerts.perHostOverrides}</h2>
+        <p className="alerts-section-description">{t.alerts.perHostDescription}</p>
+
+        {hosts?.map((host) => (
+          <HostAlertOverride
+            key={host.host_key}
+            host={host}
+            globalConfigs={globalConfigs ?? []}
+          />
+        ))}
+
+        {(!hosts || hosts.length === 0) && (
+          <div className="alerts-card alerts-card--empty">{t.alerts.noHosts}</div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function HostAlertOverride({
+  host,
+  globalConfigs,
+}: {
+  host: HostSummary;
+  globalConfigs: AlertConfigRow[];
+}) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const { data: hostConfigs, mutate } = useSWR<AlertConfigRow[]>(
+    expanded ? getHostAlertConfigsUrl(host.host_key) : null,
+    fetcher,
+    { revalidateOnFocus: false },
+  );
+
+  const hasOverride = useMemo(
+    () => !!hostConfigs && hostConfigs.length > 0,
+    [hostConfigs],
+  );
+  const [form, setForm] = useState<AlertFormData | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (expanded && hostConfigs !== undefined) {
+      setForm(configsToForm(hostConfigs.length > 0 ? hostConfigs : globalConfigs));
+    }
+  }, [expanded, hostConfigs, globalConfigs]);
+
+  const handleSave = async () => {
+    if (!form) return;
+    setSaving(true);
+    setMsg(null);
+    try {
+      await updateHostAlertConfigs(host.host_key, formToRequests(form));
+      await mutate();
+      setMsg(t.alerts.saved);
+      setTimeout(() => setMsg(null), 3000);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : t.alerts.saveFailed);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    try {
+      await deleteHostAlertConfigs(host.host_key);
+      setForm(null);
+      await mutate();
+      setMsg(t.alerts.revertedToGlobal);
+      setTimeout(() => setMsg(null), 3000);
+    } catch {
+      /* noop */
+    }
+  };
+
+  const toggle = () => {
+    setExpanded((v) => !v);
+    if (expanded) {
+      setForm(null);
+      setMsg(null);
+    }
+  };
+
+  const msgFailed = msg === t.alerts.saveFailed;
+
+  return (
+    <div className="alerts-card" style={{ overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={toggle}
+        className="alerts-host-toggle"
+        aria-expanded={expanded}
+      >
+        <span
+          className={`alerts-host-toggle__dot ${
+            host.is_online
+              ? "alerts-host-toggle__dot--online"
+              : "alerts-host-toggle__dot--offline"
+          }`}
+          aria-hidden="true"
+        />
+        <div className="alerts-row__grow">
+          <div className="alerts-host-toggle__name">{host.display_name}</div>
+          <div className="alerts-host-toggle__key">{host.host_key}</div>
+        </div>
+        {hasOverride && <span className="alerts-override-chip">{t.alerts.override}</span>}
+        {expanded ? (
+          <ChevronUp size={16} color="var(--md-sys-color-on-surface-variant)" aria-hidden="true" />
+        ) : (
+          <ChevronDown size={16} color="var(--md-sys-color-on-surface-variant)" aria-hidden="true" />
+        )}
+      </button>
+
+      {expanded && form && (
+        <div className="alerts-host-body">
+          <div className="alerts-metric-grid alerts-host-body__grid">
+            <MetricRuleCard label={t.alerts.cpu} prefix="cpu" form={form} setForm={setForm} />
+            <MetricRuleCard label={t.alerts.memory} prefix="memory" form={form} setForm={setForm} />
+            <MetricRuleCard label={t.alerts.disk} prefix="disk" form={form} setForm={setForm} />
+          </div>
+
+          {msg && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`alerts-feedback alerts-feedback--inline ${
+                msgFailed ? "alerts-feedback--error" : "alerts-feedback--success"
+              }`}
+            >
+              {msg}
+            </div>
+          )}
+
+          <div
+            className="alerts-row alerts-row--end alerts-row--tight"
+            style={{ marginTop: "var(--md-sys-spacing-lg)" }}
+          >
+            {hasOverride && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="alerts-btn alerts-btn--sm alerts-btn--danger"
+              >
+                <Trash2 size={12} aria-hidden="true" />
+                {t.alerts.deleteOverride}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+            >
+              <Save size={12} aria-hidden="true" />
+              {saving ? t.alerts.saving : t.alerts.save}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
