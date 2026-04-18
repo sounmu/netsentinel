@@ -617,57 +617,60 @@ body {
   /* no padding needed — app-layout handles it */
 }
 
-/* ── Shared page header ────────────────────────────
-   Used by all top-level pages (overview, agents, alerts, monitors,
-   status). Kept intentionally compact — icon + 16/700 title + optional
-   count chip + right-aligned actions — so the whole app shares the
-   same header rhythm.
+/* ── Shared page header (Material Design 3) ────────
+   Typography per DESIGN.md §2.2:
+     h1         → headline-small  (20px / 400)
+     desc       → body-medium     (14px / 400)
+     chip       → label-small     (11px / 500)
+   Colors: M3 sys tokens only — never raw hex or legacy aliases.
+   Spacing: DESIGN.md §7.1 4px-grid tokens.
+   Shape:   chip uses corner-small per §3.
+   State layer: chip background uses the on-surface 8% state-layer
+                pattern from §5 (`color-mix` with on-surface 8%).
    ─────────────────────────────────────────────── */
 .page-header {
-  margin-bottom: 20px;
+  margin-bottom: var(--md-sys-spacing-xl);
 }
 .page-header__row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 32px;
+  gap: var(--md-sys-spacing-sm);
+  min-height: 2rem;
 }
 .page-header__icon {
   display: inline-flex;
   align-items: center;
-  color: var(--accent-blue);
+  color: var(--md-sys-color-primary);
   flex-shrink: 0;
 }
 .page-header__title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.1px;
+  font: var(--md-sys-typescale-headline-small);
+  color: var(--md-sys-color-on-surface);
   margin: 0;
-  line-height: 1.2;
 }
 .page-header__badge {
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-muted);
-  padding: 2px 8px;
-  border-radius: 6px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  font: var(--md-sys-typescale-label-small);
+  /* Background is an on-surface 8% state layer, so the content itself
+     uses `on-surface` (not the variant) to keep WCAG contrast well
+     above 4.5:1 and to match the surface-context the state layer was
+     derived from. */
+  color: var(--md-sys-color-on-surface);
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+  padding: 2px var(--md-sys-spacing-sm);
+  border-radius: var(--md-sys-shape-corner-sm);
 }
 .page-header__actions {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--md-sys-spacing-sm);
 }
 .page-header__desc {
-  margin: 6px 0 0 0;
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.4;
+  margin: var(--md-sys-spacing-xs) 0 0 0;
+  font: var(--md-sys-typescale-body-medium);
+  color: var(--md-sys-color-on-surface-variant);
 }
 .page-header--align-center .page-header__row {
   justify-content: center;
@@ -678,14 +681,48 @@ body {
 .page-header__stats {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  font-size: 12px;
-  color: var(--text-muted);
+  gap: var(--md-sys-spacing-md);
+  font: var(--md-sys-typescale-label-medium);
+  color: var(--md-sys-color-on-surface-variant);
 }
 .page-header__stats-item {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--md-sys-spacing-xs);
+}
+
+/* ── Shared M3 button primitives (DESIGN.md §8.1) ──
+   Used in PageHeader `right` slots and anywhere else that needs
+   consistent filled / tonal / outlined buttons without duplicating
+   the token plumbing.
+   ─────────────────────────────────────────────── */
+.md-btn-filled {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-sm);
+  padding: 10px var(--md-sys-spacing-xl);
+  border: none;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font: var(--md-sys-typescale-label-large);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: box-shadow var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
+}
+.md-btn-filled:hover:not(:disabled) {
+  box-shadow:
+    0 1px 3px 1px color-mix(in srgb, #000 15%, transparent),
+    0 1px 2px color-mix(in srgb, #000 30%, transparent);
+}
+.md-btn-filled:disabled {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+  cursor: not-allowed;
+}
+.md-btn-filled:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
 }
 
 /* ── Chart grid ─── */

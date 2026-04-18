@@ -18,12 +18,17 @@ interface PageHeaderProps {
 }
 
 /**
- * Shared page header that mirrors the compact card-header rhythm used on
- * the Infrastructure Overview (16/700 title, lucide icon, optional count
- * chip, actions on the right). Applying it to agents / alerts / monitors
- * / status keeps the typographic scale identical across top-level pages
- * so every route reads as part of the same app instead of five
- * differently-weighted hero banners.
+ * Shared page header that conforms to DESIGN.md §2.2's M3 typography
+ * mapping: `<h1>` uses headline-small (20px / 400), the optional
+ * description uses body-medium (14px / 400), the count chip uses
+ * label-small (11px / 500) on an on-surface 8% state-layer background,
+ * and the leading icon is tinted with `--md-sys-color-primary`. All
+ * spacing is driven by the 4px-grid tokens from §7.1 and the chip corner
+ * is `corner-small` from §3 — no raw hex or pixel literals inside the
+ * component.
+ *
+ * Applied on every top-level page so users get the same typographic
+ * rhythm at the top of every route.
  */
 export function PageHeader({
   icon,

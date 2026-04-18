@@ -142,23 +142,8 @@ export default function AgentsPage() {
         description={t.agents.description}
         right={
           editingKey === null ? (
-            <button
-              onClick={openAdd}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "8px 16px",
-                borderRadius: 8,
-                border: "1px solid var(--accent-blue)",
-                background: "var(--accent-blue)",
-                color: "var(--text-on-accent, #fff)",
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: "pointer",
-              }}
-            >
-              <Plus size={14} /> {t.agents.addAgent}
+            <button type="button" onClick={openAdd} className="md-btn-filled">
+              <Plus size={16} aria-hidden="true" /> {t.agents.addAgent}
             </button>
           ) : undefined
         }
