@@ -12,27 +12,26 @@ import { useI18n } from "@/app/i18n/I18nContext";
 import { Activity } from "lucide-react";
 import { formatNetworkSpeed } from "@/app/lib/formatters";
 
-/** Each metric column has a fixed "personal color" */
-const METRIC_COLORS = {
-  cpu: "var(--accent-blue)",
-  memory: "var(--accent-purple)",
-  disk: "var(--accent-yellow)",
-  load: "var(--accent-cyan)",
-  rx: "var(--accent-green)",
-  tx: "hsl(210, 70%, 55%)",
-} as const;
+/**
+ * Column-header labels stay in the primary on-surface color for a clean
+ * scannable grid. Metric values + their inline-meter bars share the
+ * accent-green fill so a glance tells you "running" without the rainbow
+ * of per-metric hues the overview previously used.
+ */
+const HEADER_COLOR = "var(--text-primary)";
+const METRIC_VALUE_COLOR = "var(--accent-green)";
 
-function InlineMeter({ value, color, max = 100 }: { value: number; color: string; max?: number }) {
+function InlineMeter({ value, max = 100 }: { value: number; max?: number }) {
   const pct = Math.min(Math.max((value / max) * 100, 0), 100);
   return (
     <div className="inline-meter">
-      <span className="inline-meter-value" style={{ color }}>
+      <span className="inline-meter-value" style={{ color: METRIC_VALUE_COLOR }}>
         {pct.toFixed(1)}%
       </span>
       <span className="inline-meter-bar">
         <span
           className="inline-meter-fill"
-          style={{ width: `${pct}%`, background: color }}
+          style={{ width: `${pct}%`, background: METRIC_VALUE_COLOR }}
         />
       </span>
     </div>
@@ -184,23 +183,23 @@ export default function HomePage() {
               <thead>
                 <tr>
                   <th>{t.overview.tableHeaders.system}</th>
-                  <th style={{ width: "13%" }}>
-                    <span style={{ color: METRIC_COLORS.cpu }}>{t.overview.tableHeaders.cpu}</span>
+                  <th style={{ width: "14%" }}>
+                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.cpu}</span>
                   </th>
-                  <th style={{ width: "13%" }}>
-                    <span style={{ color: METRIC_COLORS.memory }}>{t.overview.tableHeaders.memory}</span>
+                  <th style={{ width: "14%" }}>
+                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.memory}</span>
                   </th>
-                  <th style={{ width: "13%" }}>
-                    <span style={{ color: METRIC_COLORS.disk }}>{t.overview.tableHeaders.disk}</span>
+                  <th style={{ width: "14%" }}>
+                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.disk}</span>
                   </th>
-                  <th style={{ width: "8%" }}>
-                    <span style={{ color: METRIC_COLORS.load }}>{t.overview.tableHeaders.load}</span>
+                  <th style={{ width: "9%" }}>
+                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.load}</span>
                   </th>
-                  <th style={{ width: "10%" }}>
-                    <span style={{ color: METRIC_COLORS.rx }}>{t.overview.tableHeaders.netRx}</span>
+                  <th style={{ width: "11%" }}>
+                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.netRx}</span>
                   </th>
-                  <th style={{ width: "10%" }}>
-                    <span style={{ color: METRIC_COLORS.tx }}>{t.overview.tableHeaders.netTx}</span>
+                  <th style={{ width: "11%" }}>
+                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.netTx}</span>
                   </th>
                 </tr>
               </thead>
@@ -253,17 +252,17 @@ export default function HomePage() {
                           </div>
                         </div>
                       </td>
-                      <td>{offline ? dash : <InlineMeter value={host.cpu} color={METRIC_COLORS.cpu} />}</td>
-                      <td>{offline ? dash : <InlineMeter value={host.ram} color={METRIC_COLORS.memory} />}</td>
-                      <td>{offline ? dash : <InlineMeter value={host.disk} color={METRIC_COLORS.disk} />}</td>
+                      <td>{offline ? dash : <InlineMeter value={host.cpu} />}</td>
+                      <td>{offline ? dash : <InlineMeter value={host.ram} />}</td>
+                      <td>{offline ? dash : <InlineMeter value={host.disk} />}</td>
                       <td>
                         {offline ? dash : (
                           <span
                             style={{
                               fontSize: 12,
                               fontFamily: "var(--font-mono), monospace",
-                              fontWeight: 500,
-                              color: METRIC_COLORS.load,
+                              fontWeight: 600,
+                              color: METRIC_VALUE_COLOR,
                             }}
                           >
                             {host.load.toFixed(2)}
@@ -276,8 +275,8 @@ export default function HomePage() {
                             style={{
                               fontSize: 12,
                               fontFamily: "var(--font-mono), monospace",
-                              color: METRIC_COLORS.rx,
-                              fontWeight: 500,
+                              color: METRIC_VALUE_COLOR,
+                              fontWeight: 600,
                             }}
                           >
                             {formatNetworkSpeed(host.networkRx)}
@@ -290,8 +289,8 @@ export default function HomePage() {
                             style={{
                               fontSize: 12,
                               fontFamily: "var(--font-mono), monospace",
-                              color: METRIC_COLORS.tx,
-                              fontWeight: 500,
+                              color: METRIC_VALUE_COLOR,
+                              fontWeight: 600,
                             }}
                           >
                             {formatNetworkSpeed(host.networkTx)}

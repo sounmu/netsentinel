@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { Search, X } from "lucide-react";
 import {
@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/api";
 import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { useNowTick } from "@/app/lib/useNowTick";
 import { alertTypeEmoji, alertTypeSeverity, formatRelative, sanitizeMarkdown } from "./shared";
 
 type RangeKey = "24h" | "7d" | "30d" | "90d";
@@ -55,14 +56,7 @@ export function HistoryPanel() {
   const [search, setSearch] = useState<string>("");
   const [page, setPage] = useState<number>(0);
 
-  const nowTick = useSyncExternalStore(
-    (onChange) => {
-      const id = setInterval(onChange, 30000);
-      return () => clearInterval(id);
-    },
-    () => Date.now(),
-    () => 0,
-  );
+  const nowTick = useNowTick(30_000);
 
   const { data: hosts } = useSWR<HostSummary[]>(getHostsUrl(), fetcher, {
     revalidateOnFocus: false,

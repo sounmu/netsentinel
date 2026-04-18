@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { ArrowRight, ShieldCheck } from "lucide-react";
@@ -10,6 +10,7 @@ import {
   fetcher,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { useNowTick } from "@/app/lib/useNowTick";
 import { alertTypeEmoji, formatRelative, sanitizeMarkdown } from "./shared";
 
 interface Props {
@@ -24,14 +25,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
     { refreshInterval: 15000, revalidateOnFocus: false },
   );
 
-  const nowTick = useSyncExternalStore(
-    (onChange) => {
-      const id = setInterval(onChange, 15000);
-      return () => clearInterval(id);
-    },
-    () => Date.now(),
-    () => 0,
-  );
+  const nowTick = useNowTick(15_000);
 
   useEffect(() => {
     onCountChange?.(active?.length ?? null);
