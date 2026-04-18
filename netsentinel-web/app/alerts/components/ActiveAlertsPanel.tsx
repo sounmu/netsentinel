@@ -1,50 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { ArrowRight, ShieldCheck } from "lucide-react";
 import {
   AlertHistoryRow,
-  getAlertHistoryUrl,
+  getActiveAlertsUrl,
   fetcher,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { alertTypeEmoji, formatRelative, sanitizeMarkdown } from "./shared";
-
-interface ActiveAlert {
-  host_key: string;
-  alert_type: string;
-  message: string;
-  created_at: string;
-}
-
-/**
- * Client-side computation: an alert is "active" when the latest event for
- * (host_key, base_type) is an overload/down and not followed by a recovery.
- * Phase 3 will replace this with GET /api/alerts/active.
- */
-function computeActive(history: AlertHistoryRow[]): ActiveAlert[] {
-  const latest = new Map<string, AlertHistoryRow>();
-  const sorted = [...history].sort(
-    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-  );
-  for (const row of sorted) {
-    const key = `${row.host_key}::${baseKind(row.alert_type)}`;
-    latest.set(key, row);
-  }
-  return Array.from(latest.values())
-    .filter((row) => isFiring(row.alert_type))
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-}
-
-function baseKind(alertType: string): string {
-  return alertType.replace(/_(overload|recovery|down)$/, "");
-}
-
-function isFiring(alertType: string): boolean {
-  return alertType.endsWith("_overload") || alertType.endsWith("_down");
-}
 
 interface Props {
   onCountChange?: (count: number | null) => void;
@@ -52,8 +18,8 @@ interface Props {
 
 export function ActiveAlertsPanel({ onCountChange }: Props) {
   const { t, locale } = useI18n();
-  const { data } = useSWR<AlertHistoryRow[]>(
-    getAlertHistoryUrl(undefined, 200),
+  const { data: active } = useSWR<AlertHistoryRow[]>(
+    getActiveAlertsUrl(),
     fetcher,
     { refreshInterval: 15000, revalidateOnFocus: false },
   );
@@ -67,8 +33,6 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
     () => 0,
   );
 
-  const active = useMemo(() => (data ? computeActive(data) : null), [data]);
-
   useEffect(() => {
     onCountChange?.(active?.length ?? null);
   }, [active, onCountChange]);
@@ -80,7 +44,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
       role="tabpanel"
       aria-labelledby="alerts-tab-active"
     >
-      {active === null && <div className="skeleton" style={{ height: 220 }} />}
+      {active === undefined && <div className="skeleton" style={{ height: 220 }} />}
 
       {active && active.length === 0 && (
         <div className="alerts-card alerts-empty" role="status">
@@ -96,7 +60,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
         <div className="alerts-active-grid">
           {active.map((alert) => (
             <article
-              key={`${alert.host_key}-${alert.alert_type}-${alert.created_at}`}
+              key={`${alert.host_key}-${alert.alert_type}-${alert.id}`}
               className="alerts-active-card"
             >
               <div className="alerts-active-card__head">

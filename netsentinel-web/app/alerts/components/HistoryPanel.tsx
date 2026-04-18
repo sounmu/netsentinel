@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import useSWR from "swr";
 import { Search, X } from "lucide-react";
 import {
-  AlertHistoryRow,
+  AlertHistoryPage,
   getAlertHistoryUrl,
   fetcher,
   getHostsUrl,
@@ -22,6 +22,29 @@ const RANGE_MS: Record<RangeKey, number> = {
   "90d": 90 * 24 * 60 * 60 * 1000,
 };
 
+const KNOWN_TYPES = [
+  "cpu_overload",
+  "cpu_recovery",
+  "memory_overload",
+  "memory_recovery",
+  "disk_overload",
+  "disk_recovery",
+  "load_overload",
+  "load_recovery",
+  "port_down",
+  "port_recovery",
+  "host_down",
+  "host_recovery",
+  "monitor_down",
+  "monitor_recovery",
+  "temperature_overload",
+  "temperature_recovery",
+  "network_overload",
+  "network_recovery",
+  "gpu_overload",
+  "gpu_recovery",
+];
+
 const PAGE_SIZE = 25;
 
 export function HistoryPanel() {
@@ -32,15 +55,6 @@ export function HistoryPanel() {
   const [search, setSearch] = useState<string>("");
   const [page, setPage] = useState<number>(0);
 
-  const { data: alerts } = useSWR<AlertHistoryRow[]>(
-    getAlertHistoryUrl(undefined, 500),
-    fetcher,
-    { refreshInterval: 30000, revalidateOnFocus: false },
-  );
-  const { data: hosts } = useSWR<HostSummary[]>(getHostsUrl(), fetcher, {
-    revalidateOnFocus: false,
-  });
-
   const nowTick = useSyncExternalStore(
     (onChange) => {
       const id = setInterval(onChange, 30000);
@@ -50,31 +64,44 @@ export function HistoryPanel() {
     () => 0,
   );
 
-  const types = useMemo(() => {
-    if (!alerts) return [] as string[];
-    return Array.from(new Set(alerts.map((a) => a.alert_type))).sort();
-  }, [alerts]);
+  const { data: hosts } = useSWR<HostSummary[]>(getHostsUrl(), fetcher, {
+    revalidateOnFocus: false,
+  });
 
-  const filtered = useMemo(() => {
-    if (!alerts || nowTick === 0) return null;
-    const cutoff = nowTick - RANGE_MS[range];
-    const q = search.trim().toLowerCase();
-    return alerts.filter((a) => {
-      if (new Date(a.created_at).getTime() < cutoff) return false;
-      if (type !== "all" && a.alert_type !== type) return false;
-      if (hostKey !== "all" && a.host_key !== hostKey) return false;
-      if (q) {
-        const hay = `${a.host_key} ${a.alert_type} ${a.message}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [alerts, type, hostKey, range, search, nowTick]);
+  // Server-side filter: recompute "from" whenever nowTick advances a full range
+  // bucket so SWR caches stay mostly hot between ticks.
+  const now = nowTick || Date.parse(new Date().toISOString());
+  const from = new Date(now - RANGE_MS[range]).toISOString();
+  const limit = PAGE_SIZE;
+  const offset = page * PAGE_SIZE;
 
-  const total = filtered?.length ?? 0;
+  const { data: pageData } = useSWR<AlertHistoryPage>(
+    nowTick === 0
+      ? null
+      : getAlertHistoryUrl({
+          host_key: hostKey === "all" ? undefined : hostKey,
+          type: type === "all" ? undefined : type,
+          from,
+          limit,
+          offset,
+        }),
+    fetcher,
+    { refreshInterval: 30000, revalidateOnFocus: false, keepPreviousData: true },
+  );
+
+  const rows = pageData?.rows ?? null;
+  const total = pageData?.total ?? 0;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const slice = filtered?.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+  // Client-side text search (server doesn't do LIKE yet)
+  const q = search.trim().toLowerCase();
+  const visible = rows
+    ? q
+      ? rows.filter((a) =>
+          `${a.host_key} ${a.alert_type} ${a.message}`.toLowerCase().includes(q),
+        )
+      : rows
+    : null;
 
   const handleClearFilters = () => {
     setType("all");
@@ -104,7 +131,7 @@ export function HistoryPanel() {
           aria-label={t.alerts.history.filterType}
         >
           <option value="all">{t.alerts.history.allTypes}</option>
-          {types.map((tt) => (
+          {KNOWN_TYPES.map((tt) => (
             <option key={tt} value={tt}>
               {tt}
             </option>
@@ -161,10 +188,7 @@ export function HistoryPanel() {
             className="alerts-field__input"
             placeholder={t.alerts.history.search}
             value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(0);
-            }}
+            onChange={(e) => setSearch(e.target.value)}
             style={{ paddingLeft: 30 }}
           />
         </div>
@@ -182,60 +206,58 @@ export function HistoryPanel() {
       </div>
 
       <div className="alerts-card alerts-history-list">
-        {!filtered && <div className="skeleton" style={{ height: 200 }} />}
+        {visible === null && <div className="skeleton" style={{ height: 200 }} />}
 
-        {filtered && slice && slice.length === 0 && (
+        {visible && visible.length === 0 && (
           <div className="alerts-card--empty" style={{ padding: "var(--md-sys-spacing-xl)" }}>
             {t.alerts.history.noResults}
           </div>
         )}
 
-        {filtered &&
-          slice?.map((alert) => {
-            const severity = alertTypeSeverity(alert.alert_type);
-            return (
-              <div key={alert.id} className="alerts-history-row">
-                <span className="alerts-history-row__icon" aria-hidden="true">
-                  {alertTypeEmoji(alert.alert_type)}
-                </span>
-                <div className="alerts-row__grow">
-                  <div className="alerts-row alerts-row--tight" style={{ alignItems: "center" }}>
-                    <span className={`alerts-severity alerts-severity--${severity}`}>
-                      {alert.alert_type}
-                    </span>
-                  </div>
-                  <div
-                    className="alerts-history-row__message"
-                    style={{ marginTop: 4 }}
-                  >
-                    {sanitizeMarkdown(alert.message)}
-                  </div>
-                  <div className="alerts-history-row__meta">
-                    <span className="alerts-history-row__host-key">{alert.host_key}</span>
-                    {" · "}
-                    {formatRelative(alert.created_at, locale, nowTick || Date.parse(alert.created_at))}
-                    {" · "}
-                    {new Date(alert.created_at).toLocaleString(
-                      locale === "ko" ? "ko-KR" : "en-US",
-                    )}
-                  </div>
+        {visible?.map((alert) => {
+          const severity = alertTypeSeverity(alert.alert_type);
+          return (
+            <div key={alert.id} className="alerts-history-row">
+              <span className="alerts-history-row__icon" aria-hidden="true">
+                {alertTypeEmoji(alert.alert_type)}
+              </span>
+              <div className="alerts-row__grow">
+                <div className="alerts-row alerts-row--tight" style={{ alignItems: "center" }}>
+                  <span className={`alerts-severity alerts-severity--${severity}`}>
+                    {alert.alert_type}
+                  </span>
+                </div>
+                <div className="alerts-history-row__message" style={{ marginTop: 4 }}>
+                  {sanitizeMarkdown(alert.message)}
+                </div>
+                <div className="alerts-history-row__meta">
+                  <span className="alerts-history-row__host-key">{alert.host_key}</span>
+                  {" · "}
+                  {formatRelative(
+                    alert.created_at,
+                    locale,
+                    nowTick || Date.parse(alert.created_at),
+                  )}
+                  {" · "}
+                  {new Date(alert.created_at).toLocaleString(locale === "ko" ? "ko-KR" : "en-US")}
                 </div>
               </div>
-            );
-          })}
+            </div>
+          );
+        })}
 
-        {filtered && filtered.length > PAGE_SIZE && (
+        {visible && total > PAGE_SIZE && (
           <div className="alerts-history-footer">
             <span>
               {t.alerts.history.showingRange
-                .replace("{count}", String(slice?.length ?? 0))
+                .replace("{count}", String(visible.length))
                 .replace("{total}", String(total))}
             </span>
             <div className="alerts-row alerts-row--tight">
               <button
                 type="button"
                 className="alerts-btn alerts-btn--sm alerts-btn--tonal"
-                disabled={currentPage === 0}
+                disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
                 {t.alerts.history.prev}
@@ -243,7 +265,7 @@ export function HistoryPanel() {
               <button
                 type="button"
                 className="alerts-btn alerts-btn--sm alerts-btn--tonal"
-                disabled={currentPage >= pageCount - 1}
+                disabled={page >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               >
                 {t.alerts.history.next}

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { CheckCheck, X } from "lucide-react";
-import { getHostAlertConfigsUrl, updateHostAlertConfigs } from "@/app/lib/api";
+import { bulkUpdateHostAlertConfigs, getHostAlertConfigsUrl } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
 import type { AlertFormData } from "./shared";
 import { formToRequests } from "./shared";
@@ -25,8 +25,8 @@ export function BulkApplyBar({ selectedCount, selectedHosts, form, onClear, onAp
   const handleApply = async () => {
     setApplying(true);
     try {
-      const body = formToRequests(form);
-      await Promise.all(selectedHosts.map((hostKey) => updateHostAlertConfigs(hostKey, body)));
+      const configs = formToRequests(form);
+      await bulkUpdateHostAlertConfigs({ host_keys: selectedHosts, configs });
       await Promise.all(
         selectedHosts.map((hostKey) => mutate(getHostAlertConfigsUrl(hostKey))),
       );
