@@ -31,7 +31,20 @@ pgdata/
 node_modules/
 .next/
 
-docs/
-scripts/
+# docs/ holds internal review reports by default; whitelist the user-
+# facing docs we publish alongside the code.
+docs/*
+!docs/AFTER_INSTALL.md
+!docs/DEPLOYMENT.md
+
+# scripts/ holds throwaway benchmarking + scratch scripts; whitelist
+# the install-flow scripts the README references.
+scripts/*
+!scripts/bootstrap.sh
+!scripts/smoke-test.sh
+!scripts/doctor.sh
+
+# netsentinel-web has its own scripts/ folder used by npm start
+# (export-start.mjs is the production static preview server).
 !netsentinel-web/scripts/
 !netsentinel-web/scripts/export-start.mjs
