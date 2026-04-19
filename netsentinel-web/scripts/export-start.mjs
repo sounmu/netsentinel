@@ -114,6 +114,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(DEFAULT_PORT, () => {
-  // eslint-disable-next-line no-console
   console.log(`Static export server listening on http://localhost:${DEFAULT_PORT}`);
 });

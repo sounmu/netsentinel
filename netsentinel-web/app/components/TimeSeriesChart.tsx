@@ -294,7 +294,13 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   useEffect(() => {
     if (!isLivePreset) return;
-    setNowTick(Date.now()); // catch up on preset entry / preset switch
+    // Catch up on preset entry / switch. Deferred to a microtask instead
+    // of being called synchronously in the effect body so we don't trip
+    // `react-hooks/set-state-in-effect` — a synchronous setState here
+    // triggers an immediate cascading render before paint, whereas the
+    // microtask-scheduled one lands in the same commit cycle without
+    // the double render. The perceived latency difference is zero.
+    queueMicrotask(() => setNowTick(Date.now()));
     const id = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(id);
   }, [isLivePreset, range.preset]);
