@@ -1,5 +1,6 @@
 services:
-  # 1. PostgreSQL + TimescaleDB — no host port exposed; reachable only on the internal network
+  # ─── 1. PostgreSQL + TimescaleDB ─────────────────────────────────
+  # No host port exposed; reachable only on backend-internal.
   db:
     image: timescale/timescaledb:latest-pg15
     restart: unless-stopped
@@ -13,7 +14,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-network_monitor}
+      POSTGRES_DB: ${POSTGRES_DB:-netsentinel}
     command:
       - "postgres"
       - "-c"
@@ -31,7 +32,9 @@ services:
     networks:
       - backend-internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-network_monitor}"]
+      test:
+        - "CMD-SHELL"
+        - "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-netsentinel}"
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,22 +45,20 @@ services:
           cpus: "1.0"
           memory: 4G
 
-  # 2. Rust backend server + embedded web static bundle.
-  # From v0.3.6 this single container replaces the old server + separate
-  # Node.js web container; the Dockerfile multi-stage builds `next build`
-  # (output: 'export') into /app/static and serves it via tower-http
-  # alongside the API on port 3000. Saves ~35 MB of Node runtime for
-  # lightweight homelab deployments.
+  # ─── 2. Rust backend server + embedded web static bundle ─────────
+  # One container serves both /api/* and the Next.js static export on
+  # port 3000. Saves the ~35 MB Node runtime the old separate `web`
+  # container needed.
   server:
     image: ghcr.io/sounmu/netsentinel-server:latest
     build:
       context: .
       dockerfile: netsentinel-server/Dockerfile
       args:
-        # Baked into the static bundle at build time. Default empty =
-        # same-origin (the bundle talks to whatever host it was served
-        # from). Override for reverse-proxy setups where the API and the
-        # UI live under different hostnames.
+        # NEXT_PUBLIC_API_URL is baked into the static bundle at build
+        # time. Empty = same-origin (default — fine for localhost and
+        # single-hostname reverse proxies). Override in .env when the
+        # API and dashboard live on different hostnames.
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
     depends_on:
       db:
@@ -68,16 +69,27 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    volumes:
-      - ./netsentinel-server/.env:/app/.env
+    # Root `.env` is the single source of truth. Every value (incl.
+    # JWT_SECRET, ALLOWED_ORIGINS, METRICS_TOKEN, …) is injected here.
+    # `netsentinel-server/.env` is reserved for local `cargo run`
+    # development only — it is NOT mounted or read by Docker Compose.
     env_file:
-      - ./netsentinel-server/.env
+      - .env
     environment:
-      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-network_monitor}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netsentinel}
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=3000
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl -sf http://localhost:3000/api/health > /dev/null || exit 1"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
     ports:
-      - "3000:3000"
+      - "${SERVER_PORT:-3000}:3000"
     networks:
-      - shared-network
       - backend-internal
     deploy:
       resources:
@@ -85,10 +97,10 @@ services:
           cpus: "2.0"
           memory: 2G
 
-
 networks:
-  # shared-network is expected to be created externally (e.g. by a Cloudflare Tunnel container).
-  # Create it with: docker network create shared-network
-  shared-network:
-    external: true
+  # `backend-internal` is private to the stack (db ↔ server only).
+  # Compose auto-creates it on `up`; no manual `docker network create`
+  # required. Operators who route traffic through an external overlay
+  # (Cloudflare Tunnel, reverse proxy) can attach extra networks via a
+  # compose override file — see docs/DEPLOYMENT.md.
   backend-internal:

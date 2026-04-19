@@ -46,8 +46,11 @@ RUN touch src/main.rs && cargo build --release && strip target/release/netsentin
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+# `curl` is required for the healthcheck defined in docker-compose.yml
+# (`curl -sf http://localhost:3000/api/health`). ~3 MB runtime cost —
+# worth it for compose `depends_on: condition: service_healthy` wiring.
 
 RUN groupadd -r monitor && useradd -r -g monitor -s /usr/sbin/nologin monitor
 
