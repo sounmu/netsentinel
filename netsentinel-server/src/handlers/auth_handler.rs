@@ -115,10 +115,16 @@ pub struct LoginResponse {
 
 /// Extract the client IP address, accounting for trusted reverse proxies.
 ///
-/// When `trusted_proxy_count == 0`, ignores X-Forwarded-For (prevents spoofing)
-/// and uses the peer socket address. When `> 0`, takes the Nth IP from the
-/// **right** of X-Forwarded-For (proxies append left-to-right, so the rightmost
-/// entries are from infrastructure the operator controls).
+/// When `trusted_proxy_count == 0`, ignores every forwarded-IP header
+/// (prevents spoofing) and uses the peer socket address. When `> 0`:
+///   1. **`CF-Connecting-IP`** is preferred — Cloudflare always sets this to
+///      the original client IP and overwrites any spoofed value at the edge.
+///      Native support matters because the NetSentinel stock deployment is
+///      "Zero-Trust via Cloudflare Tunnel", where without this every request
+///      collapses onto a single tunnel-IP and trips rate limits instantly.
+///   2. Falls back to the Nth-from-right entry of `X-Forwarded-For`
+///      (proxies append left-to-right, so rightmost entries come from
+///      operator-controlled infrastructure).
 pub(crate) fn extract_client_ip(
     headers: &HeaderMap,
     peer_addr: &SocketAddr,
@@ -126,6 +132,14 @@ pub(crate) fn extract_client_ip(
 ) -> String {
     if trusted_proxy_count == 0 {
         return peer_addr.ip().to_string();
+    }
+    if let Some(cf) = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        return cf.to_string();
     }
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
         let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
@@ -293,20 +307,23 @@ pub async fn setup(
         .map_err(|e| AppError::Internal(format!("Hash task failed: {e:#}")))?
         .map_err(|e| AppError::Internal(format!("Failed to hash password: {e:#}")))?;
 
-    // Lock the users table so concurrent bootstrap requests cannot both
-    // observe "no users yet" and create separate admin accounts.
+    // Serialise concurrent bootstrap requests against the first-admin
+    // invariant. Postgres used `LOCK TABLE users IN ACCESS EXCLUSIVE
+    // MODE`; SQLite has no table-level lock, but a transaction started
+    // via `pool.begin()` on a WAL database acquires the single writer
+    // lock immediately on its first write — so the `COUNT(*) == 0`
+    // check plus the subsequent `create_user` INSERT execute as an
+    // indivisible pair against any other write. In addition the
+    // `users.username UNIQUE` constraint catches the extremely narrow
+    // race where two readers slip past the count check on different
+    // connections before either writes.
     let mut tx = state
         .db_pool
         .begin()
         .await
         .map_err(|e| AppError::Internal(format!("Failed to begin transaction: {e:#}")))?;
 
-    sqlx::query("LOCK TABLE users IN ACCESS EXCLUSIVE MODE")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to lock users table: {e:#}")))?;
-
-    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*)::BIGINT FROM users")
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
         .fetch_one(&mut *tx)
         .await?;
     if count > 0 {
@@ -317,7 +334,19 @@ pub async fn setup(
 
     let user = users_repo::create_user(&mut *tx, &body.username, &password_hash, "admin")
         .await
-        .map_err(|e| AppError::Internal(format!("Failed to create user: {e:#}")))?;
+        .map_err(|e| {
+            // `users.username UNIQUE` surfaces as a Database error here
+            // if another bootstrap race landed first. Fold it into the
+            // same friendly message as the count check above.
+            if let sqlx::Error::Database(ref dbe) = e
+                && dbe.message().to_lowercase().contains("unique")
+            {
+                return AppError::BadRequest(
+                    "Setup already completed. Use login instead.".to_string(),
+                );
+            }
+            AppError::Internal(format!("Failed to create user: {e:#}"))
+        })?;
 
     tx.commit()
         .await
@@ -418,42 +447,31 @@ pub async fn change_password(
 ///   3. Reply with a `Set-Cookie` that deletes `nm_refresh` from the
 ///      browser.
 ///
-/// Idempotent and tolerant of a missing / invalid access token: even a
-/// best-effort logout from a stale session still results in the cookie
-/// being cleaned up.
+/// **Gated by `UserGuard`** — previously this endpoint accepted any decode-
+/// successful token (including expired) and fell back to acting on the
+/// refresh cookie alone. That let an attacker with a leaked access fragment
+/// or a stolen `nm_refresh` cookie force-logout arbitrary users and churn
+/// writes against the SQLite writer lock. The web client already holds a
+/// fresh access JWT in normal flows (it refreshes before calling logout),
+/// so the stricter gate has no legitimate UX regression.
 pub async fn logout(
+    auth: UserGuard,
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    // Try to identify the caller from the bearer token. If that fails,
-    // we still wipe the cookie so the client walks away cleanly.
-    let user_id_opt = headers
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .and_then(user_auth::decode_user_jwt)
-        .map(|claims| (claims.sub, claims.username));
+    let user_id = auth.claims.sub;
+    let username = auth.claims.username.clone();
 
-    if let Some((user_id, username)) = user_id_opt {
-        users_repo::revoke_user_tokens(&state.db_pool, user_id).await?;
-        let now = chrono::Utc::now().timestamp();
-        crate::services::auth::update_tokens_revoked_at(user_id, now);
-        if let Err(e) = refresh_token::revoke_all_for_user(&state.db_pool, user_id).await {
-            tracing::warn!(err = ?e, user_id, "⚠️ [Auth] Failed to revoke refresh rows on logout");
-        }
-        tracing::info!(
-            user_id,
-            username = %username,
-            "🔐 [Auth] User logged out — all tokens revoked"
-        );
-    } else if let Some(cookie) = extract_refresh_cookie(&headers) {
-        // No usable bearer, but we still have a refresh cookie — revoke
-        // just that single refresh row. This handles the "access JWT
-        // already expired; browser clicking logout" case cleanly.
-        if let Err(e) = refresh_token::revoke_single(&state.db_pool, &cookie).await {
-            tracing::warn!(err = ?e, "⚠️ [Auth] Failed to revoke single refresh on logout");
-        }
+    users_repo::revoke_user_tokens(&state.db_pool, user_id).await?;
+    let now = chrono::Utc::now().timestamp();
+    crate::services::auth::update_tokens_revoked_at(user_id, now);
+    if let Err(e) = refresh_token::revoke_all_for_user(&state.db_pool, user_id).await {
+        tracing::warn!(err = ?e, user_id, "⚠️ [Auth] Failed to revoke refresh rows on logout");
     }
+    tracing::info!(
+        user_id,
+        %username,
+        "🔐 [Auth] User logged out — all tokens revoked"
+    );
 
     let mut resp = Json(serde_json::json!({ "success": true })).into_response();
     resp.headers_mut().append(

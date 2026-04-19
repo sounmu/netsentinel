@@ -47,22 +47,29 @@ echo
 if [[ -f "$ENV_PATH" ]]; then
   ok ".env exists at repo root"
 
-  # required keys
-  for key in POSTGRES_PASSWORD JWT_SECRET; do
-    val="$(grep -E "^${key}=" "$ENV_PATH" | head -n1 | cut -d= -f2- || true)"
-    if [[ -z "$val" || "$val" == "change_me"* ]]; then
-      bad "${key} is unset or still the placeholder" \
-          "re-run ./scripts/bootstrap.sh --force to regenerate"
-    elif [[ "$key" == "JWT_SECRET" && ${#val} -lt 32 ]]; then
-      bad "${key} is shorter than 32 characters (${#val})" \
-          "server will refuse to start — re-run ./scripts/bootstrap.sh --force"
-    else
-      ok "${key} is set (len ${#val})"
-    fi
-  done
+  # The only long-lived secret is JWT_SECRET. SQLite deployment has
+  # no DB password.
+  val="$(grep -E "^JWT_SECRET=" "$ENV_PATH" | head -n1 | cut -d= -f2- || true)"
+  if [[ -z "$val" || "$val" == "change_me"* ]]; then
+    bad "JWT_SECRET is unset or still the placeholder" \
+        "re-run ./scripts/bootstrap.sh --force to regenerate"
+  elif [[ ${#val} -lt 32 ]]; then
+    bad "JWT_SECRET is shorter than 32 characters (${#val})" \
+        "server will refuse to start — re-run ./scripts/bootstrap.sh --force"
+  else
+    ok "JWT_SECRET is set (len ${#val})"
+  fi
 else
   bad ".env missing at repo root" \
       "run ./scripts/bootstrap.sh to generate one"
+fi
+
+# SQLite data dir — compose bind-mounts it; bootstrap creates it.
+if [[ -d "${REPO_ROOT}/data" ]]; then
+  ok "SQLite data directory present at ./data"
+else
+  bad "./data directory missing" \
+      "mkdir -p ./data (or re-run ./scripts/bootstrap.sh)"
 fi
 
 echo

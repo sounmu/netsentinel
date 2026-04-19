@@ -4,6 +4,8 @@ pub mod hosts_snapshot;
 pub mod metrics_service;
 pub mod monitor_scraper;
 pub mod refresh_token;
+pub mod retention_worker;
+pub mod rollup_worker;
 pub mod scraper;
 pub mod sse_ticket;
 pub mod static_assets;

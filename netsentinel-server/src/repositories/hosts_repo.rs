@@ -1,8 +1,13 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
 
-/// Row struct for the `hosts` table
+use crate::db::DbPool;
+
+/// Row struct for the `hosts` table.
+///
+/// `ports` and `containers` are persisted as JSON text columns in SQLite
+/// and parsed at the boundary via `HostRowRaw` — the Rust type stays
+/// `Vec<i32>` / `Vec<String>` so consumers are unaffected.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct HostRow {
     pub host_key: String,
@@ -20,21 +25,6 @@ pub struct HostRow {
     pub boot_time: Option<i64>,
     pub ip_address: Option<String>,
     pub system_info_updated_at: Option<DateTime<Utc>>,
-}
-
-/// Fetch all hosts ordered by host_key
-pub async fn list_hosts(pool: &PgPool) -> Result<Vec<HostRow>, sqlx::Error> {
-    sqlx::query_as::<_, HostRow>("SELECT * FROM hosts ORDER BY host_key")
-        .fetch_all(pool)
-        .await
-}
-
-/// Fetch a single host by host_key
-pub async fn get_host(pool: &PgPool, host_key: &str) -> Result<Option<HostRow>, sqlx::Error> {
-    sqlx::query_as::<_, HostRow>("SELECT * FROM hosts WHERE host_key = $1")
-        .bind(host_key)
-        .fetch_optional(pool)
-        .await
 }
 
 /// Request body for creating a new host
@@ -72,66 +62,151 @@ pub struct UpdateHostRequest {
     pub containers: Option<Vec<String>>,
 }
 
-/// Insert a new host record
-pub async fn create_host(pool: &PgPool, req: &CreateHostRequest) -> Result<HostRow, sqlx::Error> {
-    sqlx::query_as::<_, HostRow>(
-        r#"
-        INSERT INTO hosts (host_key, display_name, scrape_interval_secs, load_threshold, ports, containers)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *
-        "#,
-    )
-    .bind(&req.host_key)
-    .bind(&req.display_name)
-    .bind(req.scrape_interval_secs)
-    .bind(req.load_threshold)
-    .bind(&req.ports)
-    .bind(&req.containers)
-    .fetch_one(pool)
-    .await
+// `ports` / `containers` are stored as JSON text (schema: TEXT default
+// `'[]'`). `HostRowRaw` holds the raw `String` fields and decodes them
+// into `Vec<T>` via `TryFrom` at the boundary.
+
+#[derive(sqlx::FromRow)]
+struct HostRowRaw {
+    host_key: String,
+    display_name: String,
+    scrape_interval_secs: i32,
+    load_threshold: f64,
+    ports: String,
+    containers: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    os_info: Option<String>,
+    cpu_model: Option<String>,
+    memory_total_mb: Option<i64>,
+    boot_time: Option<i64>,
+    ip_address: Option<String>,
+    system_info_updated_at: Option<DateTime<Utc>>,
 }
 
-/// Update host config fields (COALESCE — only provided fields are changed)
+impl TryFrom<HostRowRaw> for HostRow {
+    type Error = sqlx::Error;
+
+    fn try_from(raw: HostRowRaw) -> Result<Self, Self::Error> {
+        let ports: Vec<i32> =
+            serde_json::from_str(&raw.ports).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        let containers: Vec<String> =
+            serde_json::from_str(&raw.containers).map_err(|e| sqlx::Error::Decode(Box::new(e)))?;
+        Ok(Self {
+            host_key: raw.host_key,
+            display_name: raw.display_name,
+            scrape_interval_secs: raw.scrape_interval_secs,
+            load_threshold: raw.load_threshold,
+            ports,
+            containers,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+            os_info: raw.os_info,
+            cpu_model: raw.cpu_model,
+            memory_total_mb: raw.memory_total_mb,
+            boot_time: raw.boot_time,
+            ip_address: raw.ip_address,
+            system_info_updated_at: raw.system_info_updated_at,
+        })
+    }
+}
+
+const HOST_COLUMNS: &str = "host_key, display_name, scrape_interval_secs, load_threshold, \
+                            ports, containers, created_at, updated_at, \
+                            os_info, cpu_model, memory_total_mb, boot_time, ip_address, \
+                            system_info_updated_at";
+
+pub async fn list_hosts(pool: &DbPool) -> Result<Vec<HostRow>, sqlx::Error> {
+    let sql = format!("SELECT {HOST_COLUMNS} FROM hosts ORDER BY host_key");
+    let raws = sqlx::query_as::<_, HostRowRaw>(&sql)
+        .fetch_all(pool)
+        .await?;
+    raws.into_iter().map(HostRow::try_from).collect()
+}
+
+pub async fn get_host(pool: &DbPool, host_key: &str) -> Result<Option<HostRow>, sqlx::Error> {
+    let sql = format!("SELECT {HOST_COLUMNS} FROM hosts WHERE host_key = ?1");
+    let raw = sqlx::query_as::<_, HostRowRaw>(&sql)
+        .bind(host_key)
+        .fetch_optional(pool)
+        .await?;
+    raw.map(HostRow::try_from).transpose()
+}
+
+pub async fn create_host(pool: &DbPool, req: &CreateHostRequest) -> Result<HostRow, sqlx::Error> {
+    let ports_text = serde_json::to_string(&req.ports).expect("Vec<i32> always serialises");
+    let containers_text =
+        serde_json::to_string(&req.containers).expect("Vec<String> always serialises");
+
+    let sql = format!(
+        r#"
+        INSERT INTO hosts (host_key, display_name, scrape_interval_secs, load_threshold, ports, containers)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        RETURNING {HOST_COLUMNS}
+        "#
+    );
+    let raw = sqlx::query_as::<_, HostRowRaw>(&sql)
+        .bind(&req.host_key)
+        .bind(&req.display_name)
+        .bind(req.scrape_interval_secs)
+        .bind(req.load_threshold)
+        .bind(&ports_text)
+        .bind(&containers_text)
+        .fetch_one(pool)
+        .await?;
+    HostRow::try_from(raw)
+}
+
 pub async fn update_host(
-    pool: &PgPool,
+    pool: &DbPool,
     host_key: &str,
     req: &UpdateHostRequest,
 ) -> Result<Option<HostRow>, sqlx::Error> {
-    sqlx::query_as::<_, HostRow>(
+    // Bind NULL for absent fields so COALESCE keeps the existing value.
+    let ports_text = req
+        .ports
+        .as_ref()
+        .map(|v| serde_json::to_string(v).expect("Vec<i32> always serialises"));
+    let containers_text = req
+        .containers
+        .as_ref()
+        .map(|v| serde_json::to_string(v).expect("Vec<String> always serialises"));
+
+    let sql = format!(
         r#"
         UPDATE hosts SET
-            display_name = COALESCE($2, display_name),
-            scrape_interval_secs = COALESCE($3, scrape_interval_secs),
-            load_threshold = COALESCE($4, load_threshold),
-            ports = COALESCE($5, ports),
-            containers = COALESCE($6, containers),
-            updated_at = NOW()
-        WHERE host_key = $1
-        RETURNING *
-        "#,
-    )
-    .bind(host_key)
-    .bind(&req.display_name)
-    .bind(req.scrape_interval_secs)
-    .bind(req.load_threshold)
-    .bind(&req.ports)
-    .bind(&req.containers)
-    .fetch_optional(pool)
-    .await
+            display_name         = COALESCE(?2, display_name),
+            scrape_interval_secs = COALESCE(?3, scrape_interval_secs),
+            load_threshold       = COALESCE(?4, load_threshold),
+            ports                = COALESCE(?5, ports),
+            containers           = COALESCE(?6, containers),
+            updated_at           = strftime('%s','now')
+        WHERE host_key = ?1
+        RETURNING {HOST_COLUMNS}
+        "#
+    );
+    let raw = sqlx::query_as::<_, HostRowRaw>(&sql)
+        .bind(host_key)
+        .bind(&req.display_name)
+        .bind(req.scrape_interval_secs)
+        .bind(req.load_threshold)
+        .bind(ports_text)
+        .bind(containers_text)
+        .fetch_optional(pool)
+        .await?;
+    raw.map(HostRow::try_from).transpose()
 }
 
-/// Delete a host record; returns true if a row was removed
-pub async fn delete_host(pool: &PgPool, host_key: &str) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("DELETE FROM hosts WHERE host_key = $1")
+pub async fn delete_host(pool: &DbPool, host_key: &str) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM hosts WHERE host_key = ?1")
         .bind(host_key)
         .execute(pool)
         .await?;
     Ok(result.rows_affected() > 0)
 }
 
-/// Update static system info fields fetched from the agent's /system-info endpoint.
 pub async fn update_system_info(
-    pool: &PgPool,
+    pool: &DbPool,
     host_key: &str,
     os_info: &str,
     cpu_model: &str,
@@ -142,14 +217,14 @@ pub async fn update_system_info(
     sqlx::query(
         r#"
         UPDATE hosts SET
-            os_info = $2,
-            cpu_model = $3,
-            memory_total_mb = $4,
-            boot_time = $5,
-            ip_address = $6,
-            system_info_updated_at = NOW(),
-            updated_at = NOW()
-        WHERE host_key = $1
+            os_info                = ?2,
+            cpu_model              = ?3,
+            memory_total_mb        = ?4,
+            boot_time              = ?5,
+            ip_address             = ?6,
+            system_info_updated_at = strftime('%s','now'),
+            updated_at             = strftime('%s','now')
+        WHERE host_key = ?1
         "#,
     )
     .bind(host_key)
@@ -167,21 +242,21 @@ pub async fn update_system_info(
 /// Only updates display_name if it was empty/null — prevents a compromised agent
 /// from overwriting an admin-set name (SS-15).
 pub async fn ensure_host_registered(
-    pool: &PgPool,
+    pool: &DbPool,
     host_key: &str,
     display_name: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         r#"
         INSERT INTO hosts (host_key, display_name)
-        VALUES ($1, $2)
+        VALUES (?1, ?2)
         ON CONFLICT (host_key) DO UPDATE SET
             display_name = CASE
                 WHEN hosts.display_name = '' OR hosts.display_name IS NULL
-                THEN EXCLUDED.display_name
+                THEN excluded.display_name
                 ELSE hosts.display_name
             END,
-            updated_at = NOW()
+            updated_at = strftime('%s','now')
         "#,
     )
     .bind(host_key)
@@ -189,4 +264,105 @@ pub async fn ensure_host_registered(
     .execute(pool)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod sqlite_tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn fresh_pool() -> DbPool {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(false)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Memory);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    fn sample_create_req() -> CreateHostRequest {
+        CreateHostRequest {
+            host_key: "192.168.1.10:9101".into(),
+            display_name: "homeserver".into(),
+            scrape_interval_secs: 10,
+            load_threshold: 4.0,
+            ports: vec![80, 443, 8080],
+            containers: vec!["nginx".into(), "postgres".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn roundtrip_ports_and_containers_as_json() {
+        let pool = fresh_pool().await;
+        let created = create_host(&pool, &sample_create_req()).await.unwrap();
+
+        assert_eq!(created.ports, vec![80, 443, 8080]);
+        assert_eq!(
+            created.containers,
+            vec!["nginx".to_string(), "postgres".to_string()]
+        );
+
+        let fetched = get_host(&pool, "192.168.1.10:9101").await.unwrap().unwrap();
+        assert_eq!(fetched.ports, created.ports);
+        assert_eq!(fetched.containers, created.containers);
+    }
+
+    #[tokio::test]
+    async fn ensure_host_registered_preserves_admin_set_name() {
+        let pool = fresh_pool().await;
+        // Admin creates host via full form.
+        create_host(&pool, &sample_create_req()).await.unwrap();
+
+        // Agent scrape arrives with a generic hostname — must NOT overwrite.
+        ensure_host_registered(&pool, "192.168.1.10:9101", "generic-hostname")
+            .await
+            .unwrap();
+
+        let after = get_host(&pool, "192.168.1.10:9101").await.unwrap().unwrap();
+        assert_eq!(after.display_name, "homeserver");
+    }
+
+    #[tokio::test]
+    async fn update_host_coalesce_leaves_absent_fields() {
+        let pool = fresh_pool().await;
+        create_host(&pool, &sample_create_req()).await.unwrap();
+
+        let updated = update_host(
+            &pool,
+            "192.168.1.10:9101",
+            &UpdateHostRequest {
+                display_name: None,
+                scrape_interval_secs: Some(30),
+                load_threshold: None,
+                ports: Some(vec![22]),
+                containers: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(updated.display_name, "homeserver"); // untouched
+        assert_eq!(updated.scrape_interval_secs, 30); // new
+        assert_eq!(updated.load_threshold, 4.0); // untouched
+        assert_eq!(updated.ports, vec![22]); // new
+        assert_eq!(
+            updated.containers,
+            vec!["nginx".to_string(), "postgres".to_string()]
+        ); // untouched
+
+        assert!(delete_host(&pool, "192.168.1.10:9101").await.unwrap());
+        assert!(
+            get_host(&pool, "192.168.1.10:9101")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 }

@@ -1,54 +1,9 @@
 services:
-  # ─── 1. PostgreSQL + TimescaleDB ─────────────────────────────────
-  # No host port exposed; reachable only on backend-internal.
-  db:
-    image: timescale/timescaledb:latest-pg15
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    volumes:
-      - ./pgdata:/var/lib/postgresql/data
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-netsentinel}
-    command:
-      - "postgres"
-      - "-c"
-      - "shared_buffers=1GB"
-      - "-c"
-      - "effective_cache_size=3GB"
-      - "-c"
-      - "work_mem=16MB"
-      - "-c"
-      - "maintenance_work_mem=256MB"
-      - "-c"
-      - "wal_buffers=16MB"
-      - "-c"
-      - "random_page_cost=1.1"
-    networks:
-      - backend-internal
-    healthcheck:
-      test:
-        - "CMD-SHELL"
-        - "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-netsentinel}"
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 4G
-
-  # ─── 2. Rust backend server + embedded web static bundle ─────────
-  # One container serves both /api/* and the Next.js static export on
-  # port 3000. Saves the ~35 MB Node runtime the old separate `web`
-  # container needed.
+  # ─── Rust backend server + embedded web static bundle ────────────
+  # Single container serves both /api/* and the Next.js static export
+  # on port 3000. All persistent state lives in the `./data` bind
+  # mount as a single SQLite file (`netsentinel.db`), so operators can
+  # back up with `cp` and there is nothing else to keep in sync.
   server:
     image: ghcr.io/sounmu/netsentinel-server:latest
     build:
@@ -60,25 +15,26 @@ services:
         # single-hostname reverse proxies). Override in .env when the
         # API and dashboard live on different hostnames.
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
-    depends_on:
-      db:
-        condition: service_healthy
     restart: unless-stopped
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    # Root `.env` is the single source of truth. Every value (incl.
-    # JWT_SECRET, ALLOWED_ORIGINS, METRICS_TOKEN, …) is injected here.
+    # Root `.env` is the single source of truth. Every value
+    # (JWT_SECRET, ALLOWED_ORIGINS, METRICS_TOKEN, …) is injected here.
     # `netsentinel-server/.env` is reserved for local `cargo run`
     # development only — it is NOT mounted or read by Docker Compose.
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-netsentinel}
+      # Single embedded SQLite file under /app/data. WAL sidecar files
+      # (`.wal`, `.shm`) live next to it on the same volume.
+      - DATABASE_URL=sqlite:///app/data/netsentinel.db
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=3000
+    volumes:
+      - ./data:/app/data
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -89,18 +45,8 @@ services:
       start_period: 30s
     ports:
       - "${SERVER_PORT:-3000}:3000"
-    networks:
-      - backend-internal
     deploy:
       resources:
         limits:
           cpus: "2.0"
-          memory: 2G
-
-networks:
-  # `backend-internal` is private to the stack (db ↔ server only).
-  # Compose auto-creates it on `up`; no manual `docker network create`
-  # required. Operators who route traffic through an external overlay
-  # (Cloudflare Tunnel, reverse proxy) can attach extra networks via a
-  # compose override file — see docs/DEPLOYMENT.md.
-  backend-internal:
+          memory: 1G

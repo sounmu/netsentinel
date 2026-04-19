@@ -22,12 +22,12 @@
 //!   access TTL still reduces damage versus the old 24 h.
 //! - Compromised JWT_SECRET; the rotation-contract tests cover that.
 
+use crate::db::DbPool;
 use argon2::password_hash::rand_core::{OsRng, RngCore};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Duration, Utc};
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
 
 use crate::errors::AppError;
 use crate::repositories::refresh_tokens_repo::{self, RefreshTokenRow};
@@ -85,7 +85,7 @@ fn encode_plaintext(bytes: &[u8]) -> String {
 /// Issue a brand-new refresh token for a successful password login. Starts
 /// a fresh family — the result is not linked to any prior session.
 pub async fn issue_new_family(
-    pool: &PgPool,
+    pool: &DbPool,
     user_id: i32,
     user_agent: Option<&str>,
     ip: Option<&str>,
@@ -142,7 +142,7 @@ pub enum RotateOutcome {
 /// Callers should follow up with `issue_access_token_and_cookie` in the
 /// handler layer.
 pub async fn rotate(
-    pool: &PgPool,
+    pool: &DbPool,
     presented: &str,
     user_agent: Option<&str>,
     ip: Option<&str>,
@@ -151,37 +151,38 @@ pub async fn rotate(
         return Ok(RotateOutcome::Rejected);
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(format!("Failed to begin transaction: {e}")))?;
-
     let token_hash = hash_token(presented);
-    let existing = sqlx::query_as::<_, RefreshTokenRow>(
-        r#"
-        SELECT id, user_id, family_id, parent_id, issued_at, expires_at, revoked_at
-        FROM refresh_tokens
-        WHERE token_hash = $1
-        FOR UPDATE
-        "#,
-    )
-    .bind(&token_hash)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(|e| AppError::Internal(format!("Failed to look up refresh token: {e}")))?;
+
+    // The Postgres implementation held the row under `SELECT ... FOR
+    // UPDATE` until commit. SQLite has no row-level lock, so we flip
+    // the concurrency contract around instead: read the row first, then
+    // run a conditional `UPDATE ... WHERE id = ?1 AND revoked_at IS NULL`
+    // and inspect `rows_affected()`.
+    //
+    // * 0 rows affected → another request beat us to the punch; this
+    //   presented token was already revoked between our read and our
+    //   UPDATE, which is exactly the reuse-detection signal.
+    // * 1 row affected → we won the race; issue the new token in the
+    //   same transaction so the revoked row and the fresh insert land
+    //   atomically.
+    //
+    // A single BEGIN IMMEDIATE (via `pool.begin()` on SQLite's WAL
+    // journal) holds the writer lock only for the UPDATE + INSERT pair,
+    // which is cheap. Reads happen outside the transaction so contention
+    // on the writer lock is minimal.
+    let existing = refresh_tokens_repo::find_by_hash(pool, &token_hash)
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to look up refresh token: {e}")))?;
 
     let Some(row) = existing else {
-        tx.rollback().await.ok();
         return Ok(RotateOutcome::Rejected);
     };
 
     if row.expires_at <= Utc::now() {
-        tx.rollback().await.ok();
         return Ok(RotateOutcome::Rejected);
     }
 
     if row.revoked_at.is_some() {
-        tx.rollback().await.ok();
         return Ok(handle_reuse_detected(pool, &row).await);
     }
 
@@ -189,8 +190,14 @@ pub async fn rotate(
     let new_hash = hash_token(&new_plain);
     let new_expires_at = Utc::now() + Duration::days(REFRESH_TTL_DAYS);
 
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to begin transaction: {e}")))?;
+
     let revoke_result = sqlx::query(
-        "UPDATE refresh_tokens SET revoked_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
+        "UPDATE refresh_tokens SET revoked_at = strftime('%s','now') \
+         WHERE id = ?1 AND revoked_at IS NULL",
     )
     .bind(row.id)
     .execute(&mut *tx)
@@ -198,6 +205,8 @@ pub async fn rotate(
     .map_err(|e| AppError::Internal(format!("Failed to revoke rotated token: {e}")))?;
 
     if revoke_result.rows_affected() != 1 {
+        // Someone else revoked this row between our read and our UPDATE.
+        // That is the canonical reuse-detection path: burn the family.
         tx.rollback().await.ok();
         return Ok(handle_reuse_detected(pool, &row).await);
     }
@@ -206,14 +215,14 @@ pub async fn rotate(
         r#"
         INSERT INTO refresh_tokens
             (user_id, token_hash, family_id, parent_id, expires_at, user_agent, ip)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         "#,
     )
     .bind(row.user_id)
     .bind(&new_hash)
     .bind(&row.family_id)
     .bind(Some(row.id))
-    .bind(new_expires_at)
+    .bind(new_expires_at.timestamp())
     .bind(user_agent)
     .bind(ip)
     .execute(&mut *tx)
@@ -234,7 +243,7 @@ pub async fn rotate(
 /// Reuse-detected recovery: burn the family, raise the user's JWT cutoff,
 /// and surface the event in logs. Best-effort — a DB hiccup here still
 /// lets the caller respond with 401, which is the primary security goal.
-async fn handle_reuse_detected(pool: &PgPool, row: &RefreshTokenRow) -> RotateOutcome {
+async fn handle_reuse_detected(pool: &DbPool, row: &RefreshTokenRow) -> RotateOutcome {
     tracing::warn!(
         user_id = row.user_id,
         row_id = row.id,
@@ -257,10 +266,16 @@ async fn handle_reuse_detected(pool: &PgPool, row: &RefreshTokenRow) -> RotateOu
     }
 }
 
-/// Revoke a single presented refresh token (logout flow). Silent on an
-/// unknown or already-revoked token — the client already considers
-/// itself logged out.
-pub async fn revoke_single(pool: &PgPool, presented: &str) -> Result<(), AppError> {
+/// Revoke a single presented refresh token. Silent on an unknown or
+/// already-revoked token — the client already considers itself logged out.
+///
+/// No longer called directly: the logout handler now requires a valid access
+/// JWT via `UserGuard` and revokes the whole family through
+/// `revoke_all_for_user`. This helper is kept because the same pattern is
+/// part of the refresh-token API contract and makes single-session surgical
+/// revocations easy to re-wire if that admin capability comes back.
+#[allow(dead_code)]
+pub async fn revoke_single(pool: &DbPool, presented: &str) -> Result<(), AppError> {
     if presented.is_empty() {
         return Ok(());
     }
@@ -278,7 +293,7 @@ pub async fn revoke_single(pool: &PgPool, presented: &str) -> Result<(), AppErro
 
 /// Revoke every live refresh token for a user. Used by server logout and
 /// the admin kill-switch (complements `users.tokens_revoked_at`).
-pub async fn revoke_all_for_user(pool: &PgPool, user_id: i32) -> Result<(), AppError> {
+pub async fn revoke_all_for_user(pool: &DbPool, user_id: i32) -> Result<(), AppError> {
     refresh_tokens_repo::revoke_all_for_user(pool, user_id)
         .await
         .map_err(|e| AppError::Internal(format!("Failed to revoke refresh tokens: {e}")))?;

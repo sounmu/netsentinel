@@ -1,6 +1,6 @@
 [package]
 name = "netsentinel-server"
-version = "0.3.5"
+version = "0.4.0"
 edition = "2024"
 description = "Pull-based server monitoring backend — metrics aggregation, alerts, and REST API"
 license = "Apache-2.0"
@@ -15,7 +15,12 @@ serde_json = "1.0"
 reqwest = { version = "0.12", features = ["json", "gzip"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "macros", "chrono", "migrate"] }
+# SQLite-only: NetSentinel ships a single embedded backend per
+# docs/SQLITE_MIGRATION.md. Postgres/TimescaleDB support was retired
+# at v0.4.0 to collapse the operational surface to one binary + one
+# file. `sqlx/json` gives us `sqlx::types::Json<T>` for TEXT JSON
+# binding.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "chrono", "migrate", "sqlite", "json"] }
 tower-http = { version = "0.6.8", features = ["cors", "compression-full", "fs"] }
 anyhow = "1.0"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }

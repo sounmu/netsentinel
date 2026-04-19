@@ -179,9 +179,7 @@ async fn handle_monitor_alert(
                 "🚨 **[{} Monitor Down]** `{}` — {}",
                 monitor_type, name, err_msg
             );
-            alert_service::send_alert(&state.http_client, &state.db_pool, &msg).await;
-            let _ =
-                alert_history_repo::insert_alert(&state.db_pool, key, "monitor_down", &msg).await;
+            spawn_monitor_alert(state, key.to_string(), "monitor_down", msg);
             entry.last_alert = Some(Instant::now());
         }
         entry.is_failing = true;
@@ -196,17 +194,29 @@ async fn handle_monitor_alert(
             "✅ **[{} Monitor Recovery]** `{}` — back online",
             monitor_type, name
         );
-        alert_service::send_alert(&state.http_client, &state.db_pool, &msg).await;
-        let _ =
-            alert_history_repo::insert_alert(&state.db_pool, key, "monitor_recovery", &msg).await;
+        spawn_monitor_alert(state, key.to_string(), "monitor_recovery", msg);
         entry.is_failing = false;
         entry.last_alert = None;
     }
 }
 
+/// Fan out a monitor alert: fire the outbound webhook + log to alert_history
+/// on a detached task so the monitor scheduler loop is never blocked by
+/// external HTTP latency.
+fn spawn_monitor_alert(state: &AppState, key: String, alert_type: &'static str, msg: String) {
+    let http = state.http_client.clone();
+    let pool = state.db_pool.clone();
+    tokio::spawn(async move {
+        alert_service::send_alert(&http, &pool, &msg).await;
+        if let Err(e) = alert_history_repo::insert_alert(&pool, &key, alert_type, &msg).await {
+            tracing::error!(err = ?e, %alert_type, "⚠️ [AlertHistory] Failed to log monitor alert");
+        }
+    });
+}
+
 /// Check an HTTP endpoint. Returns Some(error_message) on failure, None on success.
 async fn check_http_endpoint(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     client: &reqwest::Client,
     monitor: &http_monitors_repo::HttpMonitor,
 ) -> Option<String> {
@@ -279,7 +289,7 @@ async fn check_http_endpoint(
 
 /// Check a ping (TCP connect) host. Returns Some(error_message) on failure, None on success.
 async fn check_ping_host(
-    pool: &sqlx::PgPool,
+    pool: &crate::db::DbPool,
     monitor: &ping_monitors_repo::PingMonitor,
 ) -> Option<String> {
     // Defense-in-depth: re-validate host at runtime (catches pre-existing DB entries)

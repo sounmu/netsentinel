@@ -45,7 +45,15 @@ The `/setup` page is only reachable while the `users` table is empty. Fill in:
 
 Click **Create admin** → you are redirected to `/login` → sign in with the same credentials.
 
-> If you navigated to `/setup` but the page says "setup already completed", an admin was created earlier. Delete the `users` table row in Postgres (or just the pgdata volume) to re-enable `/setup`, OR go to `/login` and sign in with the existing credentials.
+> If you navigated to `/setup` but the page says "setup already completed", an admin was created earlier. To start over, stop the stack and delete the SQLite file:
+>
+> ```bash
+> docker compose down
+> rm data/netsentinel.db data/netsentinel.db-wal data/netsentinel.db-shm
+> docker compose up -d
+> ```
+>
+> This wipes **all** state (users, hosts, metrics, alerts). If you only want to reset the admin account, sign in at `/login` instead.
 
 ---
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, memo } from "react";
+import { useState, useMemo, useCallback, useEffect, memo } from "react";
 import useSWR from "swr";
 import { useSSE } from "@/app/lib/sse-context";
 import {
@@ -199,6 +199,20 @@ const ChartCard = memo(function ChartCard({
               scale="time"
               domain={[timeTicks[0], timeTicks[timeTicks.length - 1]]}
               ticks={timeTicks}
+              // Force Recharts to HONOR the domain as a strict bound.
+              // The default (`false`) treats `domain` as a minimum
+              // range and silently expands it to fit any data points
+              // outside — exactly what was happening on live presets
+              // because `getMetricsRangeUrl` floors start and ceils
+              // end to the nearest minute, producing a 2–3 min fetch
+              // window for a 1 min chart. The ticks landed in the
+              // middle of the expanded domain instead of spanning it.
+              allowDataOverflow={true}
+              // Disable the tick auto-drop heuristic (default
+              // `preserveEnd` drops labels on width fluctuations,
+              // producing a 5→3→5 flicker). `generateTimeTicks`
+              // produces ~6 ticks so physical overlap is a non-issue.
+              interval={0}
               tickFormatter={(val) => formatAxisTime(new Date(val).toISOString(), rangeHours, locale)}
               tick={{ fill: "var(--text-muted)", fontSize: 10 }}
               tickLine={false}
@@ -262,12 +276,54 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     return { start, end, preset: "1h" };
   });
 
+  // For live presets (1m, 5m) the window must roll in step with real
+  // time — otherwise SSE-pushed data past the click-time `range.end`
+  // renders outside the domain or gets clipped, and the rightmost tick
+  // label never reflects "now".
+  //
+  // Two gotchas the first attempt missed:
+  //   1. `setNowTick` must fire immediately on preset entry. Waiting
+  //      for the first interval tick leaves a 1–5 s window where the
+  //      chart points at a stale slice from minutes ago (whatever the
+  //      `nowTick` initializer happened to capture at mount).
+  //   2. The cadence must be tight enough that the drift between
+  //      `effectiveRange.end` and real time is less than one scrape
+  //      interval (10 s). Using 1 s keeps drift sub-second which is
+  //      imperceptible.
+  const isLivePreset = range.preset === "1m" || range.preset === "5m";
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!isLivePreset) return;
+    setNowTick(Date.now()); // catch up on preset entry / preset switch
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isLivePreset, range.preset]);
+
+  const effectiveRange = useMemo<TimeRange>(() => {
+    if (!isLivePreset) return range;
+    const windowMs = range.preset === "1m" ? 60_000 : 300_000;
+    return {
+      start: new Date(nowTick - windowMs),
+      end: new Date(nowTick),
+      preset: range.preset,
+    };
+  }, [range, isLivePreset, nowTick]);
+
   const { metricsMap } = useSSE();
   const liveMetrics = metricsMap[hostKey] ?? null;
 
   const swrKey = useMemo(
-    () => getMetricsRangeUrl(hostKey, range.start, range.end),
-    [hostKey, range]
+    () =>
+      getMetricsRangeUrl(
+        hostKey,
+        effectiveRange.start,
+        effectiveRange.end,
+        // Live presets round to 10 s so the fetch window matches the
+        // chart's 1 min / 5 min display window within one scrape.
+        // Static presets keep the 60 s default for better SWR dedup.
+        isLivePreset ? 10 : 60,
+      ),
+    [hostKey, effectiveRange, isLivePreset]
   );
 
   const { data: rows = [], isValidating } = useSWR<MetricsRow[]>(swrKey, fetcher, {
@@ -302,14 +358,15 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   const isInitialLoading = allRows.length === 0 && isValidating;
 
   const rangeHours = useMemo(
-    () => (range.end.getTime() - range.start.getTime()) / (1000 * 60 * 60),
-    [range]
+    () => (effectiveRange.end.getTime() - effectiveRange.start.getTime()) / (1000 * 60 * 60),
+    [effectiveRange]
   );
 
-  // Evenly spaced time ticks based on selected range (not data)
+  // Evenly spaced time ticks based on the *effective* (rolled) range
+  // so the rightmost tick label tracks "now" for live presets.
   const timeTicks = useMemo(
-    () => generateTimeTicks(range.start, range.end, 5),
-    [range]
+    () => generateTimeTicks(effectiveRange.start, effectiveRange.end, 5),
+    [effectiveRange]
   );
 
   const onPresetClick = useCallback((minutes: number, key: PresetKey) => {

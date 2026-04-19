@@ -24,8 +24,9 @@ target_linux/
 logs/
 *.log
 
-# Database volume
-pgdata/
+# SQLite database file + WAL sidecars (bound by docker-compose.yml).
+# `data/` holds netsentinel.db, netsentinel.db-wal, netsentinel.db-shm.
+data/
 
 # Node / Next.js
 node_modules/

@@ -434,6 +434,11 @@ pub async fn process_metrics(
     // ── Fire-and-forget alert delivery (spawned, non-blocking) ──
     // Alert delivery can take hundreds of milliseconds — spawn it so it doesn't
     // block the scraper from processing the next host.
+    //
+    // History is persisted via a **single batched INSERT** at the end of the
+    // spawn; one host can emit CPU+Memory+Disk+Temperature overloads in the
+    // same cycle, which on the pre-batch code path produced N separate writer-
+    // lock acquisitions each contending with the scrape-cycle batch INSERT.
     if !alert_actions.is_empty() {
         let messages: Vec<(String, String)> = alert_actions
             .iter()
@@ -443,18 +448,17 @@ pub async fn process_metrics(
         let db_pool = state.db_pool.clone();
         let target_owned = target.to_string();
         tokio::spawn(async move {
-            for (alert_type, message) in &messages {
+            for (_alert_type, message) in &messages {
                 crate::services::alert_service::send_alert(&http_client, &db_pool, message).await;
-                if let Err(e) = crate::repositories::alert_history_repo::insert_alert(
-                    &db_pool,
-                    &target_owned,
-                    alert_type,
-                    message,
-                )
-                .await
-                {
-                    tracing::error!(err = ?e, "⚠️ [AlertHistory] Failed to log alert");
-                }
+            }
+            let rows: Vec<(&str, &str, &str)> = messages
+                .iter()
+                .map(|(ty, msg)| (target_owned.as_str(), ty.as_str(), msg.as_str()))
+                .collect();
+            if let Err(e) =
+                crate::repositories::alert_history_repo::insert_alerts_batch(&db_pool, &rows).await
+            {
+                tracing::error!(err = ?e, count = rows.len(), "⚠️ [AlertHistory] Failed to batch-log alerts");
             }
         });
     }

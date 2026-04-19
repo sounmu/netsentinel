@@ -1,6 +1,6 @@
 use reqwest::Client;
-use sqlx::PgPool;
 
+use crate::db::DbPool;
 use crate::repositories::notification_channels_repo::{self, ChannelType, NotificationChannelRow};
 use crate::services::url_validator;
 
@@ -9,7 +9,7 @@ use crate::services::url_validator;
 // ──────────────────────────────────────────────
 
 /// Send an alert message to all enabled notification channels from the DB.
-pub async fn send_alert(client: &Client, pool: &PgPool, message: &str) {
+pub async fn send_alert(client: &Client, pool: &DbPool, message: &str) {
     let channels = notification_channels_repo::get_enabled(pool)
         .await
         .unwrap_or_default();

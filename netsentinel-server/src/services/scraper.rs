@@ -502,15 +502,27 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
         None
     };
 
+    // Recovery alert: fan out to webhooks + alert_history write on a detached
+    // task. `send_alert` can spend hundreds of ms on external HTTP, and the
+    // caller is inside the scraper's `buffer_unordered(10)` stream — blocking
+    // here steals a concurrency slot for the remainder of the cycle.
     if let Some(msg) = recovery_msg {
-        alert_service::send_alert(&ctx.state.http_client, &ctx.state.db_pool, &msg).await;
-        let _ = crate::repositories::alert_history_repo::insert_alert(
-            &ctx.state.db_pool,
-            &ctx.target,
-            "host_recovery",
-            &msg,
-        )
-        .await;
+        let http = ctx.state.http_client.clone();
+        let pool = ctx.state.db_pool.clone();
+        let target_owned = ctx.target.clone();
+        tokio::spawn(async move {
+            alert_service::send_alert(&http, &pool, &msg).await;
+            if let Err(e) = crate::repositories::alert_history_repo::insert_alert(
+                &pool,
+                &target_owned,
+                "host_recovery",
+                &msg,
+            )
+            .await
+            {
+                tracing::error!(err = ?e, "⚠️ [AlertHistory] Failed to log host_recovery");
+            }
+        });
     }
 
     // ── System info fetch (on reconnection or stale > 24h) ──
@@ -707,14 +719,20 @@ async fn handle_down(
     }
 
     // ── Phase 3: alert delivery (async I/O, no locks held) ──
+    // Fire-and-forget: same rationale as the recovery path — webhook latency
+    // should not be charged against the scraper's concurrency budget.
     if let Some(msg) = alert_msg {
-        alert_service::send_alert(&state.http_client, &state.db_pool, &msg).await;
-        let _ = crate::repositories::alert_history_repo::insert_alert(
-            &state.db_pool,
-            &host_key,
-            "host_down",
-            &msg,
-        )
-        .await;
+        let http = state.http_client.clone();
+        let pool = state.db_pool.clone();
+        let hk = host_key.clone();
+        tokio::spawn(async move {
+            alert_service::send_alert(&http, &pool, &msg).await;
+            if let Err(e) =
+                crate::repositories::alert_history_repo::insert_alert(&pool, &hk, "host_down", &msg)
+                    .await
+            {
+                tracing::error!(err = ?e, "⚠️ [AlertHistory] Failed to log host_down");
+            }
+        });
     }
 }

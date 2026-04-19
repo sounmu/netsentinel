@@ -88,7 +88,7 @@ docker compose up -d --build  # rebuild + restart
 ./scripts/smoke-test.sh       # verify the upgrade
 ```
 
-There is no downtime-safe rolling upgrade yet: `docker compose up` recreates the server container atomically (~a few seconds blackout). DB data survives because `pgdata/` is a bind-mount.
+There is no downtime-safe rolling upgrade yet: `docker compose up` recreates the server container atomically (~a few seconds blackout). DB data survives because `./data/` is a bind-mount — the SQLite file, its `-wal` sidecar, and its `-shm` sidecar all persist across container re-creation.
 
 **After upgrade** read the new release's CHANGELOG for any breaking surface — API contract changes, env var additions, or migrations that change behaviour.
 
@@ -110,21 +110,54 @@ Migrations are forward-only. If you roll back across a migration that added a co
 
 ## 5. Backups
 
-All server state lives in PostgreSQL. A minimal backup script:
+All server state lives in a single SQLite file at `./data/netsentinel.db`, WAL-mode. Two backup strategies work; pick one.
+
+### Option A — online `VACUUM INTO` (recommended)
+
+SQLite's `VACUUM INTO` produces a **crash-consistent** copy of the database without stopping writes. Safe to run against a live server.
 
 ```bash
-# Daily dump (cron-friendly)
-docker compose exec -T db pg_dump -U postgres netsentinel | gzip > "backup-$(date +%F).sql.gz"
+# Daily backup (cron-friendly)
+docker compose exec -T server /app/server --vacuum-into /app/data/backups/netsentinel-$(date +%F).db
 ```
 
-Restore:
+If your server binary does not expose a `--vacuum-into` flag (pre-v0.5.1), invoke SQLite directly through the container:
 
 ```bash
-gunzip -c backup-YYYY-MM-DD.sql.gz \
-  | docker compose exec -T db psql -U postgres netsentinel
+docker compose exec -T server sh -c \
+  "sqlite3 /app/data/netsentinel.db \"VACUUM INTO '/app/data/backups/netsentinel-$(date +%F).db'\""
 ```
 
-`pgdata/` itself is the canonical storage — snapshot the directory if your volume driver supports it.
+Compress the resulting file if long-term storage matters:
+
+```bash
+gzip data/backups/netsentinel-$(date +%F).db
+```
+
+### Option B — stop-the-world file copy
+
+Good enough for a homelab where a 2-second blackout is fine:
+
+```bash
+docker compose stop server
+cp -a data/netsentinel.db data/backups/netsentinel-$(date +%F).db
+docker compose start server
+```
+
+Do **not** `cp` a live WAL database without stopping the server — the three-file set (`.db`, `.db-wal`, `.db-shm`) is only consistent at a commit boundary that `cp` cannot guarantee.
+
+### Restore
+
+Stop the server, replace the files, and start it again:
+
+```bash
+docker compose down
+rm data/netsentinel.db data/netsentinel.db-wal data/netsentinel.db-shm
+cp data/backups/netsentinel-YYYY-MM-DD.db data/netsentinel.db
+docker compose up -d
+```
+
+The WAL and shm sidecars are regenerated on next open. `./data/` is the canonical storage — snapshot the whole directory if your volume driver supports it.
 
 ---
 

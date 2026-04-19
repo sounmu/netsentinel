@@ -243,10 +243,22 @@ pub struct PublicHostStatus {
 
 /// GET /api/public/status — public status page data (no auth)
 ///
+/// **Opt-in**: returns 404 unless `PUBLIC_STATUS_ENABLED=true` is set.
+/// When enabled, emits `host_key` (often an internal IP:port), `display_name`
+/// (OS hostname), and 7-day uptime. That is exactly the surface a Zero-Trust
+/// homelab setup wants to keep private, so the safe default is off — the
+/// endpoint still exists so self-hosters can flip it on when they explicitly
+/// want a public uptime page behind their Cloudflare tunnel.
+///
 /// Fetches host summaries + 7-day uptime in two queries (not N+1).
 pub async fn public_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<PublicHostStatus>>, AppError> {
+    if !public_status_enabled() {
+        return Err(AppError::NotFound(
+            "public status is disabled — set PUBLIC_STATUS_ENABLED=true to enable".into(),
+        ));
+    }
     // Two parallel queries instead of 1 + N sequential queries
     let (hosts, uptime_map) = tokio::try_join!(
         async {
@@ -275,6 +287,12 @@ pub async fn public_status(
         .collect();
 
     Ok(Json(results))
+}
+
+fn public_status_enabled() -> bool {
+    std::env::var("PUBLIC_STATUS_ENABLED")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
 }
 
 /// GET /metrics — Prometheus-compatible metrics export (text format)

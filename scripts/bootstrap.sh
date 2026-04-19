@@ -7,7 +7,7 @@
 # Safe to re-run: refuses to overwrite an existing `.env` without
 # `--force`.
 #
-# Requirements: bash 4+, openssl (for JWT_SECRET and DB password).
+# Requirements: bash 4+, openssl (for JWT_SECRET).
 #
 # Usage:
 #   ./scripts/bootstrap.sh            # generate secrets if .env missing
@@ -55,19 +55,22 @@ fi
 
 # ── generate secrets ────────────────────────────────────────────────
 JWT_SECRET="$(openssl rand -hex 32)"
-POSTGRES_PASSWORD="$(openssl rand -hex 24)"
 
 # ── write .env from the example, substituting placeholders ──────────
-python3 - "$EXAMPLE_PATH" "$ENV_PATH" "$JWT_SECRET" "$POSTGRES_PASSWORD" <<'PY'
+# (No DB password needed — NetSentinel stores everything in a single
+# embedded SQLite file at ./data/netsentinel.db.)
+python3 - "$EXAMPLE_PATH" "$ENV_PATH" "$JWT_SECRET" <<'PY'
 import sys, re
-src, dst, jwt, pw = sys.argv[1:]
+src, dst, jwt = sys.argv[1:]
 content = open(src).read()
-content = re.sub(r'^POSTGRES_PASSWORD=.*$', f'POSTGRES_PASSWORD={pw}', content, flags=re.M)
-content = re.sub(r'^JWT_SECRET=.*$',         f'JWT_SECRET={jwt}',         content, flags=re.M)
+content = re.sub(r'^JWT_SECRET=.*$', f'JWT_SECRET={jwt}', content, flags=re.M)
 open(dst, 'w').write(content)
 PY
 
 chmod 600 "$ENV_PATH"
+
+# ── prepare the SQLite data directory ───────────────────────────────
+mkdir -p "${REPO_ROOT}/data"
 
 echo "✅ Wrote ${ENV_PATH} with random secrets (chmod 600)."
 echo

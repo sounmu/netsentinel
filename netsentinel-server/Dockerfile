@@ -58,7 +58,12 @@ WORKDIR /app
 COPY --from=server-builder /build/target/release/netsentinel-server /app/server
 COPY --from=web-builder    /web/out                                  /app/static
 
-RUN chown -R monitor:monitor /app
+# Persistent SQLite state lives here. Declared as a VOLUME so `docker
+# run` (without an explicit bind mount) still gives the file a stable
+# home; docker-compose.yml mounts the host's `./data` over it.
+RUN mkdir -p /app/data \
+ && chown -R monitor:monitor /app
+VOLUME ["/app/data"]
 
 ENV STATIC_ASSETS_DIR=/app/static
 
