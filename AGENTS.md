@@ -2,8 +2,8 @@
 
 ## Structure
 - `netsentinel-agent/`: Rust daemon. Scrapes OS (CPU, memory, disk, processes, temperatures, GPU), Docker, port metrics (`tokio::join!`).
-- `netsentinel-server/`: Rust/Axum backend. Aggregates metrics, REST API, multi-channel alerts (Discord/Slack/Email).
-- `netsentinel-web/`: Next.js frontend dashboard. Recharts time-series, i18n (EN/KO), dark mode.
+- `netsentinel-server/`: Rust/Axum backend. Aggregates metrics, REST API, multi-channel alerts (Discord/Slack/Email), **and serves the web static bundle** (v0.3.6+).
+- `netsentinel-web/`: Next.js dashboard. Built with `output: 'export'` so the bundle is plain HTML/JS/CSS; in production it is baked into the server image at `/app/static` and served by `tower-http::ServeDir`. Local dev still runs `npm run dev` on port 3001 with full HMR — same authoring loop as before.
 
 ## CRITICAL AI INSTRUCTIONS
 - **Next.js 16.2.1**: Contains breaking changes. MUST read `node_modules/next/dist/docs/` before modifying frontend code.
@@ -33,8 +33,9 @@
 - **Config**: DB-driven. `hosts` table for agent config, `alert_configs` for alert rules, `notification_channels` for alert delivery. No config.yaml at runtime.
 - **Network**: Zero Trust via Cloudflare Tunnel. No exposed host ports. DB is internal-only (`backend-internal` Docker network). `shared-network` is external — create with `docker network create shared-network`.
 - **Timezone**: Seoul (`chrono-tz`).
-- **CORS**: Controlled by `ALLOWED_ORIGINS` env var (comma-separated). Default: `http://localhost:3001`. Do NOT revert to `CorsLayer::permissive()`.
-- **Frontend ↔ Server origin contract**: `NEXT_PUBLIC_API_URL` (baked into the web bundle at build time) is the URL the **browser** fetches from, and it **must** appear in the server's `ALLOWED_ORIGINS` list verbatim — scheme, host, port all matched byte-for-byte, no trailing slash. The site hosting the dashboard must also appear in `ALLOWED_ORIGINS` because `credentials: "include"` + `SameSite=Strict` requires same-site for cookie delivery. Typical Cloudflare Tunnel production setup: `NEXT_PUBLIC_API_URL=https://api.example.com` (not `:3000` — the tunnel exposes 443 only); `ALLOWED_ORIGINS=https://dashboard.example.com,https://api.example.com`. A mismatch is silent: refresh cookie never travels → frontend loops on login. Changing either value requires a web image rebuild (`docker compose up -d --build web`) — env-only restart does nothing because the URL is embedded in JS at build time.
+- **CORS**: Controlled by `ALLOWED_ORIGINS` env var (comma-separated). Default: `http://localhost:3001` (local dev). In production, since the web bundle and the API share one origin, CORS is effectively unused in the browser path — the header still guards any third-party embed. Do NOT revert to `CorsLayer::permissive()`.
+- **Web tier (v0.3.6+)**: `netsentinel-web` is compiled to `output: 'export'` and baked into the server image at `/app/static` by the multi-stage Dockerfile. Axum's `services::static_assets::mount` wires `tower-http::ServeDir` so `/` serves `index.html`, every known route has its own static HTML (`/agents/index.html`, `/alerts/index.html`, …), and `/host/*` falls back to `/host/_spa_fallback_/index.html` — a shell the client component uses `usePathname()` to resolve into the real `host_key`. The server reads `STATIC_ASSETS_DIR` at startup; unset = API-only mode (expected in dev, where `npm run dev` on port 3001 handles the browser route instead).
+- **Frontend ↔ Server origin contract**: `NEXT_PUBLIC_API_URL` is baked into the web bundle at build time and tells the browser where to fetch `/api/*`. With the single-container production layout it defaults to **empty** — same-origin as the static bundle, which is the simplest path. In reverse-proxy setups where the UI and API live under different hostnames, set `NEXT_PUBLIC_API_URL=https://api.example.com` at build and list both hostnames in `ALLOWED_ORIGINS` (`https://dashboard.example.com,https://api.example.com`). Changing either value requires a server image rebuild (`docker compose up -d --build server`) — env-only restart does nothing because the URL is embedded in JS at build time.
 - **Graceful shutdown**: SIGTERM/SIGINT → 5-second drain timeout for long-lived SSE connections → `process::exit(0)` if drain stalls.
 - **Server startup**: Hosts + password cache loaded in parallel via `tokio::join!`. CA refresh deferred to background task. DB pool: `min_connections(3)`, `acquire_timeout(5s)`.
 - **In-memory caching**: `MetricsQueryCache` stores `Arc<Vec<MetricsRow>>` for cheap clone on cache hits. Bounded by both TTL (120 s) and entry count (`METRICS_CACHE_MAX_ENTRIES`, default 200) — oldest-inserted entries are evicted once the cap is hit, with expired entries purged first so the scan only sees live rows. `last_known_status` and `MetricsStore.hosts` are cleaned up on host deletion (prevents memory leak).
@@ -229,7 +230,8 @@ SSE endpoint uses single-use opaque ticket via `POST /api/auth/sse-ticket` (Even
 
 ## Environment Variables (server)
 See `netsentinel-server/.env.example` for full reference. Key optional vars:
-- `ALLOWED_ORIGINS` — comma-separated CORS origins (default: `http://localhost:3001`)
+- `STATIC_ASSETS_DIR` — directory holding the pre-built Next.js static export served alongside the API. Set to `/app/static` inside the production Docker image; unset in local dev (the Next.js dev server handles routing on port 3001 instead).
+- `ALLOWED_ORIGINS` — comma-separated CORS origins (default: `http://localhost:3001`). In production the web bundle shares an origin with the API, so CORS is effectively a no-op for the browser path; still list the external origin if a reverse proxy splits the two.
 - `SERVER_HOST` / `SERVER_PORT` — bind address (default: `0.0.0.0:3000`)
 - `MAX_DB_CONNECTIONS` — PostgreSQL pool size (default: `10`)
 - `SCRAPE_INTERVAL_SECS` — fallback scrape interval when a host row has no valid `scrape_interval_secs` (default: `10`)
@@ -244,10 +246,11 @@ See `netsentinel-server/.env.example` for full reference. Key optional vars:
 - `METRICS_CACHE_MAX_ENTRIES` — upper bound on in-memory metrics query cache size (default: `200`). v0.3.0 grew per-sample payload 3–5×, so an unbounded cache risks hundreds of MB under concurrent dashboard load. Oldest-inserted entries evicted once the cap is hit (TTL remains 120 s).
 
 ## Commands
-- **Full Stack**: `cp .env.example .env && docker compose up -d --build`
+- **Full Stack (prod)**: `cp .env.example .env && docker compose up -d --build`. One container (`server`) now serves both the API and the web static bundle on port 3000 — no separate `web` container.
 - **Server deploy**: GitHub Actions CI/CD (PR-triggered lint/test/build + manual deploy via SSH rsync)
 - **Agent**: `cargo build --release` — macOS LaunchDaemon or Linux Docker
-- **Web dev**: `npm run dev` (port 3001)
+- **Web dev**: `npm run dev` in `netsentinel-web/` (port 3001 with HMR). Run `cargo run` in `netsentinel-server/` on port 3000; set `NEXT_PUBLIC_API_URL=http://localhost:3000` in `netsentinel-web/.env`. The dev loop is identical to the pre-v0.3.6 layout.
+- **Web static export (prod-like)**: `cd netsentinel-web && npm run build` emits `out/`. Run the server against it: `STATIC_ASSETS_DIR=$(pwd)/netsentinel-web/out cargo run --manifest-path netsentinel-server/Cargo.toml`.
 - **CI (local)**: `cargo fmt --check && cargo check && cargo clippy -- -D warnings && cargo test`
 
 ## Git Conventions

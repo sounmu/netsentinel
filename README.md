@@ -28,19 +28,22 @@
 
 ```mermaid
 graph LR
-    A[Agent<br/>Rust daemon] -->|JWT / HTTP pull| S[Server<br/>Rust / Axum]
+    A[Agent<br/>Rust daemon] -->|JWT / HTTP pull| S[Server<br/>Rust / Axum<br/>+ embedded Web]
     S -->|TimescaleDB| DB[(PostgreSQL)]
-    S -->|SSE stream| W[Web Dashboard<br/>Next.js]
+    S -.->|serves static bundle| BR[Browser]
+    BR -->|SSE stream / REST| S
     S -->|Webhook| D[Discord / Slack]
     S -->|SMTP| E[Email Alerts]
-    W -->|Zero Trust| CF[Cloudflare Tunnel]
+    BR -->|Zero Trust| CF[Cloudflare Tunnel]
     A -->|Zero Trust| CF
 ```
+
+From v0.3.6 the Next.js web tier is compiled to a static export and served directly by Axum via `tower-http::ServeDir`, so production runs in a **single container**. The old separate `web` container + its ~35 MB Node runtime is gone. Local development is unchanged — `npm run dev` still spins up the Next.js dev server on port 3001 with HMR.
 
 **Data flow:**
 1. Server schedules each registered agent by that host's `scrape_interval_secs` (10 s by default), batch-inserts metrics in a single query
 2. Metrics stored in TimescaleDB hypertable (90-day retention) + 5-min continuous aggregate for fast long-range queries
-3. Browser connects to SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network, disks, temperatures, and Docker stats for live chart overlay; long-lived streams are cut when the session is revoked
+3. Browser loads the static bundle from the same origin as the API, then connects to the SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network, disks, temperatures, and Docker stats for live chart overlay; long-lived streams are cut when the session is revoked
 4. REST API with automatic downsampling: ≤6h raw, 6h-3d 1-min, 3d-14d 5-min (CA), >14d 15-min (CA)
 5. Alerts delivered to Discord, Slack, and/or Email channels
 
@@ -50,8 +53,10 @@ graph LR
 
 ```
 netsentinel/
-├── netsentinel-server/   # Rust/Axum backend (metrics API, scraper, alerts)
-├── netsentinel-web/      # Next.js frontend dashboard
+├── netsentinel-server/   # Rust/Axum backend — metrics API, scraper, alerts,
+│                         # and (in prod) the embedded web static bundle
+├── netsentinel-web/      # Next.js dashboard — compiled to `output: 'export'`
+│                         # and baked into the server image at build time
 └── netsentinel-agent/    # Rust agent daemon
 ```
 
@@ -94,7 +99,7 @@ docker network create shared-network
 docker compose up -d --build
 ```
 
-The dashboard is available at `http://localhost:3001` (or via your Cloudflare Tunnel domain).
+The dashboard **and** the API share one origin — `http://localhost:3000` (or your Cloudflare Tunnel domain). The old `:3001` port is no longer exposed.
 
 ---
 
@@ -113,11 +118,13 @@ cargo run
 
 ```bash
 cd netsentinel-web
-cp .env.example .env  # fill in NEXT_PUBLIC_API_URL
+cp .env.example .env  # set NEXT_PUBLIC_API_URL=http://localhost:3000
 npm install
 npm run dev
-# Runs on http://localhost:3001
+# Runs on http://localhost:3001 with HMR, talking to the API on :3000
 ```
+
+For dev the Next.js dev server handles routing / HMR / fast refresh exactly as before — the static-export + embedded-in-Axum layout only kicks in when the production image is built via `docker compose up -d --build`.
 
 ### Agent
 

@@ -1,32 +1,63 @@
-# Multi-stage build: compile on the server's native architecture (no cross-compilation)
-FROM rust:1.94.1 AS builder
+# ─────────────────────────────────────────────────────────────────────────
+# Multi-stage build that produces a single container serving BOTH the
+# Axum API on /api/* and the statically-exported Next.js web bundle from
+# /. Drops the previous separate-web-container layout + its ~35 MB Node
+# runtime. Local dev still uses `npm run dev` on port 3001.
+# ─────────────────────────────────────────────────────────────────────────
+
+# ── Stage 1 — web: `next build` with `output: 'export'` ────────────────
+FROM node:20-alpine AS web-builder
+
+WORKDIR /web
+COPY netsentinel-web/package.json netsentinel-web/package-lock.json* ./
+RUN npm ci
+
+# NEXT_PUBLIC_API_URL is baked into the bundle at build time. Same
+# contract as before: whatever URL the browser fetches from must appear
+# in the server's ALLOWED_ORIGINS list. Default to same-origin so a
+# homelab single-container deploy "just works" with no env required.
+ARG NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY netsentinel-web/ ./
+RUN npm run build
+# Next.js with `output: 'export'` writes its static bundle to /web/out/
+
+# ── Stage 2 — server: compile the Rust binary ─────────────────────────
+FROM rust:1.94.1 AS server-builder
 
 WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
+COPY netsentinel-server/Cargo.toml netsentinel-server/Cargo.lock ./
 
-# Build dependencies only (cached until Cargo.toml/Cargo.lock change)
+# Warm the dependency cache with an empty src/main.rs so subsequent
+# source edits only recompile the binary, not every crate.
 RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && cargo build --release \
     && rm -rf src
 
-# Copy migrations (embedded at compile time by sqlx::migrate!())
-COPY migrations/ ./migrations/
+# Migrations are embedded at compile time via `sqlx::migrate!()`.
+COPY netsentinel-server/migrations/ ./migrations/
 
-# Build actual source
-COPY src/ ./src/
+COPY netsentinel-server/src/ ./src/
 RUN touch src/main.rs && cargo build --release && strip target/release/netsentinel-server
 
-# Minimal runtime image (debian-slim is ~52MB vs ubuntu ~77MB)
+# ── Stage 3 — runtime: minimal debian + binary + static bundle ────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r monitor && useradd -r -g monitor -s /usr/sbin/nologin monitor
 
 WORKDIR /app
-COPY --from=builder /build/target/release/netsentinel-server /app/server
+COPY --from=server-builder /build/target/release/netsentinel-server /app/server
+COPY --from=web-builder    /web/out                                  /app/static
+
 RUN chown -R monitor:monitor /app
+
+ENV STATIC_ASSETS_DIR=/app/static
 
 USER monitor
 EXPOSE 3000

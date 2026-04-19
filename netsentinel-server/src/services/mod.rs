@@ -6,5 +6,6 @@ pub mod monitor_scraper;
 pub mod refresh_token;
 pub mod scraper;
 pub mod sse_ticket;
+pub mod static_assets;
 pub mod url_validator;
 pub mod user_auth;

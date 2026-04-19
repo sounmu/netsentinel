@@ -392,6 +392,29 @@ async fn main() -> anyhow::Result<()> {
         .layer(cors)
         .layer(compression);
 
+    // Mount the pre-built web static bundle when STATIC_ASSETS_DIR points
+    // at it. In production this is the single container's /app/static,
+    // produced by `next build` with `output: 'export'`. In local dev the
+    // env var is typically unset — developers run `npm run dev` on port
+    // 3001 against this API on 3000, identical to the old separate-web
+    // layout.
+    let app = if let Ok(dir_str) = std::env::var("STATIC_ASSETS_DIR") {
+        let dir = std::path::PathBuf::from(&dir_str);
+        if dir.is_dir() {
+            tracing::info!("📦 [Web] Serving static assets from {}", dir.display());
+            services::static_assets::mount(app, &dir)
+        } else {
+            tracing::warn!(
+                "STATIC_ASSETS_DIR={} is not a directory — API-only mode",
+                dir.display()
+            );
+            app
+        }
+    } else {
+        tracing::info!("📦 [Web] STATIC_ASSETS_DIR unset — API-only mode (expected in dev)");
+        app
+    };
+
     // ── Start background scraper tasks ──
     let scraper_handle = services::scraper::start_scraper(Arc::clone(&state));
     let monitor_handle = services::monitor_scraper::spawn_monitor_scraper(Arc::clone(&state));

@@ -80,11 +80,6 @@ fn check_metrics_auth(headers: &HeaderMap) -> Result<(), AppError> {
     }
 }
 
-/// GET / — server health check
-pub async fn root_handler() -> &'static str {
-    "Monitoring Hub is running! (Pull mode)"
-}
-
 /// GET /api/health — deep health check (verifies DB connectivity)
 pub async fn health_check(
     State(state): State<Arc<AppState>>,

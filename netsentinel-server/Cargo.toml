@@ -16,7 +16,7 @@ reqwest = { version = "0.12", features = ["json", "gzip"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "macros", "chrono", "migrate"] }
-tower-http = { version = "0.6.8", features = ["cors", "compression-full"] }
+tower-http = { version = "0.6.8", features = ["cors", "compression-full", "fs"] }
 anyhow = "1.0"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 chrono-tz = "0.10.4"

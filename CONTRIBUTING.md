@@ -38,11 +38,12 @@ cd netsentinel
 # 2. Copy environment template and fill in your values
 cp .env.example .env
 
-# 3. Start the full stack (PostgreSQL + TimescaleDB + server + web)
+# 3. Start the full stack (PostgreSQL + TimescaleDB + single server container
+#    that serves both the API and the web static bundle)
 docker compose up -d --build
 ```
 
-The web dashboard will be available at **http://localhost:3001**.
+The web dashboard **and** the API share **http://localhost:3000**. The old `:3001` was the separate Node.js web container, which v0.3.6 folded into the Rust server.
 
 ---
 
@@ -96,16 +97,18 @@ cargo run
 ```bash
 cd netsentinel-web
 npm install
-cp .env.example .env.local    # set NEXT_PUBLIC_API_URL
-npm run dev                   # starts on http://localhost:3001
+cp .env.example .env.local    # set NEXT_PUBLIC_API_URL=http://localhost:3000
+npm run dev                   # starts on http://localhost:3001 with HMR
 ```
+
+The dev server still runs Next.js normally (HMR, fast refresh, dynamic routes). The `output: 'export'` + Axum-embed layout only applies to the production Docker image — `npm run dev` is untouched.
 
 Useful commands:
 
 ```bash
 npm run lint     # ESLint
 npm test         # Vitest unit tests
-npm run build    # production build
+npm run build    # production static export → emits out/
 ```
 
 ---
@@ -174,14 +177,12 @@ Tests use [Vitest](https://vitest.dev/). New tests go in `*.test.ts(x)` files co
 
 ### Image tagging
 
-Docker images are tagged with the git short SHA and `latest` on every successful deploy:
+From v0.3.6 there is **one** Docker image — `netsentinel-server` bakes the web static bundle into `/app/static`. The separate `netsentinel-web` image has been removed. Images are tagged with the git short SHA and `latest` on every successful deploy:
 
 ```bash
 # CI builds and pushes:
 ghcr.io/sounmu/netsentinel-server:<short-sha>
 ghcr.io/sounmu/netsentinel-server:latest
-ghcr.io/sounmu/netsentinel-web:<short-sha>
-ghcr.io/sounmu/netsentinel-web:latest
 ```
 
 ### Rolling back
@@ -195,7 +196,6 @@ git log --oneline -5          # e.g. 6a0a9d1 is bad, 95afce6 was good
 # 2. Pin docker-compose to the known-good image
 #    Edit docker-compose.yml (or use an override file):
 #      image: ghcr.io/sounmu/netsentinel-server:95afce6
-#      image: ghcr.io/sounmu/netsentinel-web:95afce6
 
 # 3. Redeploy
 docker compose pull && docker compose up -d

@@ -42,12 +42,23 @@ services:
           cpus: "1.0"
           memory: 4G
 
-  # 2. Rust backend server
+  # 2. Rust backend server + embedded web static bundle.
+  # From v0.3.6 this single container replaces the old server + separate
+  # Node.js web container; the Dockerfile multi-stage builds `next build`
+  # (output: 'export') into /app/static and serves it via tower-http
+  # alongside the API on port 3000. Saves ~35 MB of Node runtime for
+  # lightweight homelab deployments.
   server:
     image: ghcr.io/sounmu/netsentinel-server:latest
     build:
-      context: ./netsentinel-server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: netsentinel-server/Dockerfile
+      args:
+        # Baked into the static bundle at build time. Default empty =
+        # same-origin (the bundle talks to whatever host it was served
+        # from). Override for reverse-proxy setups where the API and the
+        # UI live under different hostnames.
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
     depends_on:
       db:
         condition: service_healthy
@@ -73,36 +84,6 @@ services:
         limits:
           cpus: "2.0"
           memory: 2G
-
-  # 3. Next.js frontend (standalone build)
-  web:
-    image: ghcr.io/sounmu/netsentinel-web:latest
-    build:
-      context: ./netsentinel-web
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}
-    depends_on:
-      - server
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    ports:
-      - "3001:3000"
-    environment:
-      - PORT=3000
-      - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:3000}
-    networks:
-      - shared-network
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
 
 
 networks:
