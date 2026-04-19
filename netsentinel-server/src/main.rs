@@ -30,13 +30,39 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("🚀 Starting netsentinel-server...");
 
     // ── Required environment variables ──
-    let database_url =
-        std::env::var("DATABASE_URL").context("DATABASE_URL environment variable is not set")?;
+    // We intentionally print actionable guidance here instead of letting
+    // the first downstream failure (sqlx / jsonwebtoken) surface as a
+    // generic connection or HMAC error. Startup is the right moment to
+    // tell the operator exactly how to recover.
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+        anyhow::anyhow!(
+            "DATABASE_URL is not set.\n\n\
+             If you started the server with Docker Compose, docker-compose.yml\n\
+             composes this value automatically from POSTGRES_USER / PASSWORD /\n\
+             DB in the repo-root .env — run `./scripts/bootstrap.sh` if the\n\
+             .env file is missing, then retry.\n\n\
+             If you are running `cargo run` locally, set DATABASE_URL in\n\
+             `netsentinel-server/.env`, for example:\n\
+                 DATABASE_URL=postgres://postgres:postgres@localhost:5432/netsentinel"
+        )
+    })?;
 
-    let jwt_secret =
-        std::env::var("JWT_SECRET").context("JWT_SECRET environment variable is not set")?;
+    let jwt_secret = std::env::var("JWT_SECRET").map_err(|_| {
+        anyhow::anyhow!(
+            "JWT_SECRET is not set.\n\n\
+             Run `./scripts/bootstrap.sh` from the repo root — it generates a\n\
+             32-byte random secret via `openssl rand -hex 32` and writes it\n\
+             to .env. The SAME value must appear in every agent's .env."
+        )
+    })?;
     if jwt_secret.len() < 32 {
-        anyhow::bail!("JWT_SECRET must be at least 32 characters for adequate security");
+        anyhow::bail!(
+            "JWT_SECRET is {} characters — must be ≥ 32 for adequate HS256 security.\n\n\
+             Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
+             secret and invalidates every previously-issued JWT). Be sure to\n\
+             distribute the new value to every agent afterwards.",
+            jwt_secret.len()
+        );
     }
     services::auth::init_encoding_key(&jwt_secret);
 
