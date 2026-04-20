@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-04-20
+
+First non-pre-release of the SQLite + single-container line. Focused on installation UX, agent flexibility, and documentation positioning. No schema changes; upgrading from a working v0.4.0 install is a `git pull && docker compose up -d --build server` away.
+
+> Older releases (v0.4.0 and every v0.3.x / v0.2.x / v0.1.x / v0.0.x) are now flagged **pre-release** on GitHub. The storage stack (Postgres → SQLite) and the web hosting model (separate `web` container → server-embedded static bundle) both changed mid-line; only v0.4.1+ is recommended for new installs.
+
+### Added
+
+- **Beszel-style one-liner installers** (`scripts/install-hub.sh`, `scripts/install-agent.sh`). The hub installer clones the repo, generates `.env`, brings up the stack, runs the smoke test, and prints the JWT_SECRET. The agent installer registers a systemd unit (Linux) or LaunchDaemon (macOS) on each monitored host. Re-running the agent installer with `--ref <tag-or-branch>` doubles as an in-place updater.
+- **`AGENT_BIND` agent env var** (default `0.0.0.0`). Operators on a Tailscale or WireGuard mesh can pin the agent's HTTP listener to the tunnel-only IP (e.g. `100.x.y.z`), so the agent is unreachable from the public internet even on hosts with no firewall.
+- **README repositioned around the homelab use case** with explicit "good fit" / "not trying to replace" sections, so prospective users can self-select before reading the full feature surface.
+
+### Changed
+
+- **Server container now runs as `root`** (the `monitor` non-root user is gone). The previous setup tripped up first-time installers because a fresh host's `./data` bind mount is owned by root, and `monitor` could not create the SQLite WAL sidecars inside it. Since the only externally reachable surface is the dashboard HTTP port — fronted by the in-app auth, SSRF, and input-validation layers, and typically tunneled through Tailscale or Cloudflare Tunnel — the network perimeter is the relevant boundary, not the in-container UID. SECURITY.md spells this out and points users who want to expose the container directly at a `user: "1000:1000"` compose-override recipe.
+- **`install-agent.sh` switched from `cargo install --git` to `git clone --depth 1 + cargo install --path`**. The new flow is more deterministic on `--ref` re-runs and surfaces the build commit clearly, and it lets the unified installer act as an updater out of the box. Adds `/var/log/netsentinel-agent` as a `ReadWritePaths` so the systemd sandbox no longer needs `/proc` write access.
+- **Default web `NEXT_PUBLIC_API_URL` is now empty (same-origin)** in the production Compose layout. Single-hostname installs need zero env tweaking; split-origin reverse-proxy setups still configure the explicit URL plus matching `ALLOWED_ORIGINS`. `docs/DEPLOYMENT.md` covers both shapes.
+- **Default `AGENT_PORT` bumped 9100 → 9101** to match the documented Tailscale/install examples and the install-agent.sh defaults. Existing agents reading their old `.env` keep working.
+- **`install-agent.sh` uninstall step** now also reaps the legacy launchd plist (`com.sounmu.netsentinel`) so users migrating off the old `deploy/macos/` artifacts converge on a single plist identifier (`dev.netsentinel.agent`).
+- **Documentation hygiene.** `AGENTS.md` and `netsentinel-web/AGENTS.md` are no longer tracked (they were duplicates of CLAUDE.md guidance); `CONTRIBUTING.md` no longer references gitignored files in its doc-sync rule. Every documented `curl … | bash` invocation switched from `-sL` to `-fsSL` so a 4xx/5xx HTTP error from `raw.githubusercontent.com` aborts the pipeline instead of feeding an HTML error page into bash.
+
+### Removed
+
+- **`netsentinel-agent/deploy/macos/{plist,deploy.sh}`.** The unified `install-agent.sh` is now the only supported macOS entry point; the legacy artifacts had been shadowed for two releases.
+
+### Fixed
+
+- **First-boot SQLite `unable to open database file` (code 14)** on hosts where `./data` did not yet exist. The combination of a Docker-created root-owned bind mount and the in-container `monitor` user made the daemon refuse to start; running as root inside the container removes the failure mode entirely.
+
 ## [0.4.0] — 2026-04-19 (pre-release)
 
 Two large changes ship together:
