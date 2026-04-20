@@ -68,16 +68,30 @@ fn get_log_dir_path() -> PathBuf {
 // tracing initialisation
 // ──────────────────────────────────────────────
 
-/// Maximum number of daily log files to retain before the oldest are deleted.
-const LOG_RETENTION_DAYS: usize = 180;
+/// Default daily log retention. Overridable via `LOG_RETENTION_DAYS` env var.
+///
+/// Was 180 days, which under a 10 s scrape cadence with per-cycle INFO lines
+/// produced ~14 GB of self-generated log pressure over the retention window —
+/// enough for a monitor agent to trip its own disk alarms. 14 days is plenty
+/// for postmortem investigations while keeping the on-host footprint bounded.
+const DEFAULT_LOG_RETENTION_DAYS: usize = 14;
+
+fn resolve_log_retention_days() -> usize {
+    std::env::var("LOG_RETENTION_DAYS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_LOG_RETENTION_DAYS)
+}
 
 pub fn init_tracing() -> WorkerGuard {
     let log_dir = get_log_dir();
+    let retention_days = resolve_log_retention_days();
     let file_appender = tracing_appender::rolling::Builder::new()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
         .filename_prefix("app")
         .filename_suffix("log")
-        .max_log_files(LOG_RETENTION_DAYS)
+        .max_log_files(retention_days)
         .build(&log_dir)
         .expect("failed to create rolling file appender");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);

@@ -1,3 +1,4 @@
+mod db;
 mod errors;
 mod handlers;
 mod logger;
@@ -18,7 +19,6 @@ use tower_http::cors::CorsLayer;
 use anyhow::Context;
 use models::app_state::{AppState, LoginRateLimiter, MetricsStore};
 use routes::metrics_routes;
-use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -30,13 +30,38 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("🚀 Starting netsentinel-server...");
 
     // ── Required environment variables ──
-    let database_url =
-        std::env::var("DATABASE_URL").context("DATABASE_URL environment variable is not set")?;
+    // We intentionally print actionable guidance here instead of letting
+    // the first downstream failure (sqlx / jsonwebtoken) surface as a
+    // generic connection or HMAC error. Startup is the right moment to
+    // tell the operator exactly how to recover.
+    let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+        anyhow::anyhow!(
+            "DATABASE_URL is not set.\n\n\
+             NetSentinel stores everything in a single SQLite file. Set:\n\
+                 DATABASE_URL=sqlite:///var/lib/netsentinel/netsentinel.db\n\
+             (Docker) or\n\
+                 DATABASE_URL=sqlite://./data/netsentinel.db\n\
+             (local `cargo run`). The directory must exist and be writable;\n\
+             the `.db` file itself is created on first boot."
+        )
+    })?;
 
-    let jwt_secret =
-        std::env::var("JWT_SECRET").context("JWT_SECRET environment variable is not set")?;
+    let jwt_secret = std::env::var("JWT_SECRET").map_err(|_| {
+        anyhow::anyhow!(
+            "JWT_SECRET is not set.\n\n\
+             Run `./scripts/bootstrap.sh` from the repo root — it generates a\n\
+             32-byte random secret via `openssl rand -hex 32` and writes it\n\
+             to .env. The SAME value must appear in every agent's .env."
+        )
+    })?;
     if jwt_secret.len() < 32 {
-        anyhow::bail!("JWT_SECRET must be at least 32 characters for adequate security");
+        anyhow::bail!(
+            "JWT_SECRET is {} characters — must be ≥ 32 for adequate HS256 security.\n\n\
+             Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
+             secret and invalidates every previously-issued JWT). Be sure to\n\
+             distribute the new value to every agent afterwards.",
+            jwt_secret.len()
+        );
     }
     services::auth::init_encoding_key(&jwt_secret);
 
@@ -62,42 +87,29 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .unwrap_or(10);
 
-    // ── PostgreSQL connection pool ──
-    // statement_timeout prevents any single query from holding a connection
-    // indefinitely. The 30-second default is generous enough for the heaviest
-    // analytics queries (90-day CA refresh) while still catching runaway
-    // transactions before the pool is exhausted. Configurable via env var.
+    // ── Database connection pool ──
+    // Backend is selected at build time via Cargo feature flags
+    // (`backend-postgres` default, `backend-sqlite` experimental).
+    // `crate::db` is the single seam that knows which driver to load
+    // and which migrations directory to run — main.rs stays backend-
+    // agnostic. See docs/SQLITE_MIGRATION.md §6.
     let statement_timeout_secs: u64 = std::env::var("DB_STATEMENT_TIMEOUT_SECS")
         .unwrap_or_else(|_| "30".to_string())
         .parse()
         .unwrap_or(30);
-    let connect_options: sqlx::postgres::PgConnectOptions = database_url
-        .parse::<sqlx::postgres::PgConnectOptions>()
-        .context("Invalid DATABASE_URL")?
-        .options([(
-            "statement_timeout",
-            format!("{}s", statement_timeout_secs).as_str(),
-        )]);
-    let db_pool = PgPoolOptions::new()
-        .max_connections(max_db_connections)
-        .min_connections(3)
-        .acquire_timeout(std::time::Duration::from_secs(5))
-        .connect_with(connect_options)
-        .await
-        .context("Failed to connect to PostgreSQL")?;
-    tracing::info!(
-        statement_timeout_secs,
-        "⏱️ [DB] Query statement_timeout set"
-    );
-
-    tracing::info!("✅ [DB] Connected to PostgreSQL.");
+    let db_pool = db::connect(&database_url, max_db_connections, statement_timeout_secs).await?;
 
     // ── Run database migrations ──
-    sqlx::migrate!()
-        .run(&db_pool)
-        .await
-        .context("Failed to run database migrations")?;
-    tracing::info!("✅ [DB] Migrations applied successfully.");
+    db::run_migrations(&db_pool).await?;
+
+    // ── Background maintenance workers ──
+    // TimescaleDB's continuous-aggregate refresh and retention
+    // policies live here as plain Tokio tasks. Handles are detached —
+    // dropping them on shutdown aborts the tasks, which is the
+    // intended behaviour.
+    let _rollup = services::rollup_worker::spawn(db_pool.clone());
+    let _retention = services::retention_worker::spawn(db_pool.clone());
+    tracing::info!("✅ [DB] rollup + retention workers spawned");
 
     // ── SSE broadcast channel ──
     // Size the buffer to hold at least one full scrape cycle (N hosts × 2 events each)
@@ -141,6 +153,14 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "0".to_string())
         .parse()
         .unwrap_or(0);
+    if trusted_proxy_count == 0 {
+        tracing::warn!(
+            "⚠️ [Security] TRUSTED_PROXY_COUNT=0 — if deploying behind Cloudflare \
+             Tunnel or another reverse proxy, set it to 1 so per-IP rate limits \
+             key off the original client IP (via CF-Connecting-IP / X-Forwarded-For) \
+             instead of the single tunnel IP."
+        );
+    }
 
     let sse_ticket_store = Arc::new(services::sse_ticket::SseTicketStore::new());
 
@@ -185,6 +205,24 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or(60),
             ),
         )),
+        public_api_rate_limiter: Arc::new(LoginRateLimiter::new(
+            std::env::var("PUBLIC_API_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+            std::time::Duration::from_secs(
+                std::env::var("PUBLIC_API_RATE_LIMIT_WINDOW_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(60),
+            ),
+        )),
+        sse_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        max_sse_connections: std::env::var("MAX_SSE_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|&n: &usize| n > 0)
+            .unwrap_or(512),
         hosts_snapshot: hosts_snapshot.clone(),
     });
 
@@ -219,11 +257,13 @@ async fn main() -> anyhow::Result<()> {
     {
         let login_limiter = Arc::clone(&state.login_rate_limiter);
         let api_limiter = Arc::clone(&state.api_rate_limiter);
+        let public_api_limiter = Arc::clone(&state.public_api_rate_limiter);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 login_limiter.evict_stale();
                 api_limiter.evict_stale();
+                public_api_limiter.evict_stale();
             }
         });
     }
@@ -247,48 +287,9 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // ── Continuous aggregate refresh policy ──
-    // The periodic policy only needs to cover recent data (3 days) — enough to
-    // handle late-arriving inserts and reprocessing. Historical data (up to 90
-    // days) is seeded once on startup via the explicit CALL below, so the policy
-    // doesn't need to re-scan the entire retention window every 5 minutes.
-    // Previously this was set to 90 days, causing unnecessary memory pressure
-    // as TimescaleDB loaded metadata for all compressed chunks on each refresh.
-    let _ = sqlx::query(
-        "SELECT remove_continuous_aggregate_policy('metrics_5min', if_not_exists => TRUE)",
-    )
-    .execute(&state.db_pool)
-    .await;
-    if let Err(e) = sqlx::query(
-        "SELECT add_continuous_aggregate_policy('metrics_5min', \
-             start_offset => INTERVAL '3 days', \
-             end_offset   => INTERVAL '5 minutes', \
-             schedule_interval => INTERVAL '5 minutes', \
-             if_not_exists => TRUE)",
-    )
-    .execute(&state.db_pool)
-    .await
-    {
-        tracing::warn!(err = ?e, "⚠️ [CA] Failed to update refresh policy");
-    }
-
-    // Seed the CA with existing data in the background (non-blocking startup).
-    // On first run this materializes up to 90 days; subsequent starts are fast.
-    {
-        let ca_pool = state.db_pool.clone();
-        tokio::spawn(async move {
-            if let Err(e) = sqlx::query(
-                "CALL refresh_continuous_aggregate('metrics_5min', NOW() - INTERVAL '90 days', NOW())",
-            )
-            .execute(&ca_pool)
-            .await
-            {
-                tracing::warn!(err = ?e, "⚠️ [CA] Failed to seed metrics_5min (may not exist yet)");
-            } else {
-                tracing::info!("📊 [CA] metrics_5min refreshed (90-day window)");
-            }
-        });
-    }
+    // `metrics_5min` is maintained by `services::rollup_worker`, which
+    // was spawned above — no TimescaleDB continuous aggregate policy
+    // to configure here.
 
     // ── Pre-populate caches from DB (parallel) ──
     let (hosts_result, password_result, revoked_result) = tokio::join!(
@@ -382,15 +383,38 @@ async fn main() -> anyhow::Result<()> {
     };
     let compression = tower_http::compression::CompressionLayer::new();
 
-    let app = metrics_routes::create_router(Arc::clone(&state))
-        .layer(middleware::map_response(add_api_version_header))
-        .layer(middleware::from_fn(request_id::request_id))
-        .layer(middleware::from_fn_with_state(
-            Arc::clone(&state),
-            request_id::api_rate_limit,
-        ))
-        .layer(cors)
-        .layer(compression);
+    let app = metrics_routes::create_router(Arc::clone(&state));
+
+    // Mount the pre-built web static bundle when STATIC_ASSETS_DIR points
+    // at it. In production this is the single container's /app/static,
+    // produced by `next build` with `output: 'export'`. In local dev the
+    // env var is typically unset — developers run `npm run dev` on port
+    // 3001 against this API on 3000, identical to the old separate-web
+    // layout.
+    let app = if let Ok(dir_str) = std::env::var("STATIC_ASSETS_DIR") {
+        let dir = std::path::PathBuf::from(&dir_str);
+        if dir.is_dir() {
+            tracing::info!("📦 [Web] Serving static assets from {}", dir.display());
+            services::static_assets::mount(app, &dir)
+        } else {
+            tracing::warn!(
+                "STATIC_ASSETS_DIR={} is not a directory — API-only mode",
+                dir.display()
+            );
+            app
+        }
+    } else {
+        tracing::info!("📦 [Web] STATIC_ASSETS_DIR unset — API-only mode (expected in dev)");
+        app
+    }
+    .layer(middleware::map_response(add_api_version_header))
+    .layer(middleware::from_fn(request_id::request_id))
+    .layer(middleware::from_fn_with_state(
+        Arc::clone(&state),
+        request_id::api_rate_limit,
+    ))
+    .layer(cors)
+    .layer(compression);
 
     // ── Start background scraper tasks ──
     let scraper_handle = services::scraper::start_scraper(Arc::clone(&state));

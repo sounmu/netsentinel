@@ -1,9 +1,10 @@
 "use client";
 
-import { use } from "react";
 import dynamic from "next/dynamic";
-import { notFound } from "next/navigation";
+import { notFound, useRouter, useSearchParams } from "next/navigation";
+import useSWR from "swr";
 import { useSSE } from "@/app/lib/sse-context";
+import { fetcher, getHostsUrl } from "@/app/lib/api";
 const TimeSeriesChart = dynamic(
   () => import("@/app/components/TimeSeriesChart"),
   { ssr: false, loading: () => <div className="skeleton" style={{ height: 300 }} /> },
@@ -26,12 +27,7 @@ import {
   Cpu,
   MemoryStick,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useI18n } from "@/app/i18n/I18nContext";
-
-interface Props {
-  params: Promise<{ host_key: string }>;
-}
 
 /** Format uptime from boot_time (Unix timestamp seconds).
  *  <24h → "Xh Xm", ≥24h → "Xd Xh" */
@@ -78,13 +74,27 @@ function SectionCard({
   );
 }
 
-export default function HostPage({ params }: Props) {
-  const { host_key } = use(params);
-  const decodedHostKey = decodeURIComponent(host_key);
+export default function HostPageClient() {
+  const searchParams = useSearchParams();
+  const decodedHostKey = searchParams.get("key") ?? "";
   const router = useRouter();
 
   const { metricsMap, statusMap, isConnected } = useSSE();
   const { t } = useI18n();
+
+  // Deterministic "does this host exist?" probe. We don't trust the SSE
+  // race — `isConnected` flips true the instant the EventSource opens
+  // and the per-host `status` event arrives on the next tick, so a
+  // page refresh landing in that gap used to call `notFound()` before
+  // the initial snapshot hit `statusMap`. Pending hosts that never
+  // emit a `status` event at all made the race permanent. A single
+  // SWR fetch against `/api/hosts` gives us a definitive answer:
+  // either the key is in the list (valid page) or it isn't (real 404).
+  const { data: hostsList, error: hostsError } = useSWR<Array<{ host_key: string }>>(
+    getHostsUrl(),
+    fetcher,
+    { refreshInterval: 0, revalidateOnFocus: false }
+  );
 
   const liveMetrics = metricsMap[decodedHostKey] ?? null;
   const statusData = statusMap[decodedHostKey] ?? null;
@@ -101,7 +111,26 @@ export default function HostPage({ params }: Props) {
     ? getHostStatus(latestTimestamp, isOnline, statusData?.scrape_interval_secs)
     : "pending";
 
-  if (isConnected && !hasData && !(decodedHostKey in statusMap)) {
+  // Fire `notFound()` only after `/api/hosts` has definitively answered.
+  // While it's pending (hostsList === undefined && no error) we render
+  // the normal loading / skeleton path.
+  if (
+    decodedHostKey &&
+    hostsList &&
+    !hostsList.some((h) => h.host_key === decodedHostKey)
+  ) {
+    notFound();
+  }
+  // If the hosts endpoint itself failed, fall back to the old
+  // SSE-based guard so the page still shows "not found" for truly
+  // bogus keys on degraded networks.
+  if (
+    decodedHostKey &&
+    hostsError &&
+    isConnected &&
+    !hasData &&
+    !(decodedHostKey in statusMap)
+  ) {
     notFound();
   }
 

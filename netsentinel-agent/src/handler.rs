@@ -58,7 +58,11 @@ pub(crate) async fn metrics_handler(
     // instant round-trips cleanly and lets the web client render in any tz.
     let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
-    tracing::info!(
+    // Per-cycle scrape telemetry is DEBUG so it doesn't compound into GBs of
+    // on-host log volume. Release default is INFO, so these drop silently —
+    // operators can re-enable via `RUST_LOG=netsentinel_agent=debug` during
+    // incident response.
+    tracing::debug!(
         cpu = %format!("{:.1}%", sys_result.cpu_usage),
         ram = %format!("{}/{} MB", sys_result.memory_used_mb, sys_result.memory_total_mb),
         load = %format!("{:.2}/{:.2}/{:.2}", sys_result.load_average.one_min, sys_result.load_average.five_min, sys_result.load_average.fifteen_min),

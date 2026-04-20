@@ -5,6 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-04-20
+
+First non-pre-release of the SQLite + single-container line. Focused on installation UX, agent flexibility, and documentation positioning. No schema changes; upgrading from a working v0.4.0 install is a `git pull && docker compose up -d --build server` away.
+
+> Older releases (v0.4.0 and every v0.3.x / v0.2.x / v0.1.x / v0.0.x) are now flagged **pre-release** on GitHub. The storage stack (Postgres → SQLite) and the web hosting model (separate `web` container → server-embedded static bundle) both changed mid-line; only v0.4.1+ is recommended for new installs.
+
+### Added
+
+- **Beszel-style one-liner installers** (`scripts/install-hub.sh`, `scripts/install-agent.sh`). The hub installer clones the repo, generates `.env`, brings up the stack, runs the smoke test, and prints the JWT_SECRET. The agent installer registers a systemd unit (Linux) or LaunchDaemon (macOS) on each monitored host. Re-running the agent installer with `--ref <tag-or-branch>` doubles as an in-place updater.
+- **`AGENT_BIND` agent env var** (default `0.0.0.0`). Operators on a Tailscale or WireGuard mesh can pin the agent's HTTP listener to the tunnel-only IP (e.g. `100.x.y.z`), so the agent is unreachable from the public internet even on hosts with no firewall.
+- **README repositioned around the homelab use case** with explicit "good fit" / "not trying to replace" sections, so prospective users can self-select before reading the full feature surface.
+
+### Changed
+
+- **Server container now runs as `root`** (the `monitor` non-root user is gone). The previous setup tripped up first-time installers because a fresh host's `./data` bind mount is owned by root, and `monitor` could not create the SQLite WAL sidecars inside it. Since the only externally reachable surface is the dashboard HTTP port — fronted by the in-app auth, SSRF, and input-validation layers, and typically tunneled through Tailscale or Cloudflare Tunnel — the network perimeter is the relevant boundary, not the in-container UID. SECURITY.md spells this out and points users who want to expose the container directly at a `user: "1000:1000"` compose-override recipe.
+- **`install-agent.sh` switched from `cargo install --git` to `git clone --depth 1 + cargo install --path`**. The new flow is more deterministic on `--ref` re-runs and surfaces the build commit clearly, and it lets the unified installer act as an updater out of the box. Adds `/var/log/netsentinel-agent` as a `ReadWritePaths` so the systemd sandbox no longer needs `/proc` write access.
+- **Default web `NEXT_PUBLIC_API_URL` is now empty (same-origin)** in the production Compose layout. Single-hostname installs need zero env tweaking; split-origin reverse-proxy setups still configure the explicit URL plus matching `ALLOWED_ORIGINS`. `docs/DEPLOYMENT.md` covers both shapes.
+- **Default `AGENT_PORT` bumped 9100 → 9101** to match the documented Tailscale/install examples and the install-agent.sh defaults. Existing agents reading their old `.env` keep working.
+- **`install-agent.sh` uninstall step** now also reaps the legacy launchd plist (`com.sounmu.netsentinel`) so users migrating off the old `deploy/macos/` artifacts converge on a single plist identifier (`dev.netsentinel.agent`).
+- **Documentation hygiene.** `AGENTS.md` and `netsentinel-web/AGENTS.md` are no longer tracked (they were duplicates of CLAUDE.md guidance); `CONTRIBUTING.md` no longer references gitignored files in its doc-sync rule. Every documented `curl … | bash` invocation switched from `-sL` to `-fsSL` so a 4xx/5xx HTTP error from `raw.githubusercontent.com` aborts the pipeline instead of feeding an HTML error page into bash.
+
+### Removed
+
+- **`netsentinel-agent/deploy/macos/{plist,deploy.sh}`.** The unified `install-agent.sh` is now the only supported macOS entry point; the legacy artifacts had been shadowed for two releases.
+
+### Fixed
+
+- **First-boot SQLite `unable to open database file` (code 14)** on hosts where `./data` did not yet exist. The combination of a Docker-created root-owned bind mount and the in-container `monitor` user made the daemon refuse to start; running as root inside the container removes the failure mode entirely.
+
+## [0.4.0] — 2026-04-19 (pre-release)
+
+Two large changes ship together:
+
+1. **Embedded SQLite replaces PostgreSQL + TimescaleDB.** The stack collapses to a single container, the DB is a single file under `./data/`, and the only secret an operator manages is `JWT_SECRET`. Design decisions, type-adapter patterns, and the phase-by-phase migration journal live in [`docs/SQLITE_MIGRATION.md`](./docs/SQLITE_MIGRATION.md).
+2. **Multi-layer review hardening pass.** A 6-reviewer audit (agent / server-security / server-idiom / server-perf / web / contract) produced 117 findings; this release closes the 4 Critical, the 6 remaining Top-10 High, and 5 high-leverage perf follow-ups. Full report is [`docs/review-20260419.md`](./docs/review-20260419.md).
+
+Tagged **pre-release** — breaking storage migration + broad auth/SSE/rate-limit changes want real-world soak time before a `latest` tag.
+
+### Breaking
+
+- **`DATABASE_URL` format changed.** `postgres://…` is no longer accepted; set `sqlite:///app/data/netsentinel.db` (Docker) or `sqlite://./data/netsentinel.db` (local `cargo run`). The parent directory must exist; the `.db` file plus its `-wal` / `-shm` sidecars are created on first boot.
+- **`POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` are no longer read.** Remove them from `.env`; `./scripts/bootstrap.sh` stopped generating `POSTGRES_PASSWORD`. The only required variable is `JWT_SECRET`.
+- **`db` service removed from `docker-compose.yml`.** The `backend-internal` network and the `pgdata/` bind mount are gone; persistent state lives on a `./data:/app/data` bind mount. `depends_on: { db: { condition: service_healthy } }` no longer appears anywhere, cutting ~20 s off fresh-install cold starts.
+- **17 Postgres migration files deleted.** The only file under `netsentinel-server/migrations/` is now `0001_init.sql` — a single SQLite schema that reproduces every table shape the Postgres path had accumulated.
+- **Raw-metrics retention shrinks from 90 d to 3 d.** Long-range charts (6 h +) read exclusively from the `metrics_5min` rollup table, which keeps 90 days. TimescaleDB's continuous aggregate is replaced by `services::rollup_worker` (60 s tick) and `services::retention_worker` (daily).
+
+### Added
+
+- **Embedded SQLite backend** with WAL mode, `foreign_keys=ON`, 256 MiB mmap, 64 MiB page cache. All 10 repositories (`dashboard`, `users`, `notification_channels`, `refresh_tokens`, `hosts`, `alert_configs`, `alert_history`, `http_monitors`, `ping_monitors`, `metrics`) ported end-to-end with 26 inline round-trip tests covering JSON TEXT round-trip, enum encoding, BLOB bind, UPSERT, `NULLS NOT DISTINCT` emulation, bulk upsert, `DISTINCT ON` rewrite via `ROW_NUMBER()` CTE, `regexp_replace` rewrite via `CASE + substr + LIKE ESCAPE`, and `LATERAL JOIN` rewrite via correlated subqueries.
+- **`services/rollup_worker.rs`** — 60-second tick that upserts the current + previous 5-minute bucket from `metrics` into `metrics_5min`. Idempotent (`ON CONFLICT DO UPDATE`), last-in-bucket JSON snapshots picked with `ORDER BY timestamp DESC, id DESC LIMIT 1` for deterministic behaviour against same-second inserts.
+- **`services/retention_worker.rs`** — daily tick with independent `DELETE` per table (raw metrics 3 d, rollup 90 d, alert_history 90 d, http_monitor_results 90 d, ping_results 90 d). Per-statement execution so pruning cannot stall the SQLite writer lock while scraping is in flight.
+- **`src/db.rs` single entry point** with `DbPool` type alias and `connect()` / `run_migrations()` functions. Postgres cfg-flag plumbing is gone; the file is 60 lines of straight SQLite setup.
+- **CHANGELOG + docs** — README, CLAUDE.md, AGENTS.md, SECURITY.md, AFTER_INSTALL.md, DEPLOYMENT.md rewritten around the SQLite reality. `docs/DEPLOYMENT.md §5` now documents `VACUUM INTO` + stop-the-world `cp` backup strategies instead of `pg_dump`.
+
+### Changed
+
+- **`getMetricsRangeUrl`** accepts a `roundToSecs` parameter (default 60). Live 1 m / 5 m chart presets pass `10` so the fetch window matches the chart's visible domain and `<XAxis allowDataOverflow={true}>` renders cleanly.
+- **Recharts `<XAxis>`** explicitly sets `interval={0}` + `allowDataOverflow={true}` to kill the 5→3→5 tick-label flicker on live charts and prevent the axis from silently expanding to fit overfetched data.
+- **Host-detail page** (`/host?key=…`) uses `useSWR(getHostsUrl())` as a deterministic "does this host exist?" probe instead of racing against SSE `statusMap` — refreshing the page no longer 404s while the initial SSE snapshot is in flight.
+- **`services/refresh_token.rs::rotate`** replaced `SELECT … FOR UPDATE` with an SQLite-safe pattern: read via `refresh_tokens_repo::find_by_hash`, then `UPDATE … WHERE id = ?1 AND revoked_at IS NULL` + inspect `rows_affected()`. Reuse detection is stronger under the new scheme — any conditional UPDATE that returns zero rows is by definition a reuse signal.
+- **`handlers/auth_handler::setup`** removed the Postgres `LOCK TABLE users IN ACCESS EXCLUSIVE MODE`; first-admin serialization now relies on SQLite's single writer lock inside `pool.begin()` plus the `UNIQUE(username)` constraint catching the remaining narrow race.
+- **`main.rs`** spawns `rollup_worker` + `retention_worker` unconditionally; TimescaleDB `add_continuous_aggregate_policy` / `CALL refresh_continuous_aggregate` startup block removed.
+
+### Removed
+
+- **PostgreSQL + TimescaleDB.** The `sqlx/postgres` driver, the `sqlx::PgPool` alias, `backend-postgres` / `backend-sqlite` Cargo feature flags, the compile-error mutex guard, 17 Postgres migration files, and ~1 950 LOC of dual-backend `#[cfg]` scaffolding are all gone.
+- **`db` compose service + `backend-internal` network + `pgdata/` bind mount.** `docker-compose.yml` drops from ~100 lines to 50.
+- **Empty `compose up` wait for DB readiness** — `depends_on.service_healthy` is unnecessary without a DB container.
+
+### Security & hardening (multi-layer review)
+
+- **API 404 JSON contract.** `services::static_assets::mount` used to forward every unmatched `/api/*` request into the static bundle's `404.html`, so the SPA received `<!DOCTYPE html>` when it expected JSON. A dedicated `/api/{*rest}` + `/metrics/{*rest}` catch-all now returns `AppError::NotFound` before the `ServeDir` fallback is consulted.
+- **Agent JWT path simplified.** `netsentinel-agent/src/auth.rs` dropped the legacy `validate_aud = false` branch that accepted pre-v0.3 tokens. The agent now requires `aud = "agent"` strictly — token-type separation can no longer be circumvented by a mixed-version rollout artifact.
+- **Agent log retention 180 d → 14 d (env-overridable).** `LOG_RETENTION_DAYS` defaults to 14; the scrape-cycle `INFO` dump was demoted to `DEBUG`. Self-hosted agents no longer risk tripping their own disk alarms with ~14 GB of their own telemetry.
+- **`alert_history` batch INSERT.** `metrics_service::process_metrics` collects every alert that fires in a cycle and persists them with `alert_history_repo::insert_alerts_batch` (single `QueryBuilder::push_values` statement). N individual writer-lock acquisitions per host per cycle collapse to one.
+- **Revocation cache is fail-secure.** `services::auth::is_token_iat_still_valid` used to return `true` when the `OnceLock` was uninitialized or the `RwLock` was poisoned; it now logs and rejects. Post-logout tokens can no longer slip through after a transient lock poisoning.
+- **`/api/auth/logout` requires `UserGuard`.** The pre-hardening version accepted any decode-successful token (including expired) and even acted on the refresh cookie alone; either path could be weaponised to force-logout arbitrary users. A live access token is now mandatory.
+- **`/api/public/status` is opt-in.** Unless `PUBLIC_STATUS_ENABLED=true` is set, the endpoint returns 404. Zero-Trust deployments keep host keys and uptime private by default.
+- **Rate limiting split into public vs authenticated buckets.** `PUBLIC_API_RATE_LIMIT_MAX` (default 30/min) shields the SPA's authenticated budget (`API_RATE_LIMIT_MAX`, 200/min) from anonymous abuse. `extract_client_ip` now prefers `CF-Connecting-IP` when `TRUSTED_PROXY_COUNT > 0`; a startup warning fires when `TRUSTED_PROXY_COUNT = 0` behind a tunnel would collapse every IP onto the tunnel's.
+- **SSE connection cap + `Lagged` resync.** `MAX_SSE_CONNECTIONS` (default 512) backed by an `AtomicUsize` + RAII guard bounds memory usage. On `RecvError::Lagged` the stream re-snapshots `last_known_status` so slow consumers catch up instead of drifting.
+
+### Performance
+
+- **`fetch_metrics_range` >14 d tier.** Replaced four correlated subqueries per output row (disks / temperatures / gpus / docker_stats) with a single CTE + `ROW_NUMBER() OVER (PARTITION BY host_key, bucket_15m ORDER BY bucket DESC)` window. At 30 days × 96 buckets/day that drops ~11 520 correlated lookups to one table scan + one window + one GROUP BY per host per request.
+- **`http_monitors_repo::get_summaries` / `ping_monitors_repo::get_summaries`.** Same shape rewrite: 8 correlated subqueries per monitor → window + LEFT JOIN + single GROUP BY.
+- **`alert_configs_repo::bulk_upsert_host_configs`.** N×M per-row round-trips inside a transaction replaced by a chunked `INSERT … VALUES (…), (…) … ON CONFLICT … RETURNING`, with `CHUNK_ROWS = 4 000` keeping us under the default `SQLITE_MAX_VARIABLE_NUMBER = 32 766`.
+- **`rollup_worker` previous-bucket re-aggregation.** Only runs on the tick immediately after a bucket closes instead of every 60 s tick regardless; halves the rollup workload and the writer-lock contention with the scraper's batch INSERT.
+- **`retention_worker` chunked DELETE + `yield_now`.** `DELETE FROM … WHERE rowid IN (SELECT rowid … LIMIT 10 000)` loops yield between chunks so a cold multi-million-row prune cannot stall concurrent scraping. `metrics_5min` (WITHOUT ROWID) uses a single-shot DELETE since rollup volume never benefits from chunking.
+- **Alert delivery fully detached.** `scraper::handle_success` recovery path, `scraper::handle_down`, and `monitor_scraper::handle_monitor_alert` now fan out `alert_service::send_alert` + `alert_history_repo::insert_alert` on a `tokio::spawn`, so webhook latency never steals a `buffer_unordered(10)` scraper slot.
+
+### Web
+
+- **`app/providers.tsx` extracted from `app/layout.tsx`.** The 5-deep Provider tree (Theme / I18n / Auth / SSE / ErrorBoundary) used to live inline inside the server `RootLayout` without a `"use client"` boundary, forcing every page below it into a client tree. The Providers are now isolated behind a single `"use client"` barrier; `layout.tsx` stays a pure Server Component that ships metadata + fonts + the static shell.
+
+### Migration guide (upgrading from v0.3.x)
+
+1. **Stop the stack** and back up Postgres data if you want to keep it. v0.4.0 does **not** auto-migrate historical metrics; the rebuild starts with an empty database.
+2. `git pull` + delete stale vars in `.env`: remove `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`.
+3. `mkdir -p data` (the bind-mount target).
+4. `docker compose up -d --build`. The new `server` container creates `data/netsentinel.db` and applies `0001_init.sql` on first boot.
+5. Re-register hosts (the host list is empty) and re-create notification channels. Metrics history is not preserved.
+6. **Behind Cloudflare Tunnel / any reverse proxy:** set `TRUSTED_PROXY_COUNT=1` so per-IP rate limits key off `CF-Connecting-IP` / the rightmost `X-Forwarded-For` entry instead of the single proxy IP.
+7. **Optional new env vars:** `LOG_RETENTION_DAYS` (agent, 14), `PUBLIC_STATUS_ENABLED` (server, false), `PUBLIC_API_RATE_LIMIT_MAX` / `PUBLIC_API_RATE_LIMIT_WINDOW_SECS` (30 / 60), `MAX_SSE_CONNECTIONS` (512).
+
+If you need to carry metrics forward from an existing deployment, write a one-shot export from Postgres → SQLite before the upgrade using the schema in `netsentinel-server/migrations/0001_init.sql` as the target.
+
 ## [0.3.5] — 2026-04-18
 
 Hotfix for a visual regression introduced with the v0.3.4 `<PageHeader>` rollout. **v0.3.4 is marked as a pre-release on GitHub and should not be deployed — use v0.3.5 instead.** No server / DB / API surface changes relative to v0.3.4; pure CSS fix on the web tier.

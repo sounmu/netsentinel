@@ -1,6 +1,6 @@
 {
   "name": "netsentinel-web",
-  "version": "0.3.5",
+  "version": "0.4.1",
   "description": "Real-time server monitoring dashboard — Next.js frontend with SSE, charts, and i18n",
   "license": "Apache-2.0",
   "repository": "https://github.com/sounmu/netsentinel",
@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/export-start.mjs",
     "lint": "eslint",
     "test": "vitest run"
   },

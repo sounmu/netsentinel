@@ -77,12 +77,31 @@ pub fn update_tokens_revoked_at(user_id: i32, timestamp: i64) {
 /// user (password change OR explicit logout). Returns true if the token is
 /// still valid. A missing cache entry means the user has never revoked and
 /// every signed token with a valid `iat` is accepted.
+///
+/// **Fail-secure policy**: this function sits on the security-critical path
+/// for every authenticated request. If the cache is not initialized or the
+/// `RwLock` is poisoned, the previous implementation returned `true` (let the
+/// request through). That is fail-open. A poisoned lock right after logout
+/// would silently accept a revoked token for the lifetime of the process.
+/// We now reject in both situations and log so the operator can recover.
 pub(crate) fn is_token_iat_still_valid(user_id: i32, iat: usize) -> bool {
     let Some(cache) = TOKEN_REVOCATION_CACHE.get() else {
-        return true; // Cache not initialized — graceful degradation
+        tracing::error!(
+            user_id,
+            "🚨 [Auth] Revocation cache uninitialized — rejecting token (fail-secure)"
+        );
+        return false;
     };
-    let Ok(map) = cache.read() else {
-        return true; // Lock poisoned — graceful degradation
+    let map = match cache.read() {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(
+                user_id,
+                err = %e,
+                "🚨 [Auth] Revocation cache poisoned — rejecting token (fail-secure)"
+            );
+            return false;
+        }
     };
     match map.get(&user_id) {
         Some(&cutoff) => (iat as i64) >= cutoff,

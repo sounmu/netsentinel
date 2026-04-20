@@ -118,7 +118,7 @@ pub fn apply_system_info(cell: &SharedHostsSnapshot, host_key: &str, info: &Syst
 /// Called on every mutation handler (create/update/delete host, upsert/delete
 /// alert config) and periodically from the background tick. DB errors are
 /// logged but non-fatal — the existing snapshot continues to serve reads.
-pub async fn refresh(pool: &sqlx::PgPool, cell: &SharedHostsSnapshot) {
+pub async fn refresh(pool: &crate::db::DbPool, cell: &SharedHostsSnapshot) {
     let (hosts_res, alert_map_res) = tokio::join!(
         hosts_repo::list_hosts(pool),
         alert_configs_repo::load_all_as_map(pool),
@@ -150,7 +150,7 @@ pub async fn refresh(pool: &sqlx::PgPool, cell: &SharedHostsSnapshot) {
 /// The mutation handlers all call `refresh` synchronously on success, so this
 /// is deliberately coarse — 60 s is the worst-case staleness the product can
 /// tolerate and also saves DB round-trips under steady-state no-mutation load.
-pub fn spawn_background_refresher(pool: sqlx::PgPool, cell: SharedHostsSnapshot) {
+pub fn spawn_background_refresher(pool: crate::db::DbPool, cell: SharedHostsSnapshot) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

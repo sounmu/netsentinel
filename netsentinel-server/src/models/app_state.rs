@@ -21,8 +21,11 @@ pub struct AppState {
     pub store: SharedStore,
     /// Shared HTTP client reused for alert notifications and any future external API calls
     pub http_client: reqwest::Client,
-    /// PostgreSQL connection pool
-    pub db_pool: sqlx::PgPool,
+    /// Database connection pool. Concrete type is resolved at build
+    /// time by the `backend-postgres` / `backend-sqlite` Cargo feature
+    /// flags (see `crate::db::DbPool`). The repo layer still expects
+    /// `&PgPool` directly today — that conversion is Phase 3 work.
+    pub db_pool: crate::db::DbPool,
     /// Global scrape interval in seconds (from env var or default 10)
     pub scrape_interval_secs: u64,
     /// SSE event broadcast channel sender
@@ -55,6 +58,21 @@ pub struct AppState {
     /// login limiter (which protects against brute-force). Prevents any
     /// single IP from overwhelming the server with rapid-fire requests.
     pub api_rate_limiter: Arc<LoginRateLimiter>,
+    /// Tighter per-IP limiter for **unauthenticated** endpoints
+    /// (`/api/auth/login|setup|status`, `/api/public/status`, `/api/health`).
+    /// Without a separate bucket, abusive unauthenticated traffic would eat
+    /// into the same budget the authenticated SPA uses for SWR polling +
+    /// SSE retry, forcing the authenticated shell to return 429 while the
+    /// abuse is ongoing.
+    pub public_api_rate_limiter: Arc<LoginRateLimiter>,
+    /// Global cap on concurrent SSE connections. Each `/api/stream` stream
+    /// holds a `broadcast::Receiver`, a `last_known_status` snapshot, and
+    /// an `auth_check` interval — unbounded growth turns one misbehaving
+    /// client into a memory exhaustion vector. Controlled by
+    /// `MAX_SSE_CONNECTIONS` env var.
+    pub sse_connections: Arc<std::sync::atomic::AtomicUsize>,
+    /// Upper bound the connection counter is compared against.
+    pub max_sse_connections: usize,
     /// Cached view of the `hosts` + `alert_configs` tables used by the
     /// scraper hot path. See `services::hosts_snapshot` for the refresh
     /// protocol (invalidation on mutation handlers + 60 s background tick).

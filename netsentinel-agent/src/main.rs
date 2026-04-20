@@ -19,6 +19,7 @@ use axum::extract::Query;
 use axum::middleware;
 use axum::routing::get;
 use bollard::Docker;
+use std::net::IpAddr;
 use std::sync::Arc;
 use sysinfo::System;
 use tokio::net::TcpListener;
@@ -37,9 +38,16 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Starting netsentinel-agent...");
 
     let port: u16 = std::env::var("AGENT_PORT")
-        .unwrap_or_else(|_| "9100".to_string())
+        .unwrap_or_else(|_| "9101".to_string())
         .parse()
         .context("AGENT_PORT is not a valid port number (1–65535)")?;
+
+    let bind_addr = std::env::var("AGENT_BIND")
+        .or_else(|_| std::env::var("AGENT_HOST"))
+        .unwrap_or_else(|_| "0.0.0.0".to_string());
+    bind_addr
+        .parse::<IpAddr>()
+        .with_context(|| format!("AGENT_BIND must be an IP address, got '{bind_addr}'"))?;
 
     let jwt_secret = std::env::var("JWT_SECRET")
         .context("JWT_SECRET environment variable is not set. Please check your .env file.")?;
@@ -124,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
             }),
         );
 
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("{}:{}", bind_addr, port);
     let listener = TcpListener::bind(&addr)
         .await
         .with_context(|| format!("Failed to bind to port {} — is it already in use?", port))?;

@@ -46,22 +46,18 @@ pub(crate) async fn auth_middleware(req: Request, next: Next) -> Result<Response
         tracing::error!("❌ [Auth] DECODING_KEY not initialized — rejecting request");
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     };
+    // Single validation path: `aud="agent"` is mandatory.
+    // Legacy no-aud acceptance was removed — every server released since
+    // v0.3.0 mints tokens with `aud="agent"`, and keeping the fallback
+    // weakened the token-type separation defense (a leaked user JWT could
+    // slip through on legacy_validation and hit the agent).
     let mut validation = Validation::new(Algorithm::HS256);
-    // Prefer strict `aud = "agent"` validation, but keep accepting the
-    // legacy no-aud token shape for mixed-version rollouts.
     validation.set_audience(&["agent"]);
 
-    if decode::<Claims>(token, key, &validation).is_ok() {
-        return Ok(next.run(req).await);
-    }
-
-    let mut legacy_validation = Validation::new(Algorithm::HS256);
-    legacy_validation.validate_aud = false;
-
-    match decode::<Claims>(token, key, &legacy_validation) {
-        Ok(data) if data.claims.aud.is_empty() => Ok(next.run(req).await),
-        Ok(_) | Err(_) => {
-            tracing::warn!("⚠️ [Auth] JWT validation failed");
+    match decode::<Claims>(token, key, &validation) {
+        Ok(_) => Ok(next.run(req).await),
+        Err(e) => {
+            tracing::warn!(err = ?e, "⚠️ [Auth] JWT validation failed");
             Err(StatusCode::UNAUTHORIZED)
         }
     }

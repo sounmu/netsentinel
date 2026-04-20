@@ -1,9 +1,9 @@
 import { MetricsRow } from "@/app/types/metrics";
 
-// Default to localhost (not 127.0.0.1) so the browser treats the frontend
-// (localhost:3001) and API (localhost:3000) as same-site. This is required
-// for SameSite=Strict cookies to be sent on fetch requests.
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+// Empty/undefined means same-origin. That is the production default because
+// the static dashboard is served by the Axum container itself; local Next dev
+// should set NEXT_PUBLIC_API_URL=http://localhost:3000 in .env.local.
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // ── Access token (memory-only) ──────────────────────────────────────────
 // The short-lived access JWT lives only in a module-level variable and the
@@ -196,13 +196,28 @@ export const getMetricsUrl = (hostKey: string) =>
   `${API_BASE}/api/metrics/${encodeURIComponent(hostKey)}`;
 
 /** GET /api/metrics/:host_key?start=...&end=... — time-range based metric query.
- * Timestamps are rounded to the nearest minute so that requests made seconds
- * apart produce the same URL, enabling both SWR deduplication and server-side
- * cache hits (server rounds to 5-minute boundaries). */
-export const getMetricsRangeUrl = (hostKey: string, start: Date, end: Date) => {
-  // Floor start to minute, ceil end to minute
-  const startRounded = new Date(Math.floor(start.getTime() / 60000) * 60000);
-  const endRounded = new Date(Math.ceil(end.getTime() / 60000) * 60000);
+ *
+ * Timestamps are rounded so requests made seconds apart produce the same URL,
+ * enabling SWR deduplication and server-side cache hits (server rounds to
+ * 5-minute boundaries). The rounding granularity defaults to 1 minute which
+ * works for ≥ 1 h presets; shorter live presets must override it.
+ *
+ * For the 1 m / 5 m live presets, minute-granularity rounding inflates the
+ * fetched window to 2–3 minutes — wider than the chart's visible domain —
+ * which would cause `<XAxis allowDataOverflow=false>` to expand the axis
+ * domain and push the tick labels into the middle of the chart. Pass
+ * `roundToSecs: 10` (or similar) for live presets so the fetched window
+ * matches the displayed window to within the scrape interval.
+ */
+export const getMetricsRangeUrl = (
+  hostKey: string,
+  start: Date,
+  end: Date,
+  roundToSecs: number = 60,
+) => {
+  const unit = roundToSecs * 1000;
+  const startRounded = new Date(Math.floor(start.getTime() / unit) * unit);
+  const endRounded = new Date(Math.ceil(end.getTime() / unit) * unit);
   const params = new URLSearchParams({
     start: startRounded.toISOString(),
     end: endRounded.toISOString(),

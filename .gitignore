@@ -24,12 +24,30 @@ target_linux/
 logs/
 *.log
 
-# Database volume
-pgdata/
+# SQLite database file + WAL sidecars (bound by docker-compose.yml).
+# `data/` holds netsentinel.db, netsentinel.db-wal, netsentinel.db-shm.
+data/
 
 # Node / Next.js
 node_modules/
 .next/
 
-docs/
-scripts/
+# docs/ holds internal review reports by default; whitelist the user-
+# facing docs we publish alongside the code.
+docs/*
+!docs/AFTER_INSTALL.md
+!docs/DEPLOYMENT.md
+
+# scripts/ holds throwaway benchmarking + scratch scripts; whitelist
+# the install-flow scripts the README references.
+scripts/*
+!scripts/bootstrap.sh
+!scripts/smoke-test.sh
+!scripts/doctor.sh
+!scripts/install-hub.sh
+!scripts/install-agent.sh
+
+# netsentinel-web has its own scripts/ folder used by npm start
+# (export-start.mjs is the production static preview server).
+!netsentinel-web/scripts/
+!netsentinel-web/scripts/export-start.mjs

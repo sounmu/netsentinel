@@ -1,0 +1,30 @@
+# Build artefacts
+netsentinel-server/target
+netsentinel-agent/target
+netsentinel-web/.next
+netsentinel-web/out
+netsentinel-web/node_modules
+
+# Local env + logs
+**/.env
+**/.env.*
+!**/.env.example
+**/npm-debug.log*
+**/*.log
+
+# VCS / IDE
+.git
+.gitignore
+.idea
+.vscode
+
+# OS
+.DS_Store
+
+# Docs (not needed in image build)
+docs
+*.md
+!README.md
+
+# Local state
+pgdata

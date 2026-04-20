@@ -118,17 +118,19 @@ jobs:
               mv -v ~/network-monitor/pgdata ~/netsentinel/pgdata
             fi
 
-            # 3) Bring up the new stack. --remove-orphans cleans up any stale
-            #    services that existed under the previous compose file.
+            # 3) Bring up the new stack. --remove-orphans cleans up any
+            #    stale services (incl. the legacy `web` container which
+            #    was folded into `server` in v0.3.6).
             cd ~/netsentinel
-            docker compose up -d --build --remove-orphans server web
+            docker compose up -d --build --remove-orphans server
 
-            # 4) Prune dangling layers AND tagged legacy images. Without the
-            #    explicit rmi, `network-monitor-server:latest` lingers and
-            #    eats disk on the Oracle free-tier boot volume.
+            # 4) Prune dangling layers AND tagged legacy images. Without
+            #    the explicit rmi, the old `network-monitor-server`,
+            #    `network-monitor-web`, and `netsentinel-web` images all
+            #    linger and eat disk on the Oracle free-tier boot volume.
             docker image prune -f
             docker images --format '{{.Repository}}:{{.Tag}}' \
-              | grep -E '^(ghcr\.io/sounmu/)?network-monitor-(server|web):' \
+              | grep -E '^(ghcr\.io/sounmu/)?(network-monitor-(server|web)|netsentinel-web):' \
               | xargs -r docker rmi -f || true
           EOF
 
@@ -170,4 +172,18 @@ jobs:
               docker compose -f ~/netsentinel/docker-compose.yml logs --tail=30 server
               exit 1
             fi
+
+            if ! curl -sf http://localhost:3000/ > /dev/null 2>&1; then
+              echo "❌ Web root check failed"
+              docker compose -f ~/netsentinel/docker-compose.yml logs --tail=30 server
+              exit 1
+            fi
+            echo "✅ Web root check passed"
+
+            if ! curl -sf "http://localhost:3000/host/?key=test-host:9101" > /dev/null 2>&1; then
+              echo "❌ /host page check failed"
+              docker compose -f ~/netsentinel/docker-compose.yml logs --tail=30 server
+              exit 1
+            fi
+            echo "✅ /host page check passed"
           EOF

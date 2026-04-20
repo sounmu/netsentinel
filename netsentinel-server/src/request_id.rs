@@ -67,13 +67,38 @@ pub async fn request_id(request: axum::extract::Request, next: axum::middleware:
     .await
 }
 
+/// Public endpoints that are reachable **without** authentication. These
+/// share a tighter per-IP bucket than the authenticated SPA path so abusive
+/// unauthenticated traffic cannot exhaust the generous `API_RATE_LIMIT_MAX`
+/// budget the browser client needs for its SWR + SSE + dashboard polling.
+fn is_public_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/auth/login"
+            | "/api/auth/setup"
+            | "/api/auth/status"
+            | "/api/auth/refresh"
+            | "/api/public/status"
+            | "/api/health"
+            | "/metrics"
+    )
+}
+
 /// Per-IP API rate limiter middleware.
 ///
-/// Returns `429 Too Many Requests` with a `Retry-After` header when an IP
-/// exceeds the configured threshold. Applied globally — the limit is generous
-/// enough that normal browser polling (SWR 5s + SSE) stays well within
-/// bounds, but a misconfigured script or accidental infinite loop is caught
-/// before it saturates the DB pool.
+/// Two independent sliding-window buckets per IP, selected by request path:
+///
+/// * **Public bucket** (`PUBLIC_API_RATE_LIMIT_MAX`, default 30/min) —
+///   unauthenticated endpoints. Kept small so a misbehaving anonymous
+///   client cannot drain the authenticated budget. Login uses its own
+///   even-tighter `login_rate_limiter` in addition to this check.
+/// * **Authenticated bucket** (`API_RATE_LIMIT_MAX`, default 200/min) —
+///   everything else. Generous enough that normal browser polling
+///   (SWR 5 s + SSE retry) stays well within bounds, but a misconfigured
+///   script or accidental infinite loop is caught before it saturates
+///   the SQLite writer lock.
+///
+/// Both return `429 Too Many Requests` + `Retry-After` on overflow.
 pub async fn api_rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
@@ -85,7 +110,12 @@ pub async fn api_rate_limit(
         &peer_addr,
         state.trusted_proxy_count,
     );
-    if let Err(retry_after) = state.api_rate_limiter.check(&ip) {
+    let limiter = if is_public_path(request.uri().path()) {
+        &state.public_api_rate_limiter
+    } else {
+        &state.api_rate_limiter
+    };
+    if let Err(retry_after) = limiter.check(&ip) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(
