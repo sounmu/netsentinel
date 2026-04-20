@@ -36,4 +36,4 @@ Instead, please email the maintainer directly at the email address listed in the
 - Back up `./data/netsentinel.db` regularly; see [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) §5 for the `VACUUM INTO` pattern. The file contains password hashes and refresh-token hashes, so treat backups with the same care as the live DB
 - Keep Docker images updated
 - Restrict `ALLOWED_ORIGINS` to your actual domain (not `*`)
-- The server container runs as a non-root user (`monitor`) by default
+- The server container runs as `root` inside the container so the bind-mounted `./data` SQLite file works without host-side `chown` dances. The deployment model assumes the container is fronted by Tailscale / WireGuard / Cloudflare Tunnel, so the only externally reachable surface is the dashboard HTTP port — defended by the in-app auth, SSRF, and input-validation layers documented above. If you intend to expose the container directly to the public internet, drop privileges in your own compose override (`user: "1000:1000"`) and pre-create `./data` with matching ownership

@@ -52,21 +52,20 @@ RUN apt-get update \
 # (`curl -sf http://localhost:3000/api/health`). ~3 MB runtime cost —
 # worth it for compose `depends_on: condition: service_healthy` wiring.
 
-RUN groupadd -r monitor && useradd -r -g monitor -s /usr/sbin/nologin monitor
-
 WORKDIR /app
 COPY --from=server-builder /build/target/release/netsentinel-server /app/server
 COPY --from=web-builder    /web/out                                  /app/static
 
 # Persistent SQLite state lives here. Declared as a VOLUME so `docker
 # run` (without an explicit bind mount) still gives the file a stable
-# home; docker-compose.yml mounts the host's `./data` over it.
-RUN mkdir -p /app/data \
- && chown -R monitor:monitor /app
+# home; docker-compose.yml mounts the host's `./data` over it. Container
+# runs as root by design — the deployment model assumes Tailscale /
+# WireGuard fronting, so the only externally reachable surface is the
+# dashboard whose auth, SSRF, and input validation live in the app.
+RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 
 ENV STATIC_ASSETS_DIR=/app/static
 
-USER monitor
 EXPOSE 3000
 CMD ["/app/server"]

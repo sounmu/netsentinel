@@ -246,7 +246,7 @@ sudo systemctl restart netsentinel-agent   # or launchctl on macOS
 4. A maintainer will review within a few days. Feedback may be requested before merging.
 
 > **Breaking changes**: If your PR modifies the SSE payload schema or REST API contracts, note it clearly in the PR description so consumers can prepare.
-> Update `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, and any relevant `.env.example` files whenever config defaults, auth behavior, or API/SSE contracts change.
+> Update `README.md`, `CONTRIBUTING.md`, and any relevant `.env.example` files whenever config defaults, auth behavior, or API/SSE contracts change.
 
 ---
 
