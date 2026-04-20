@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────
-# NetSentinel agent — one-liner installer
+# NetSentinel agent — one-liner installer / updater
 #
 # Pipes cleanly from curl + bash. Typical usage, on a fresh host:
 #
@@ -13,8 +13,8 @@
 #
 #   1. Verifies cargo is on PATH (installs prebuilt binaries once
 #      GitHub Releases are wired up in Phase B — see ROADMAP).
-#   2. Builds netsentinel-agent via `cargo install --git` into
-#      ${PREFIX:-/usr/local}/bin.
+#   2. Clones this monorepo and installs netsentinel-agent via
+#      `cargo install --path` into ${PREFIX:-/usr/local}/bin.
 #   3. Writes /etc/netsentinel/agent.env (chmod 600) with JWT_SECRET
 #      and AGENT_PORT.
 #   4. On Linux, drops /etc/systemd/system/netsentinel-agent.service
@@ -22,7 +22,8 @@
 #   5. Prints the exact host_key you should paste into the hub UI
 #      (LAN IP : port).
 #
-# Safe to re-run; existing service is replaced atomically.
+# Safe to re-run; existing binary/config/unit are replaced and the
+# service is restarted, so the same command is also the update path.
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -37,12 +38,13 @@ SERVICE_NAME="netsentinel-agent"
 BIN_NAME="netsentinel-agent"
 CONFIG_DIR="/etc/netsentinel"
 CONFIG_FILE="${CONFIG_DIR}/agent.env"
+LOG_DIR="/var/log/netsentinel-agent"
 UNINSTALL=0
 
 # ── arg parse ───────────────────────────────────────────────────────
 print_help() {
   cat <<'HLP'
-NetSentinel agent installer
+NetSentinel agent installer / updater
 
 Usage:
   sudo bash install-agent.sh [options]
@@ -58,7 +60,12 @@ Options:
   --help
 
 On a host where $JWT is already exported in the env:
-  curl -sL .../install-agent.sh | sudo -E bash -s -- --jwt-secret "$JWT"
+  curl -sL .../install-agent.sh | sudo -E bash -s -- \
+    --jwt-secret "$JWT" --bind 0.0.0.0 --port 9101 --ref main
+
+Tailscale-only exposure example:
+  curl -sL .../install-agent.sh | sudo -E bash -s -- \
+    --jwt-secret "$JWT" --bind 100.x.y.z --port 9101 --ref main
 
 Without sudo, the script can only run as root or will refuse.
 HLP
@@ -112,11 +119,14 @@ if [[ $UNINSTALL -eq 1 ]]; then
       ;;
     Darwin)
       launchctl unload "/Library/LaunchDaemons/dev.netsentinel.agent.plist" 2>/dev/null || true
+      launchctl unload "/Library/LaunchDaemons/com.sounmu.netsentinel.plist" 2>/dev/null || true
       rm -f "/Library/LaunchDaemons/dev.netsentinel.agent.plist"
+      rm -f "/Library/LaunchDaemons/com.sounmu.netsentinel.plist"
       ;;
   esac
   rm -f "${PREFIX}/bin/${BIN_NAME}"
   rm -rf "${CONFIG_DIR}"
+  rm -rf "/usr/local/etc/netsentinel"
   echo "✅ Uninstalled."
   exit 0
 fi
@@ -137,14 +147,27 @@ if ! [[ "$AGENT_PORT" =~ ^[0-9]+$ ]] || (( AGENT_PORT < 1 || AGENT_PORT > 65535 
   exit 1
 fi
 
-# ── prerequisite: cargo ─────────────────────────────────────────────
+# ── prerequisites ───────────────────────────────────────────────────
+if ! command -v git >/dev/null 2>&1; then
+  cat >&2 <<'EOM'
+❌ git is not on PATH.
+
+Install git and try again:
+    Debian/Ubuntu:  apt install -y git
+    Fedora/RHEL:    dnf install -y git
+    Alpine:         apk add git
+EOM
+  exit 1
+fi
+
 # Phase B will replace this with prebuilt binary download from
 # GitHub Releases. For now, cargo is required.
 if ! command -v cargo >/dev/null 2>&1; then
   cat >&2 <<'EOM'
 ❌ cargo (the Rust toolchain) is not on PATH.
 
-This installer builds the agent from source via `cargo install --git`.
+This installer builds the agent from source via `cargo install --path`
+after cloning the NetSentinel repository.
 Install rustup and try again:
 
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -161,13 +184,23 @@ EOM
   exit 1
 fi
 
-mkdir -p "${PREFIX}/bin" "${CONFIG_DIR}"
+mkdir -p "${PREFIX}/bin" "${CONFIG_DIR}" "${LOG_DIR}"
 chmod 755 "${PREFIX}/bin"
+chmod 755 "${LOG_DIR}"
 
 # ── build + install the binary ──────────────────────────────────────
 echo "▶ Building ${BIN_NAME} via cargo (this takes a few minutes on first run)…"
 echo "    repo: ${REPO_URL}  ref: ${REF}  → ${PREFIX}/bin/${BIN_NAME}"
-if ! cargo install --locked --git "$REPO_URL" --branch "$REF" --root "$PREFIX" "$BIN_NAME"; then
+tmpdir="$(mktemp -d)"
+cleanup() { rm -rf "$tmpdir"; }
+trap cleanup EXIT
+
+if ! git clone --depth 1 --branch "$REF" "$REPO_URL" "$tmpdir/repo" >/dev/null 2>&1; then
+  git clone "$REPO_URL" "$tmpdir/repo" >/dev/null
+  git -C "$tmpdir/repo" checkout "$REF" >/dev/null
+fi
+
+if ! cargo install --locked --path "$tmpdir/repo/netsentinel-agent" --root "$PREFIX"; then
   cat >&2 <<'EOM'
 ❌ `cargo install` failed.
 
@@ -217,13 +250,14 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/proc
+ReadWritePaths=${LOG_DIR}
 
 [Install]
 WantedBy=multi-user.target
 EOF
       systemctl daemon-reload
-      systemctl enable --now "${SERVICE_NAME}.service"
+      systemctl enable "${SERVICE_NAME}.service" >/dev/null
+      systemctl restart "${SERVICE_NAME}.service"
       sleep 1
       if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
         echo "✅ systemd service ${SERVICE_NAME} is active"
@@ -235,6 +269,10 @@ EOF
     ;;
   Darwin)
     plist="/Library/LaunchDaemons/dev.netsentinel.agent.plist"
+    # Retire the legacy manual macOS installer artifacts if this unified
+    # installer is used on a machine that previously ran deploy/macos.
+    launchctl unload "/Library/LaunchDaemons/com.sounmu.netsentinel.plist" 2>/dev/null || true
+    rm -f "/Library/LaunchDaemons/com.sounmu.netsentinel.plist"
     cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -300,7 +338,12 @@ The hub will flip the host to 'online' within one scrape cycle.
 Manage this agent:
     sudo systemctl status  ${SERVICE_NAME}      # (Linux)
     sudo launchctl list   dev.netsentinel.agent # (macOS)
-    sudo $(realpath "$0") --uninstall           # remove
+
+Update this agent:
+    Re-run the same installer command with --ref <tag-or-branch>.
+
+Remove this agent:
+    sudo $(realpath "$0") --uninstall
 
 ─────────────────────────────────────────────────────────────────────
 EOM

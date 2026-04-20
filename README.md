@@ -85,10 +85,14 @@ On each target machine, paste the JWT_SECRET the hub printed:
 
 ```bash
 curl -sL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
-  | sudo bash -s -- --jwt-secret "PASTE_THE_HUB_SECRET_HERE"
+  | sudo bash -s -- \
+      --jwt-secret "PASTE_THE_HUB_SECRET_HERE" \
+      --bind "0.0.0.0" \
+      --port 9101 \
+      --ref main
 ```
 
-The installer builds the agent binary, drops a systemd unit (Linux) or launchd daemon (macOS), starts the service, and prints the exact `host_key` you should paste into the hub's Agents page.
+Use `--bind "100.x.y.z"` to listen only on the agent's Tailscale interface, or change `--port` and register the matching `<agent-ip>:<port>` in the hub. The installer builds the agent binary, drops a systemd unit (Linux) or launchd daemon (macOS), starts the service, and prints the exact `host_key` you should paste into the hub's Agents page. Re-run the same command later with `--ref <tag-or-branch>` to update the native agent in place.
 
 > The agent currently builds from source via `cargo install` — if the target machine does not have Rust, the installer prints the one-line rustup command to run first. Phase B will publish prebuilt binaries via GitHub Releases so this step becomes a pure download.
 
@@ -191,8 +195,8 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JWT_SECRET` | **Yes** | — | Must match server's `JWT_SECRET` |
-| `AGENT_PORT` | No | `9100` | Port the agent HTTP server listens on |
-| `AGENT_HOSTNAME` | No | OS hostname | Display name shown in dashboard |
+| `AGENT_PORT` | No | `9101` | Port the agent HTTP server listens on |
+| `AGENT_BIND` | No | `0.0.0.0` | Bind address. Use a Tailscale IP such as `100.x.y.z` to expose the native agent only on that interface. |
 
 ---
 

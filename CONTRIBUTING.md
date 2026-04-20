@@ -35,7 +35,7 @@ Thank you for your interest in contributing! This document covers everything you
 git clone https://github.com/<owner>/netsentinel.git
 cd netsentinel
 
-# 2. Generate .env with random secrets (JWT_SECRET + Postgres password)
+# 2. Generate .env with random secrets (JWT_SECRET)
 ./scripts/bootstrap.sh
 
 # 3. Start the full stack (single server container serves both API and
@@ -91,7 +91,7 @@ When testing auth locally over plain HTTP, set `COOKIE_SECURE=false` in `netsent
 
 ```bash
 cd netsentinel-agent
-cp .env.example .env          # edit JWT_SECRET, AGENT_PORT etc.
+cp .env.example .env          # edit JWT_SECRET, AGENT_PORT, AGENT_BIND
 cargo run
 ```
 

@@ -83,6 +83,34 @@ curl -sL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/insta
   | sudo bash -s -- --jwt-secret "PASTE_THE_JWT_SECRET_HERE"
 ```
 
+Common variants:
+
+```bash
+# Default: listen on every interface, port 9101.
+curl -sL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+  | sudo bash -s -- \
+      --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
+      --bind "0.0.0.0" \
+      --port 9101 \
+      --ref main
+
+# Tailscale-only exposure: register 100.x.y.z:9101 in the hub.
+curl -sL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+  | sudo bash -s -- \
+      --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
+      --bind "100.x.y.z" \
+      --port 9101 \
+      --ref main
+
+# Custom port: register <agent-ip>:9200 in the hub.
+curl -sL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+  | sudo bash -s -- \
+      --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
+      --bind "0.0.0.0" \
+      --port 9200 \
+      --ref main
+```
+
 Read back the shared secret from the hub's `.env`:
 
 ```bash
@@ -92,8 +120,8 @@ grep ^JWT_SECRET= .env | cut -d= -f2-
 
 The installer:
 
-1. Checks for `cargo` (prints the rustup install command if missing).
-2. Builds `netsentinel-agent` via `cargo install --git` into `/usr/local/bin`.
+1. Checks for `git` and `cargo` (prints install commands if missing).
+2. Clones the NetSentinel repo and installs `netsentinel-agent` via `cargo install --path` into `/usr/local/bin`.
 3. Writes `/etc/netsentinel/agent.env` with the JWT + port (chmod 600).
 4. Drops `/etc/systemd/system/netsentinel-agent.service` (Linux) or `/Library/LaunchDaemons/dev.netsentinel.agent.plist` (macOS), enables and starts it.
 5. Prints the exact `host_key` — `<lan-ip>:9101` — you should paste into the hub UI.
@@ -103,9 +131,31 @@ Optional flags:
 ```bash
 --port 9102            # non-default listen port
 --bind 192.168.1.10    # only bind to a specific interface
+--bind 100.x.y.z       # Tailscale-only native agent exposure
 --prefix /opt          # binary goes to /opt/bin instead of /usr/local/bin
 --ref v0.3.5           # build a specific tag / branch
 --uninstall            # stop + remove service, binary, and /etc/netsentinel/
+```
+
+To update an installed native agent, re-run the installer with the same
+`JWT_SECRET` and the target release/tag. The binary, service definition, and
+`/etc/netsentinel/agent.env` are replaced, then the service is restarted:
+
+```bash
+curl -sL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+  | sudo bash -s -- \
+      --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
+      --bind "0.0.0.0" \
+      --port 9101 \
+      --ref main
+```
+
+On Linux, the installer creates a systemd unit that reads
+`/etc/netsentinel/agent.env`. If you change `JWT_SECRET`, `AGENT_PORT`, or
+`AGENT_BIND` manually, restart the service:
+
+```bash
+sudo systemctl restart netsentinel-agent
 ```
 
 ### 4.1 Confirm the server picks up the agent
