@@ -83,9 +83,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(10);
 
     let max_db_connections: u32 = std::env::var("MAX_DB_CONNECTIONS")
-        .unwrap_or_else(|_| "10".to_string())
+        .unwrap_or_else(|_| "4".to_string())
         .parse()
-        .unwrap_or(10);
+        .unwrap_or(4);
 
     // ── Database connection pool ──
     // Backend is selected at build time via Cargo feature flags
@@ -143,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     let metrics_cache_max_entries: usize = std::env::var("METRICS_CACHE_MAX_ENTRIES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(200);
+        .unwrap_or(10);
     let metrics_query_cache = Arc::new(models::app_state::MetricsQueryCache::new(
         std::time::Duration::from_secs(120),
         metrics_cache_max_entries,
@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
             .ok()
             .and_then(|v| v.parse().ok())
             .filter(|&n: &usize| n > 0)
-            .unwrap_or(512),
+            .unwrap_or(32),
         hosts_snapshot: hosts_snapshot.clone(),
     });
 

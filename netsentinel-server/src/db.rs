@@ -36,9 +36,9 @@ pub async fn connect(
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
         .busy_timeout(std::time::Duration::from_secs(5))
         // 256 MiB mmap, 64 MiB page cache — see §3.
-        .pragma("mmap_size", "268435456")
-        .pragma("cache_size", "-65536")
-        .pragma("temp_store", "MEMORY")
+        .pragma("mmap_size", "67108864")
+        .pragma("cache_size", "-8192")
+        .pragma("temp_store", "FILE")
         .pragma("wal_autocheckpoint", "1000");
 
     let pool = SqlitePoolOptions::new()
