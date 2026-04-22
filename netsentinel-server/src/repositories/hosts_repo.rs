@@ -238,34 +238,6 @@ pub async fn update_system_info(
     Ok(())
 }
 
-/// Auto-register a host on first metric receipt.
-/// Only updates display_name if it was empty/null — prevents a compromised agent
-/// from overwriting an admin-set name (SS-15).
-pub async fn ensure_host_registered(
-    pool: &DbPool,
-    host_key: &str,
-    display_name: &str,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        INSERT INTO hosts (host_key, display_name)
-        VALUES (?1, ?2)
-        ON CONFLICT (host_key) DO UPDATE SET
-            display_name = CASE
-                WHEN hosts.display_name = '' OR hosts.display_name IS NULL
-                THEN excluded.display_name
-                ELSE hosts.display_name
-            END,
-            updated_at = strftime('%s','now')
-        "#,
-    )
-    .bind(host_key)
-    .bind(display_name)
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod sqlite_tests {
     use super::*;
@@ -311,21 +283,6 @@ mod sqlite_tests {
         let fetched = get_host(&pool, "192.168.1.10:9101").await.unwrap().unwrap();
         assert_eq!(fetched.ports, created.ports);
         assert_eq!(fetched.containers, created.containers);
-    }
-
-    #[tokio::test]
-    async fn ensure_host_registered_preserves_admin_set_name() {
-        let pool = fresh_pool().await;
-        // Admin creates host via full form.
-        create_host(&pool, &sample_create_req()).await.unwrap();
-
-        // Agent scrape arrives with a generic hostname — must NOT overwrite.
-        ensure_host_registered(&pool, "192.168.1.10:9101", "generic-hostname")
-            .await
-            .unwrap();
-
-        let after = get_host(&pool, "192.168.1.10:9101").await.unwrap().unwrap();
-        assert_eq!(after.display_name, "homeserver");
     }
 
     #[tokio::test]

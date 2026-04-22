@@ -203,7 +203,6 @@ async fn scrape_all(
             jwt_token: jwt_token.clone(),
             system_info_updated_at: host.system_info_updated_at,
             scrape_interval_secs,
-            is_known_host: true,
         });
     }
 
@@ -298,7 +297,6 @@ struct ScrapeContext {
     jwt_token: String,
     system_info_updated_at: Option<DateTime<Utc>>,
     scrape_interval_secs: u64,
-    is_known_host: bool,
 }
 
 async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
@@ -358,6 +356,8 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                     metrics.docker_stats.truncate(512);
                     metrics.system.processes.truncate(100);
 
+                    sanitize_metrics(&mut metrics);
+
                     if metrics.agent_version.is_empty() {
                         tracing::warn!(target = %ctx.target, "⚠️ [Scraper] Agent has no version field — consider upgrading");
                     } else if semver_less_than(&metrics.agent_version, MIN_AGENT_VERSION) {
@@ -397,6 +397,53 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
     }
 }
 
+fn sanitize_metrics(metrics: &mut AgentMetrics) {
+    metrics.system.cpu_usage_percent =
+        metrics_service::sanitize_f32(metrics.system.cpu_usage_percent);
+    metrics.system.memory_usage_percent =
+        metrics_service::sanitize_f32(metrics.system.memory_usage_percent);
+
+    metrics.load_average.one_min = metrics_service::sanitize_f64(metrics.load_average.one_min);
+    metrics.load_average.five_min = metrics_service::sanitize_f64(metrics.load_average.five_min);
+    metrics.load_average.fifteen_min =
+        metrics_service::sanitize_f64(metrics.load_average.fifteen_min);
+
+    metrics.network.rx_bytes_per_sec =
+        metrics_service::sanitize_f64(metrics.network.rx_bytes_per_sec);
+    metrics.network.tx_bytes_per_sec =
+        metrics_service::sanitize_f64(metrics.network.tx_bytes_per_sec);
+
+    for disk in &mut metrics.system.disks {
+        disk.usage_percent = metrics_service::sanitize_f32(disk.usage_percent);
+        disk.read_bytes_per_sec = metrics_service::sanitize_f64(disk.read_bytes_per_sec);
+        disk.write_bytes_per_sec = metrics_service::sanitize_f64(disk.write_bytes_per_sec);
+        disk.total_gb = metrics_service::sanitize_f64(disk.total_gb);
+        disk.available_gb = metrics_service::sanitize_f64(disk.available_gb);
+    }
+
+    for core in &mut metrics.cpu_cores {
+        *core = metrics_service::sanitize_f32(*core);
+    }
+
+    for temperature in &mut metrics.system.temperatures {
+        temperature.temperature_c = metrics_service::sanitize_f32(temperature.temperature_c);
+    }
+
+    for gpu in &mut metrics.system.gpus {
+        if let Some(power_watts) = gpu.power_watts {
+            gpu.power_watts = Some(metrics_service::sanitize_f32(power_watts));
+        }
+    }
+
+    for stats in &mut metrics.docker_stats {
+        stats.cpu_percent = metrics_service::sanitize_f32(stats.cpu_percent);
+    }
+
+    for process in &mut metrics.system.processes {
+        process.cpu_usage = metrics_service::sanitize_f32(process.cpu_usage);
+    }
+}
+
 // ──────────────────────────────────────────────
 // Success path
 // ──────────────────────────────────────────────
@@ -405,16 +452,6 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
 const SYSTEM_INFO_REFRESH_SECS: i64 = 24 * 3600;
 
 async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOutcome {
-    // SP-01: Only call ensure_host_registered for unknown hosts — avoids N
-    // unnecessary DB writes per scrape cycle for already-registered hosts.
-    if !ctx.is_known_host
-        && let Err(e) =
-            hosts_repo::ensure_host_registered(&ctx.state.db_pool, &ctx.target, &metrics.hostname)
-                .await
-    {
-        tracing::warn!(err = ?e, "⚠️ [Scraper] Failed to auto-register host");
-    }
-
     match metrics_service::process_metrics(
         &metrics,
         &ctx.target,
@@ -483,24 +520,7 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
 
         // Re-check under the write lock in case another task flipped the flag
         // between our read and write acquisitions.
-        if record.alert_state.offline_alerted {
-            let last_offline = record.alert_state.last_offline_alert;
-            let cooldown_passed =
-                last_offline.is_none_or(|t| t.elapsed() > Duration::from_secs(FLAP_COOLDOWN_SECS));
-
-            if cooldown_passed {
-                record.alert_state.offline_alerted = false;
-                record.alert_state.last_recovery_alert = Some(Instant::now());
-                Some(format!(
-                    "✅ **[Host Recovery]** `{}` — agent is back online.",
-                    metrics.hostname
-                ))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        mark_recovery_if_cooldown_passed(record, &metrics.hostname, Instant::now())
     } else {
         None
     };
@@ -545,6 +565,31 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
     }
 
     ScrapeOutcome::Online(Box::new(metrics))
+}
+
+fn mark_recovery_if_cooldown_passed(
+    record: &mut HostRecord,
+    hostname: &str,
+    now: Instant,
+) -> Option<String> {
+    if !record.alert_state.offline_alerted {
+        return None;
+    }
+
+    let cooldown_passed = record
+        .alert_state
+        .last_recovery_alert
+        .is_none_or(|t| now.duration_since(t) > Duration::from_secs(FLAP_COOLDOWN_SECS));
+
+    if !cooldown_passed {
+        return None;
+    }
+
+    record.alert_state.offline_alerted = false;
+    record.alert_state.last_recovery_alert = Some(now);
+    Some(format!(
+        "✅ **[Host Recovery]** `{hostname}` — agent is back online."
+    ))
 }
 
 /// Fetch system info from the agent and persist to DB + in-memory status.
@@ -662,9 +707,9 @@ async fn handle_down(
         let alert = if record.alert_state.offline_alerted {
             None
         } else {
-            let last_recovery = record.alert_state.last_recovery_alert;
+            let last_offline = record.alert_state.last_offline_alert;
             let cooldown_passed =
-                last_recovery.is_none_or(|t| t.elapsed() > Duration::from_secs(FLAP_COOLDOWN_SECS));
+                last_offline.is_none_or(|t| t.elapsed() > Duration::from_secs(FLAP_COOLDOWN_SECS));
 
             if cooldown_passed {
                 record.alert_state.offline_alerted = true;
@@ -737,5 +782,46 @@ async fn handle_down(
                 tracing::error!(err = ?e, "⚠️ [AlertHistory] Failed to log host_down");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_cooldown_uses_last_recovery_alert() {
+        let now = Instant::now();
+        let mut record = HostRecord::new("test-host".to_string());
+        record.alert_state.offline_alerted = true;
+        record.alert_state.last_offline_alert = Some(now);
+
+        let first = mark_recovery_if_cooldown_passed(&mut record, "test-host", now);
+        assert!(first.is_some(), "first recovery after host down must send");
+        assert!(!record.alert_state.offline_alerted);
+        assert_eq!(record.alert_state.last_recovery_alert, Some(now));
+
+        record.alert_state.offline_alerted = true;
+        let duplicate = mark_recovery_if_cooldown_passed(
+            &mut record,
+            "test-host",
+            now + Duration::from_secs(30),
+        );
+        assert!(
+            duplicate.is_none(),
+            "second recovery inside cooldown must be suppressed"
+        );
+        assert!(record.alert_state.offline_alerted);
+
+        let after_cooldown = mark_recovery_if_cooldown_passed(
+            &mut record,
+            "test-host",
+            now + Duration::from_secs(FLAP_COOLDOWN_SECS + 1),
+        );
+        assert!(
+            after_cooldown.is_some(),
+            "recovery after cooldown must send again"
+        );
+        assert!(!record.alert_state.offline_alerted);
     }
 }
