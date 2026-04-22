@@ -43,6 +43,13 @@ fn is_physical_interface(name: &str) -> bool {
 type DiskIoPrev = HashMap<String, (u64, u64, Instant)>;
 static DISK_IO_PREV: LazyLock<Mutex<DiskIoPrev>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Previous aggregate network counters (rx, tx, sampled-at) for computing
+/// bandwidth in bytes-per-second on the agent side. Kept next to
+/// `DISK_IO_PREV` because the sampling contract is identical — both are
+/// cumulative kernel counters the agent differentiates so the rest of the
+/// stack stores / graphs a rate directly.
+static NET_PREV: LazyLock<Mutex<Option<(u64, u64, Instant)>>> = LazyLock::new(|| Mutex::new(None));
+
 /// Cached sysinfo instances — reused across collection cycles instead of creating fresh each time.
 static SYS: LazyLock<Mutex<System>> = LazyLock::new(|| Mutex::new(System::new()));
 static NETS: LazyLock<Mutex<Networks>> =
@@ -111,6 +118,42 @@ fn compute_disk_io(dev_key: &str, usage: &DiskUsage) -> (f64, f64) {
     };
 
     prev_map.insert(dev_key.to_string(), (read_bytes, write_bytes, now));
+    result
+}
+
+/// Compute aggregate network bandwidth (bytes/sec) from the cumulative
+/// rx/tx counters. Mirrors `compute_disk_io` — shares the same
+/// minimum-elapsed guard so sub-millisecond clock quirks can't blow up
+/// the rate.
+///
+/// Returns `(0.0, 0.0)` on the very first call (no baseline yet) and on
+/// counter resets (e.g. post-reboot `rx` < `prev_rx` — `saturating_sub`
+/// pins the delta to 0 instead of producing a nonsense spike).
+fn compute_network_rate(total_rx: u64, total_tx: u64) -> (f64, f64) {
+    let now = Instant::now();
+
+    let mut prev = NET_PREV.lock().unwrap_or_else(|e| {
+        tracing::warn!("NET_PREV mutex was poisoned, recovering");
+        e.into_inner()
+    });
+
+    const MIN_ELAPSED_SECS: f64 = 0.5;
+
+    let result = if let Some((prev_rx, prev_tx, prev_t)) = prev.as_ref() {
+        let elapsed = now.duration_since(*prev_t).as_secs_f64();
+        if elapsed >= MIN_ELAPSED_SECS {
+            (
+                total_rx.saturating_sub(*prev_rx) as f64 / elapsed,
+                total_tx.saturating_sub(*prev_tx) as f64 / elapsed,
+            )
+        } else {
+            (0.0, 0.0)
+        }
+    } else {
+        (0.0, 0.0)
+    };
+
+    *prev = Some((total_rx, total_tx, now));
     result
 }
 
@@ -215,6 +258,14 @@ pub(crate) async fn collect_sysinfo() -> SysinfoResult {
                 tx_bytes: tx,
             });
         }
+        // Differentiate the aggregate counters into a real bandwidth so
+        // "Network Bandwidth" in the UI is a rate (matches the
+        // `DiskInfo.read_bytes_per_sec` contract). Server/frontend can
+        // still read the raw `total_*_bytes` counters for alerting or
+        // daily-total use cases.
+        let (rx_bps, tx_bps) = compute_network_rate(network.total_rx_bytes, network.total_tx_bytes);
+        network.rx_bytes_per_sec = rx_bps;
+        network.tx_bytes_per_sec = tx_bps;
 
         // Load average (Linux/macOS — returns 0.0 on Windows)
         let la = System::load_average();
@@ -317,10 +368,7 @@ pub(crate) async fn collect_sysinfo() -> SysinfoResult {
             vec![],
             vec![],
             vec![],
-            NetworkTotal {
-                total_rx_bytes: 0,
-                total_tx_bytes: 0,
-            },
+            NetworkTotal::default(),
             vec![],
             LoadAverage {
                 one_min: 0.0,

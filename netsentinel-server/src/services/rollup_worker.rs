@@ -80,6 +80,12 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
     // `networks` is stored as TEXT JSON on the raw side; the rollup
     // table splits it into scalar columns so uptime / bandwidth
     // queries don't have to re-parse JSON on every read.
+    // Bandwidth aggregation (`avg_*_bytes_per_sec`) uses AVG because each
+    // raw sample already carries a rate — the agent differentiates the
+    // kernel counter across its own 200 ms window before sending. Taking
+    // the bucket average mirrors how `cpu_usage_percent` is rolled up and
+    // yields a real bandwidth that long-range dashboard queries can read
+    // without re-deriving it from `MAX(total_*_bytes)` deltas.
     let res = sqlx::query(
         r#"
         INSERT INTO metrics_5min (
@@ -88,6 +94,7 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             load_1min, load_5min, load_15min,
             is_online, sample_count,
             total_rx_bytes, total_tx_bytes,
+            avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
             disks, temperatures, gpus, docker_stats
         )
         SELECT
@@ -102,6 +109,10 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             COUNT(*)         AS sample_count,
             MAX(CAST(json_extract(m.networks, '$.total_rx_bytes') AS INTEGER)) AS total_rx_bytes,
             MAX(CAST(json_extract(m.networks, '$.total_tx_bytes') AS INTEGER)) AS total_tx_bytes,
+            CAST(AVG(CAST(json_extract(m.networks, '$.rx_bytes_per_sec') AS REAL)) AS REAL)
+                AS avg_rx_bytes_per_sec,
+            CAST(AVG(CAST(json_extract(m.networks, '$.tx_bytes_per_sec') AS REAL)) AS REAL)
+                AS avg_tx_bytes_per_sec,
             (SELECT disks FROM metrics
               WHERE host_key = m.host_key
                 AND timestamp >= ?1 AND timestamp < ?2
@@ -131,6 +142,8 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             sample_count         = excluded.sample_count,
             total_rx_bytes       = excluded.total_rx_bytes,
             total_tx_bytes       = excluded.total_tx_bytes,
+            avg_rx_bytes_per_sec = excluded.avg_rx_bytes_per_sec,
+            avg_tx_bytes_per_sec = excluded.avg_tx_bytes_per_sec,
             disks                = excluded.disks,
             temperatures         = excluded.temperatures,
             gpus                 = excluded.gpus,
@@ -197,10 +210,13 @@ mod tests {
         tx: i64,
         timestamp: i64,
     ) {
+        // Seed a bandwidth proportional to the counter so
+        // `test_rollup_aggregates_bandwidth_averages` below can verify
+        // the AVG() column without having to hand-tune three inputs.
+        let rx_bps = rx as f64;
+        let tx_bps = tx as f64;
         let networks = format!(
-            r#"{{"total_rx_bytes":{rx},"total_tx_bytes":{tx}}}"#,
-            rx = rx,
-            tx = tx
+            r#"{{"total_rx_bytes":{rx},"total_tx_bytes":{tx},"rx_bytes_per_sec":{rx_bps},"tx_bytes_per_sec":{tx_bps}}}"#,
         );
         sqlx::query(
             r#"
@@ -272,6 +288,39 @@ mod tests {
             "MAX(rx) reads json_extract on the raw networks column"
         );
         assert_eq!(row.4, 250);
+    }
+
+    #[tokio::test]
+    async fn rollup_aggregates_bandwidth_averages() {
+        // `seed_metric` stores `rx_bytes_per_sec = rx` and same for tx.
+        // With three samples of rx = 100, 300, 500 the expected bucket
+        // average is 300 — this pins the new AVG-over-json_extract path.
+        let pool = fresh_pool().await;
+        let bucket = current_bucket_start(&pool).await;
+
+        seed_metric(&pool, "a:9101", 10.0, true, 100, 50, bucket + 10).await;
+        seed_metric(&pool, "a:9101", 30.0, true, 300, 150, bucket + 120).await;
+        seed_metric(&pool, "a:9101", 50.0, true, 500, 250, bucket + 240).await;
+
+        run_once(&pool).await.unwrap();
+
+        let (avg_rx, avg_tx): (f64, f64) = sqlx::query_as(
+            "SELECT avg_rx_bytes_per_sec, avg_tx_bytes_per_sec \
+             FROM metrics_5min WHERE host_key = 'a:9101' AND bucket = ?1",
+        )
+        .bind(bucket)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            (avg_rx - 300.0).abs() < 0.01,
+            "AVG(rx_bytes_per_sec) mismatch: {avg_rx}"
+        );
+        assert!(
+            (avg_tx - 150.0).abs() < 0.01,
+            "AVG(tx_bytes_per_sec) mismatch: {avg_tx}"
+        );
     }
 
     #[tokio::test]

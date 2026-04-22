@@ -1,9 +1,15 @@
 // Types based on Rust MetricsRow (actual API response from DB)
 
-/// Cumulative traffic aggregated from physical interfaces by the agent
+/// Traffic aggregated from physical interfaces by the agent.
+/// `total_*_bytes` are cumulative counters; `*_bytes_per_sec` is backend-
+/// provided bandwidth. Rate fields are optional/null so rows from pre-
+/// bandwidth rollup buckets still parse cleanly — the chart falls back to
+/// frontend-side deltas in that case.
 export interface NetworkTotal {
   total_rx_bytes: number;
   total_tx_bytes: number;
+  rx_bytes_per_sec?: number | null;
+  tx_bytes_per_sec?: number | null;
 }
 
 export interface LoadAverage {

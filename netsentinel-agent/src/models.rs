@@ -82,16 +82,26 @@ pub(crate) struct GpuInfo {
     pub frequency_mhz: Option<u32>,
 }
 
-/// Physical-interface traffic totals (cumulative bytes after agent-side filtering).
+/// Physical-interface traffic totals + bandwidth (after agent-side filtering).
 ///
 /// Sent as a single aggregate struct rather than a per-interface array because:
 /// - It reduces the payload size sent to the server.
 /// - The server needs no duplicate filtering logic.
 /// - Monitoring aggregate throughput is sufficient for this use case.
+///
+/// `total_*_bytes` are cumulative counters; `*_bytes_per_sec` is the rate
+/// between the previous and current collection cycles — computed here for
+/// symmetry with `DiskInfo.read_bytes_per_sec` so "Network Bandwidth" in
+/// the UI is an actual rate, not a counter the frontend has to differentiate.
+/// Rate fields are appended at the end of the struct. New servers decode both
+/// the old 2-field shape and this 4-field shape; older servers must be upgraded
+/// before using agents that emit these fields.
 #[derive(Serialize, Default)]
 pub(crate) struct NetworkTotal {
     pub total_rx_bytes: u64,
     pub total_tx_bytes: u64,
+    pub rx_bytes_per_sec: f64,
+    pub tx_bytes_per_sec: f64,
 }
 
 #[derive(Serialize)]
@@ -198,6 +208,8 @@ mod tests {
         let net = NetworkTotal::default();
         assert_eq!(net.total_rx_bytes, 0);
         assert_eq!(net.total_tx_bytes, 0);
+        assert_eq!(net.rx_bytes_per_sec, 0.0);
+        assert_eq!(net.tx_bytes_per_sec, 0.0);
     }
 
     #[test]
@@ -205,10 +217,14 @@ mod tests {
         let net = NetworkTotal {
             total_rx_bytes: 1024,
             total_tx_bytes: 2048,
+            rx_bytes_per_sec: 128.0,
+            tx_bytes_per_sec: 256.0,
         };
         let json = serde_json::to_value(&net).unwrap();
         assert_eq!(json["total_rx_bytes"], 1024);
         assert_eq!(json["total_tx_bytes"], 2048);
+        assert_eq!(json["rx_bytes_per_sec"], 128.0);
+        assert_eq!(json["tx_bytes_per_sec"], 256.0);
     }
 
     #[test]
@@ -287,6 +303,8 @@ mod tests {
             network: NetworkTotal {
                 total_rx_bytes: 1_000_000,
                 total_tx_bytes: 500_000,
+                rx_bytes_per_sec: 0.0,
+                tx_bytes_per_sec: 0.0,
             },
             load_average: LoadAverage {
                 one_min: 1.5,

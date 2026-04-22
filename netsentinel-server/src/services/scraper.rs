@@ -7,7 +7,7 @@ use futures::StreamExt;
 use futures::stream;
 use reqwest::Client;
 
-use crate::models::agent_metrics::{AgentMetrics, SystemInfoResponse};
+use crate::models::agent_metrics::{AgentMetrics, SystemInfoResponse, deserialize_agent_metrics};
 use crate::models::app_state::{AlertConfig, AppState, HostRecord};
 use crate::models::sse_payloads::{HostStatusPayload, SseBroadcast};
 use crate::repositories::{alert_configs_repo, hosts_repo, metrics_repo};
@@ -350,7 +350,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                 }
             }
 
-            match bincode::deserialize::<AgentMetrics>(&bytes) {
+            match deserialize_agent_metrics(&bytes) {
                 Ok(mut metrics) => {
                     // Defense-in-depth: cap untrusted Vec fields to sane maximums
                     metrics.cpu_cores.truncate(1024);
@@ -404,7 +404,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
 /// System info refresh interval: 24 hours
 const SYSTEM_INFO_REFRESH_SECS: i64 = 24 * 3600;
 
-async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOutcome {
+async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOutcome {
     // SP-01: Only call ensure_host_registered for unknown hosts — avoids N
     // unnecessary DB writes per scrape cycle for already-registered hosts.
     if !ctx.is_known_host
@@ -426,6 +426,9 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
     {
         Ok(result) => {
             tracing::info!(target = %ctx.target, "✅ [Scraper] {}", result.log_msg);
+
+            metrics.network.rx_bytes_per_sec = result.metrics_payload.network_rate.rx_bytes_per_sec;
+            metrics.network.tx_bytes_per_sec = result.metrics_payload.network_rate.tx_bytes_per_sec;
 
             let _ = ctx
                 .state

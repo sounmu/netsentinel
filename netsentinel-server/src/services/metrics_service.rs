@@ -502,21 +502,35 @@ fn delta_rate(
 }
 
 /// Convert cumulative aggregate byte counters into per-second throughput.
+///
+/// Prefers the agent-reported rate when the decoder observed those fields.
+/// The explicit `rate_fields_present` marker matters because 0 B/s is a valid
+/// new-agent reading, not proof that the fields were omitted by an older agent.
+/// The `prev` baseline refreshes on every call regardless, so a later agent
+/// downgrade keeps the fallback hot.
 fn compute_network_rate(
     network: &NetworkTotal,
     prev: &mut Option<(u64, u64, Instant)>,
 ) -> NetworkRate {
     let now = Instant::now();
-    let (rx, tx) = delta_rate(
+    let (rx_fallback, tx_fallback) = delta_rate(
         network.total_rx_bytes,
         network.total_tx_bytes,
         prev.as_ref(),
         now,
     );
     *prev = Some((network.total_rx_bytes, network.total_tx_bytes, now));
-    NetworkRate {
-        rx_bytes_per_sec: rx,
-        tx_bytes_per_sec: tx,
+
+    if network.rate_fields_present {
+        NetworkRate {
+            rx_bytes_per_sec: network.rx_bytes_per_sec,
+            tx_bytes_per_sec: network.tx_bytes_per_sec,
+        }
+    } else {
+        NetworkRate {
+            rx_bytes_per_sec: rx_fallback,
+            tx_bytes_per_sec: tx_fallback,
+        }
     }
 }
 
@@ -1053,10 +1067,7 @@ mod tests {
                 temperatures: vec![],
                 gpus: vec![],
             },
-            network: NetworkTotal {
-                total_rx_bytes: 0,
-                total_tx_bytes: 0,
-            },
+            network: NetworkTotal::default(),
             load_average: LoadAverage {
                 one_min: load,
                 five_min: 0.0,
@@ -1499,6 +1510,7 @@ mod tests {
         let net = NetworkTotal {
             total_rx_bytes: 1000,
             total_tx_bytes: 2000,
+            ..Default::default()
         };
         let mut prev = None;
         let rate = compute_network_rate(&net, &mut prev);
@@ -1513,6 +1525,7 @@ mod tests {
         let net = NetworkTotal {
             total_rx_bytes: 2000,
             total_tx_bytes: 4000,
+            ..Default::default()
         };
         let rate = compute_network_rate(&net, &mut prev);
         // 1000 bytes in ~1 second
@@ -1527,9 +1540,43 @@ mod tests {
         let net = NetworkTotal {
             total_rx_bytes: 100,
             total_tx_bytes: 100,
+            ..Default::default()
         };
         let rate = compute_network_rate(&net, &mut prev);
         // saturating_sub: 100 - 5000 = 0
+        assert_eq!(rate.rx_bytes_per_sec, 0.0);
+        assert_eq!(rate.tx_bytes_per_sec, 0.0);
+    }
+
+    #[test]
+    fn test_network_rate_prefers_agent_reported_value() {
+        // New-agent path: agent has already computed the rate. Server must
+        // trust it even if the (prev → current) delta it could compute
+        // itself would differ.
+        let mut prev = Some((1000u64, 2000u64, Instant::now() - Duration::from_secs(1)));
+        let net = NetworkTotal {
+            total_rx_bytes: 2000,
+            total_tx_bytes: 4000,
+            rx_bytes_per_sec: 12_345.0,
+            tx_bytes_per_sec: 54_321.0,
+            rate_fields_present: true,
+        };
+        let rate = compute_network_rate(&net, &mut prev);
+        assert_eq!(rate.rx_bytes_per_sec, 12_345.0);
+        assert_eq!(rate.tx_bytes_per_sec, 54_321.0);
+    }
+
+    #[test]
+    fn test_network_rate_preserves_agent_reported_zero() {
+        let mut prev = Some((1000u64, 2000u64, Instant::now() - Duration::from_secs(1)));
+        let net = NetworkTotal {
+            total_rx_bytes: 2000,
+            total_tx_bytes: 4000,
+            rx_bytes_per_sec: 0.0,
+            tx_bytes_per_sec: 0.0,
+            rate_fields_present: true,
+        };
+        let rate = compute_network_rate(&net, &mut prev);
         assert_eq!(rate.rx_bytes_per_sec, 0.0);
         assert_eq!(rate.tx_bytes_per_sec, 0.0);
     }

@@ -360,7 +360,10 @@ pub async fn fetch_metrics_range(
     if hours <= 336 {
         // 6h–14d: direct read from metrics_5min rollup (populated by the
         // rollup worker). `json_object` synthesizes the `networks`
-        // snapshot from the scalar rx/tx totals.
+        // snapshot from the scalar rx/tx totals + bucket-averaged
+        // bandwidth. NULL rate columns are preserved for buckets rolled up
+        // before the 0002 migration so the frontend can still fall back to
+        // differentiating cumulative counters.
         let raws = sqlx::query_as::<_, MetricsRowRaw>(
             r#"
             SELECT
@@ -372,7 +375,9 @@ pub async fn fetch_metrics_range(
                 memory_usage_percent,
                 load_1min, load_5min, load_15min,
                 json_object('total_rx_bytes', total_rx_bytes,
-                            'total_tx_bytes', total_tx_bytes) AS networks,
+                            'total_tx_bytes', total_tx_bytes,
+                            'rx_bytes_per_sec', avg_rx_bytes_per_sec,
+                            'tx_bytes_per_sec', avg_tx_bytes_per_sec) AS networks,
                 NULL AS docker_containers,
                 NULL AS ports,
                 disks,
@@ -424,6 +429,7 @@ pub async fn fetch_metrics_range(
                 memory_usage_percent,
                 load_1min, load_5min, load_15min,
                 total_rx_bytes, total_tx_bytes,
+                avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
                 disks, temperatures, gpus, docker_stats,
                 ROW_NUMBER() OVER (
                     PARTITION BY host_key, (bucket / 900) * 900
@@ -445,7 +451,9 @@ pub async fn fetch_metrics_range(
             CAST(AVG(load_5min) AS REAL) AS load_5min,
             CAST(AVG(load_15min) AS REAL) AS load_15min,
             json_object('total_rx_bytes', MAX(total_rx_bytes),
-                        'total_tx_bytes', MAX(total_tx_bytes)) AS networks,
+                        'total_tx_bytes', MAX(total_tx_bytes),
+                        'rx_bytes_per_sec', AVG(avg_rx_bytes_per_sec),
+                        'tx_bytes_per_sec', AVG(avg_tx_bytes_per_sec)) AS networks,
             NULL AS docker_containers,
             NULL AS ports,
             MAX(CASE WHEN rn = 1 THEN disks END) AS disks,
@@ -629,6 +637,7 @@ mod sqlite_tests {
             network: NetworkTotal {
                 total_rx_bytes: 1_000_000,
                 total_tx_bytes: 500_000,
+                ..Default::default()
             },
             network_interfaces: vec![],
             cpu_cores: vec![],

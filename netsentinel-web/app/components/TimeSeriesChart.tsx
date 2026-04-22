@@ -146,11 +146,13 @@ interface ChartCardProps {
   yDomain?: [number, number] | ["auto", "auto"];
   span2?: boolean;
   height?: number;
+  curveType?: "monotone" | "linear" | "stepAfter";
 }
 
 const ChartCard = memo(function ChartCard({
   title, color, isLoading, data, dataKey, colors, rangeHours, timeTicks,
   yTickFormatter, tooltipFormatter, yUnit, yDomain, span2 = false, height = 192,
+  curveType = "monotone",
 }: ChartCardProps) {
   const { t, locale } = useI18n();
   const keys = useMemo(
@@ -245,7 +247,7 @@ const ChartCard = memo(function ChartCard({
             {keys.map((k, idx) => (
               <Area
                 key={k}
-                type="monotone"
+                type={curveType}
                 dataKey={k}
                 stroke={lineColors[idx % lineColors.length] ?? color}
                 strokeWidth={1.5}
@@ -350,7 +352,17 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       is_online: liveMetrics.is_online, cpu_usage_percent: liveMetrics.cpu_usage_percent,
       memory_usage_percent: liveMetrics.memory_usage_percent,
       load_1min: liveMetrics.load_1min, load_5min: liveMetrics.load_5min, load_15min: liveMetrics.load_15min,
-      networks: null, docker_containers: null, ports: null,
+      // SSE payload already carries a computed bandwidth — surface it
+      // as a `NetworkTotal`-shaped row so the chart's "agent rate wins"
+      // branch can push the live point directly, without needing the
+      // old fallback analogue further below.
+      networks: {
+        total_rx_bytes: 0,
+        total_tx_bytes: 0,
+        rx_bytes_per_sec: liveMetrics.network_rate.rx_bytes_per_sec,
+        tx_bytes_per_sec: liveMetrics.network_rate.tx_bytes_per_sec,
+      },
+      docker_containers: null, ports: null,
       disks: liveMetrics.disks ?? null,
       processes: null,
       temperatures: liveMetrics.temperatures ?? null,
@@ -413,10 +425,33 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       cpu.push({ ts: tsMs, "CPU (%)": +r.cpu_usage_percent.toFixed(1) });
       ram.push({ ts: tsMs, "RAM (%)": +r.memory_usage_percent.toFixed(1) });
 
-      // Network: RX + TX merged
-      if (i > 0) {
+      // Network Bandwidth — backend-provided rate preferred.
+      //
+      // The backend now emits `rx_bytes_per_sec` / `tx_bytes_per_sec`
+      // alongside the cumulative `total_*_bytes` counters (raw rows carry
+      // either the agent-reported rate or the server delta fallback; rollup
+      // rows carry the 5 min bucket average). When rate fields are present we
+      // push every sample directly — including the first one, which
+      // eliminates the left-edge gap the old delta-based path had on
+      // 1 m / 5 m live presets.
+      //
+      // The `i > 0` delta-fallback branch survives for rows that pre-
+      // date the 0002 rollup migration (or agents still on the old
+      // version): they expose only the counters, so we differentiate
+      // them here just like before.
+      const currNet = r.networks;
+      if (
+        currNet &&
+        typeof currNet.rx_bytes_per_sec === "number" &&
+        typeof currNet.tx_bytes_per_sec === "number"
+      ) {
+        net.push({
+          ts: tsMs,
+          RX: +currNet.rx_bytes_per_sec.toFixed(0),
+          TX: +currNet.tx_bytes_per_sec.toFixed(0),
+        });
+      } else if (i > 0) {
         const prev = s[i - 1];
-        const currNet = r.networks;
         const prevNet = prev.networks;
         if (currNet && prevNet) {
           const dt = Math.max((tsMs - new Date(prev.timestamp).getTime()) / 1000, 1);
@@ -483,6 +518,8 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   const cpuDomain = useMemo(() => autoYDomainMulti(chartData.cpu, ["CPU (%)"], 0), [chartData.cpu]);
   const ramDomain = useMemo(() => autoYDomainMulti(chartData.ram, ["RAM (%)"], 0), [chartData.ram]);
 
+  const curveType: "monotone" | "linear" = isLivePreset ? "linear" : "monotone";
+
   return (
     <div>
       {/* Time range controls */}
@@ -514,6 +551,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           timeTicks={timeTicks}
           yTickFormatter={fmtPercent}
           yDomain={cpuDomain}
+          curveType={curveType}
         />
         <ChartCard
           title={t.chart.ramUsage}
@@ -525,6 +563,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           timeTicks={timeTicks}
           yTickFormatter={fmtPercent}
           yDomain={ramDomain}
+          curveType={curveType}
         />
 
         {/* Network Bandwidth (RX + TX) */}
@@ -539,6 +578,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           timeTicks={timeTicks}
           yTickFormatter={formatNetworkSpeedTick}
           tooltipFormatter={fmtNetTooltip}
+          curveType={curveType}
         />
 
         {/* CPU Temperature */}
@@ -552,6 +592,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtTemp}
+            curveType={curveType}
           />
         )}
 
@@ -567,6 +608,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtPercent}
+            curveType={curveType}
           />
         )}
 
@@ -583,6 +625,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             timeTicks={timeTicks}
             yTickFormatter={formatNetworkSpeedTick}
             tooltipFormatter={fmtIoTooltip}
+            curveType={curveType}
           />
         )}
 
@@ -598,6 +641,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtPercent}
+            curveType={curveType}
           />
         )}
 
@@ -613,6 +657,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtMb}
+            curveType={curveType}
           />
         )}
       </div>
