@@ -158,7 +158,7 @@ const ChartCard = memo(function ChartCard({
   const keys = useMemo(
     () => (Array.isArray(dataKey) ? dataKey : [dataKey]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(dataKey)]
+    Array.isArray(dataKey) ? [...dataKey] : [dataKey]
   );
   const lineColors = colors ?? [color];
   const domain = useMemo(() => {
@@ -215,6 +215,7 @@ const ChartCard = memo(function ChartCard({
               // producing a 5→3→5 flicker). `generateTimeTicks`
               // produces ~6 ticks so physical overlap is a non-issue.
               interval={0}
+              minTickGap={40}
               tickFormatter={(val) => formatAxisTime(new Date(val).toISOString(), rangeHours, locale)}
               tick={{ fill: "var(--text-muted)", fontSize: 10 }}
               tickLine={false}
@@ -339,7 +340,10 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     revalidateOnReconnect: false,
     refreshInterval: 0,
     dedupingInterval: 30000,
-    keepPreviousData: true,
+    // Live presets re-calculate the window every second. Keeping stale
+    // rows there makes the synthetic append compare against a previous
+    // window; static presets keep previous rows to avoid flicker.
+    keepPreviousData: !isLivePreset,
   });
 
   const allRows = useMemo(() => {
@@ -357,8 +361,8 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       // branch can push the live point directly, without needing the
       // old fallback analogue further below.
       networks: {
-        total_rx_bytes: 0,
-        total_tx_bytes: 0,
+        total_rx_bytes: liveMetrics.network_rate.total_rx_bytes,
+        total_tx_bytes: liveMetrics.network_rate.total_tx_bytes,
         rx_bytes_per_sec: liveMetrics.network_rate.rx_bytes_per_sec,
         tx_bytes_per_sec: liveMetrics.network_rate.tx_bytes_per_sec,
       },
@@ -458,8 +462,6 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           const rxD = currNet.total_rx_bytes - prevNet.total_rx_bytes;
           const txD = currNet.total_tx_bytes - prevNet.total_tx_bytes;
           net.push({ ts: tsMs, RX: rxD >= 0 ? +(rxD / dt).toFixed(0) : 0, TX: txD >= 0 ? +(txD / dt).toFixed(0) : 0 });
-        } else if (!currNet && liveMetrics && r.timestamp === liveMetrics.timestamp) {
-          net.push({ ts: tsMs, RX: +liveMetrics.network_rate.rx_bytes_per_sec.toFixed(0), TX: +liveMetrics.network_rate.tx_bytes_per_sec.toFixed(0) });
         }
       }
 

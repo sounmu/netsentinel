@@ -104,6 +104,8 @@ export interface HostSummary {
 export interface NetworkRate {
   rx_bytes_per_sec: number;
   tx_bytes_per_sec: number;
+  total_rx_bytes: number;
+  total_tx_bytes: number;
 }
 
 /// event: metrics payload — CPU, memory, network speed, disks, temperatures, docker stats (every 10s)
