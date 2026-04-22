@@ -115,15 +115,7 @@ pub async fn create_host(
     validate_scrape_interval(body.scrape_interval_secs)?;
     validate_ports(&body.ports)?;
 
-    let host = hosts_repo::create_host(&state.db_pool, &body)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("duplicate key") {
-                AppError::Conflict(format!("host_key already exists: {}", body.host_key))
-            } else {
-                AppError::Internal(format!("Failed to create host: {}", e))
-            }
-        })?;
+    let host = hosts_repo::create_host(&state.db_pool, &body).await?;
 
     // Pre-register in last_known_status as offline
     state.pre_populate_status(std::slice::from_ref(&host));

@@ -332,21 +332,7 @@ pub async fn setup(
         ));
     }
 
-    let user = users_repo::create_user(&mut *tx, &body.username, &password_hash, "admin")
-        .await
-        .map_err(|e| {
-            // `users.username UNIQUE` surfaces as a Database error here
-            // if another bootstrap race landed first. Fold it into the
-            // same friendly message as the count check above.
-            if let sqlx::Error::Database(ref dbe) = e
-                && dbe.message().to_lowercase().contains("unique")
-            {
-                return AppError::BadRequest(
-                    "Setup already completed. Use login instead.".to_string(),
-                );
-            }
-            AppError::Internal(format!("Failed to create user: {e:#}"))
-        })?;
+    let user = users_repo::create_user(&mut *tx, &body.username, &password_hash, "admin").await?;
 
     tx.commit()
         .await

@@ -47,10 +47,18 @@ impl From<std::fmt::Error> for AppError {
     }
 }
 
-/// Automatically convert sqlx DB errors into AppError::Internal.
+/// Automatically convert sqlx DB errors into AppError.
 /// Uses `{err:#}` (alternate Display) to include the full error chain.
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
+        if let sqlx::Error::Database(ref dbe) = err
+            && matches!(dbe.kind(), sqlx::error::ErrorKind::UniqueViolation)
+        {
+            return AppError::Conflict(format!("Resource already exists: {}", dbe.message()));
+        }
+        if matches!(err, sqlx::Error::RowNotFound) {
+            return AppError::NotFound("Resource not found".to_string());
+        }
         AppError::Internal(format!("Database error: {err:#}"))
     }
 }
