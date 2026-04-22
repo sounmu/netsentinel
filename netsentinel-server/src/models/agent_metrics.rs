@@ -1,4 +1,14 @@
+use bincode::Options as _;
 use serde::{Deserialize, Serialize};
+
+const MAX_AGENT_PAYLOAD_BYTES: u64 = 10 * 1024 * 1024;
+
+fn bincode_options() -> impl bincode::Options {
+    bincode::DefaultOptions::new()
+        .with_limit(MAX_AGENT_PAYLOAD_BYTES)
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+}
 
 /// Static system information returned by the agent's `GET /system-info` endpoint.
 /// Fetched on reconnection and every 24 hours.
@@ -193,13 +203,20 @@ impl From<LegacyAgentMetrics> for AgentMetrics {
 /// new servers, while new-agent rate fields are marked as present even when
 /// the actual rate is 0 B/s.
 pub fn deserialize_agent_metrics(bytes: &[u8]) -> Result<AgentMetrics, bincode::Error> {
-    match bincode::deserialize::<AgentMetrics>(bytes) {
+    if bytes.len() > MAX_AGENT_PAYLOAD_BYTES as usize {
+        return Err(Box::new(bincode::ErrorKind::SizeLimit));
+    }
+
+    match bincode_options().deserialize::<AgentMetrics>(bytes) {
         Ok(mut metrics) => {
             metrics.network.rate_fields_present = true;
             Ok(metrics)
         }
-        Err(new_err) => match bincode::deserialize::<LegacyAgentMetrics>(bytes) {
-            Ok(metrics) => Ok(metrics.into()),
+        Err(new_err) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
+            Ok(metrics) => {
+                crate::services::metrics_service::record_legacy_fallback_used();
+                Ok(metrics.into())
+            }
             Err(_) => Err(new_err),
         },
     }
@@ -246,7 +263,7 @@ mod tests {
             docker_stats: vec![],
         };
 
-        let bytes = bincode::serialize(&legacy).unwrap();
+        let bytes = bincode_options().serialize(&legacy).unwrap();
         let decoded = deserialize_agent_metrics(&bytes).unwrap();
 
         assert_eq!(decoded.network.total_rx_bytes, 100);
@@ -285,7 +302,7 @@ mod tests {
             docker_stats: vec![],
         };
 
-        let bytes = bincode::serialize(&metrics).unwrap();
+        let bytes = bincode_options().serialize(&metrics).unwrap();
         let decoded = deserialize_agent_metrics(&bytes).unwrap();
 
         assert_eq!(decoded.network.rx_bytes_per_sec, 0.0);
@@ -293,6 +310,12 @@ mod tests {
         assert!(decoded.network.rate_fields_present);
         assert_eq!(decoded.load_average.fifteen_min, 3.0);
         assert_eq!(decoded.agent_version, "0.5.0");
+    }
+
+    #[test]
+    fn deserialize_agent_metrics_rejects_oversized_payload() {
+        let bytes = vec![0_u8; (MAX_AGENT_PAYLOAD_BYTES as usize) + 1];
+        assert!(deserialize_agent_metrics(&bytes).is_err());
     }
 }
 
