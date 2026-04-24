@@ -344,7 +344,15 @@ const STATS_POLL_CONCURRENCY: usize = 16;
 const STATS_POLL_WARN_THRESHOLD: usize = 200;
 
 /// Single poll cycle: fetch stats for all running containers.
-/// Returns Err(()) if the Docker client should be reconnected.
+///
+/// Returns `Err(())` when the Docker client should be reconnected. The
+/// failure signal fires when **every** stats call in the cycle fails while
+/// the lifecycle cache still believes at least one container is running —
+/// that combination is characteristic of a dead daemon handle (for example,
+/// after `dockerd` restarts without tearing down the socket we connected
+/// through). Per-container failures on a healthy daemon (e.g. a container
+/// exiting mid-poll and returning 404) don't trigger reconnect since at
+/// least one sibling call still succeeds.
 async fn poll_container_stats(
     docker: &Docker,
     lifecycle_cache: &DockerCache,
@@ -441,13 +449,28 @@ async fn poll_container_stats(
         .collect()
         .await;
 
+    let attempted = results.len();
+    let succeeded = results.iter().filter(|r| r.is_some()).count();
+
     // Atomic swap: build new map first, then replace to avoid readers seeing empty cache
-    let mut new_map = HashMap::with_capacity(results.len());
+    let mut new_map = HashMap::with_capacity(succeeded);
     for stat in results.into_iter().flatten() {
         new_map.insert(stat.container_name.clone(), stat);
     }
     let mut cache = stats_cache.write().await;
     *cache = new_map;
+    drop(cache);
+
+    // Dead-daemon signal: every attempt failed despite the lifecycle cache
+    // reporting running containers. Surface this to the outer loop so it
+    // reconnects the Docker client instead of polling a stale handle forever.
+    if attempted > 0 && succeeded == 0 {
+        tracing::warn!(
+            attempted,
+            "Docker stats: all container stat calls failed in this cycle — reconnecting Docker client"
+        );
+        return Err(());
+    }
 
     Ok(())
 }
