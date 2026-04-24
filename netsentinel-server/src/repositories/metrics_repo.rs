@@ -507,27 +507,30 @@ pub async fn fetch_metrics_range(
 /// A host is online iff its most recent metric landed in the past 60 s.
 /// Window the subquery to the past 5 minutes so SQLite can skip older
 /// chunks entirely.
+///
+/// Shape note: the previous implementation issued **two correlated scalar
+/// subqueries** — one for `is_online`, another for `last_seen` — meaning
+/// SQLite re-scanned the `recent` CTE twice per host row. This rewrite
+/// picks the latest-per-host row once via `LEFT JOIN` on the `rn = 1`
+/// filter of the window function, reusing the same scan for both output
+/// columns. Hosts with no recent metric land at `is_online = 0` /
+/// `last_seen = NULL` via the LEFT side of the join.
 pub async fn fetch_host_summaries(pool: &DbPool) -> Result<Vec<HostSummary>, sqlx::Error> {
     sqlx::query_as::<_, HostSummary>(
         r#"
-        WITH recent AS (
+        SELECT
+            h.host_key,
+            h.display_name,
+            COALESCE(r.timestamp > strftime('%s','now') - 60, 0) AS is_online,
+            r.timestamp AS last_seen
+        FROM hosts h
+        LEFT JOIN (
             SELECT host_key, is_online, timestamp,
                    ROW_NUMBER() OVER (PARTITION BY host_key
                                       ORDER BY timestamp DESC, id DESC) AS rn
             FROM metrics
             WHERE timestamp > strftime('%s','now') - 300
-        )
-        SELECT
-            h.host_key,
-            h.display_name,
-            COALESCE(
-                (SELECT timestamp > strftime('%s','now') - 60
-                 FROM recent r WHERE r.host_key = h.host_key AND r.rn = 1),
-                0
-            ) AS is_online,
-            (SELECT timestamp FROM recent r
-             WHERE r.host_key = h.host_key AND r.rn = 1) AS last_seen
-        FROM hosts h
+        ) r ON r.host_key = h.host_key AND r.rn = 1
         ORDER BY h.host_key
         "#,
     )
@@ -731,6 +734,30 @@ mod sqlite_tests {
             assert!(s.is_online, "host {} should be online", s.host_key);
             assert!(s.last_seen.is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn host_summaries_returns_offline_for_hosts_without_recent_metrics() {
+        // Regression pin for the LEFT JOIN rewrite: a host that exists in
+        // `hosts` but has no row in `metrics` within the 5-minute window
+        // must still appear in the summary with `is_online = false` and
+        // `last_seen = None`. The previous correlated-subquery shape
+        // happened to return the row via `COALESCE(..., 0)`; the LEFT JOIN
+        // shape must match that contract.
+        let pool = fresh_pool().await;
+        // Insert a row for h1 only — h2 has no metrics.
+        insert_metrics_batch(&pool, &[("h1:9101", &synthetic_metrics())])
+            .await
+            .unwrap();
+
+        let summaries = fetch_host_summaries(&pool).await.unwrap();
+        assert_eq!(summaries.len(), 2, "both hosts must be listed");
+        let h2 = summaries
+            .iter()
+            .find(|s| s.host_key == "h2:9101")
+            .expect("h2 present");
+        assert!(!h2.is_online, "h2 has no metrics → offline");
+        assert!(h2.last_seen.is_none());
     }
 
     #[tokio::test]
