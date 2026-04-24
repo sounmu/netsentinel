@@ -45,7 +45,7 @@ pub(crate) struct SystemMetrics {
     pub gpus: Vec<GpuInfo>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub(crate) struct DiskInfo {
     pub name: String,
     pub mount_point: String,
@@ -56,7 +56,7 @@ pub(crate) struct DiskInfo {
     pub write_bytes_per_sec: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub(crate) struct ProcessInfo {
     pub pid: u32,
     pub name: String,
@@ -64,13 +64,13 @@ pub(crate) struct ProcessInfo {
     pub memory_mb: u64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub(crate) struct TemperatureInfo {
     pub label: String,
     pub temperature_c: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub(crate) struct GpuInfo {
     pub name: String,
     pub gpu_usage_percent: u32,
@@ -96,7 +96,7 @@ pub(crate) struct GpuInfo {
 /// Rate fields are appended at the end of the struct. New servers decode both
 /// the old 2-field shape and this 4-field shape; older servers must be upgraded
 /// before using agents that emit these fields.
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Clone)]
 pub(crate) struct NetworkTotal {
     pub total_rx_bytes: u64,
     pub total_tx_bytes: u64,
@@ -104,7 +104,7 @@ pub(crate) struct NetworkTotal {
     pub tx_bytes_per_sec: f64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub(crate) struct LoadAverage {
     pub one_min: f64,
     pub five_min: f64,
@@ -161,6 +161,7 @@ pub(crate) struct SystemInfoResponse {
 /// Intermediate bundle returned by `sysinfo_collector::collect_sysinfo`.
 /// Separated from `AgentMetrics` so the handler can assemble the final
 /// response from multiple parallel sources.
+#[derive(Clone)]
 pub(crate) struct SysinfoResult {
     pub cpu_usage: f32,
     pub cpu_cores: Vec<f32>,

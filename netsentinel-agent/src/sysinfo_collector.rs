@@ -63,8 +63,37 @@ static COMPS: LazyLock<Mutex<Components>> =
 /// ~200 ms CPU-delta window would wake a second blocking task that stalls on
 /// the std mutex for the full sample duration — wasting a blocking-pool slot
 /// and giving the caller a stale-but-slow response.
+///
+/// The caller uses `try_lock` and falls back to `COLLECT_CACHE` on contention,
+/// so the gate never blocks the second concurrent request — it short-circuits
+/// to the most recent snapshot instead. This turns what used to be an N-way
+/// serial stall (a DoS amplifier when a retry storm arrives) into N−1
+/// immediate cache hits plus one in-flight collection.
 static COLLECT_GATE: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// Most recent successful `collect_sysinfo` result, published under the gate.
+/// Readers are only contended callers — the fast path (uncontended gate)
+/// doesn't touch the cache at all, so this lock stays cold.
+///
+/// A `std::sync::RwLock` is deliberate: the cache is accessed exclusively
+/// from async contexts here but never across an `.await`, so there's no
+/// reason to pay for `tokio::sync::RwLock`'s wake-up machinery.
+static COLLECT_CACHE: LazyLock<std::sync::RwLock<Option<(Instant, SysinfoResult)>>> =
+    LazyLock::new(|| std::sync::RwLock::new(None));
+
+/// How long a cached snapshot remains acceptable as a fallback for a
+/// contended caller. 20 s = roughly 2 × the default scrape interval, so a
+/// stale snapshot is at most one cycle behind. Beyond that we force the
+/// caller to wait on the gate rather than returning data an operator would
+/// reasonably call "stale".
+const COLLECT_CACHE_MAX_AGE: Duration = Duration::from_secs(20);
+
+fn fresh_cached_sysinfo() -> Option<SysinfoResult> {
+    let cache = COLLECT_CACHE.read().ok()?;
+    let (at, value) = cache.as_ref()?;
+    (at.elapsed() < COLLECT_CACHE_MAX_AGE).then(|| value.clone())
+}
 
 /// Compute per-partition read/write bytes per second using sysinfo's
 /// cumulative counters.
@@ -175,10 +204,20 @@ fn prune_disk_io_cache(disks: &Disks) {
 
 #[tracing::instrument]
 pub(crate) async fn collect_sysinfo() -> SysinfoResult {
-    // Hold the async gate for the duration of this collection — prevents a
-    // second concurrent caller from spawning a blocking task that would then
-    // block on SYS for the full ~200 ms sample window.
-    let _gate = COLLECT_GATE.lock().await;
+    // Fast path: grab the gate non-blockingly. On contention (another caller
+    // is already mid-collection) fall back to the most recent cached snapshot
+    // instead of piling up on the lock — this is what prevents retry-storm
+    // DoS amplification (CLAUDE.md §Graceful degradation). Only when no fresh
+    // cache exists do we wait on the gate.
+    let _gate = match COLLECT_GATE.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            if let Some(cached) = fresh_cached_sysinfo() {
+                return cached;
+            }
+            COLLECT_GATE.lock().await
+        }
+    };
 
     // GPU collection runs on its own blocking thread — its ~200ms sampling window
     // overlaps with the CPU/process delta sleeps, hiding the latency entirely.
@@ -382,7 +421,7 @@ pub(crate) async fn collect_sysinfo() -> SysinfoResult {
         )
     });
 
-    SysinfoResult {
+    let result = SysinfoResult {
         cpu_usage,
         cpu_cores,
         memory_total_mb,
@@ -395,7 +434,18 @@ pub(crate) async fn collect_sysinfo() -> SysinfoResult {
         network,
         network_interfaces,
         load_average,
+    };
+
+    // Publish to the fallback cache so concurrent callers during the next
+    // collection window short-circuit to this snapshot. A write-lock poisoned
+    // by an earlier panic is swallowed — the cache is a best-effort fast path,
+    // not correctness-critical, so a stale cache degrades gracefully into a
+    // gate wait rather than propagating the poison.
+    if let Ok(mut cache) = COLLECT_CACHE.write() {
+        *cache = Some((Instant::now(), result.clone()));
     }
+
+    result
 }
 
 #[cfg(test)]
