@@ -55,8 +55,15 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
     if jwt_secret.len() < 32 {
+        // `str::len()` returns *bytes*, not characters. The original message
+        // said "characters" which would mislead anyone passing a multi-byte
+        // UTF-8 secret through this check. RFC 7518 §3.2 specifies that the
+        // HS256 MAC key SHOULD be ≥ 256 bits (32 bytes), and that threshold
+        // is what this guard enforces — so we report bytes and cite the RFC
+        // so the number doesn't look arbitrary in a support thread later.
         anyhow::bail!(
-            "JWT_SECRET is {} characters — must be ≥ 32 for adequate HS256 security.\n\n\
+            "JWT_SECRET is {} bytes — must be ≥ 32 bytes for adequate HS256 security\n\
+             (RFC 7518 §3.2 recommends ≥ 256 bits of keying material).\n\n\
              Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
              secret and invalidates every previously-issued JWT). Be sure to\n\
              distribute the new value to every agent afterwards.",
@@ -375,10 +382,40 @@ async fn main() -> anyhow::Result<()> {
         let raw = std::env::var("ALLOWED_ORIGINS")
             .unwrap_or_else(|_| "http://localhost:3001".to_string());
         tracing::info!("🌐 [CORS] ALLOWED_ORIGINS = {:?}", raw);
+        // Invalid origins were previously dropped silently by `filter_map` —
+        // a typo in `.env` would produce a working-looking CORS layer with
+        // zero allowed origins and *every* cross-origin request rejected.
+        // That looked identical to a "CORS is broken" bug at the browser
+        // but had nothing to do with the code path the operator was
+        // debugging. Log each reject loudly so the misconfiguration
+        // surfaces on startup.
         let origins: Vec<HeaderValue> = raw
             .split(',')
-            .filter_map(|s| s.trim().parse::<HeaderValue>().ok())
+            .filter_map(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                match trimmed.parse::<HeaderValue>() {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        tracing::warn!(
+                            origin = trimmed,
+                            err = %e,
+                            "⚠️ [CORS] Ignoring invalid ALLOWED_ORIGINS entry"
+                        );
+                        None
+                    }
+                }
+            })
             .collect();
+        if origins.is_empty() {
+            tracing::error!(
+                "❌ [CORS] No valid origins parsed from ALLOWED_ORIGINS — \
+                 every cross-origin request will be rejected. Check the env \
+                 var for typos (protocol required, e.g. https://example.com)."
+            );
+        }
         tracing::info!("🌐 [CORS] Parsed origins: {:?}", origins);
         CorsLayer::new()
             .allow_origin(origins)
