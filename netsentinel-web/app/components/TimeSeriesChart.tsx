@@ -155,10 +155,17 @@ const ChartCard = memo(function ChartCard({
   curveType = "monotone",
 }: ChartCardProps) {
   const { t, locale } = useI18n();
+  // Stringify the dataKey into a stable dep so `useMemo` recomputes only
+  // when the underlying keys actually change. The previous shape spread
+  // `dataKey` into the deps array directly, which made React see a new
+  // deps array identity on every render — defeating the memoisation — and
+  // is also a hooks-rule violation because the deps length varied with
+  // the prop (see the now-removed `eslint-disable` comment).
+  const keysSignature = Array.isArray(dataKey) ? dataKey.join("|") : dataKey;
   const keys = useMemo(
     () => (Array.isArray(dataKey) ? dataKey : [dataKey]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    Array.isArray(dataKey) ? [...dataKey] : [dataKey]
+    [keysSignature]
   );
   const lineColors = colors ?? [color];
   const domain = useMemo(() => {
@@ -515,7 +522,11 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       dockerMemData, dockerMemKeys: [...dockerMemNames],
       tempData,
     };
-  }, [allRows, liveMetrics]);
+    // `allRows` is itself derived from `[rows, liveMetrics]`, so including
+    // `liveMetrics` in this deps array is redundant — every identity change
+    // of `liveMetrics` already flows through `allRows` and would re-fire
+    // this memo anyway. Dropping it matches the hooks-exhaustive-deps lint.
+  }, [allRows]);
 
   const cpuDomain = useMemo(() => autoYDomainMulti(chartData.cpu, ["CPU (%)"], 0), [chartData.cpu]);
   const ramDomain = useMemo(() => autoYDomainMulti(chartData.ram, ["RAM (%)"], 0), [chartData.ram]);
