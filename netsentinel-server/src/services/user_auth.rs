@@ -81,10 +81,22 @@ pub fn decode_user_jwt(token: &str) -> Option<UserClaims> {
     let dk = DECODING_KEY.get()?;
     let mut user_validation = Validation::new(Algorithm::HS256);
     user_validation.set_audience(&["user"]);
+    // Small clock-skew grace so a server NTP correction (or a virtualised
+    // host whose wall-clock ticks backwards briefly) does not reject
+    // legitimate tokens on the next request. jsonwebtoken applies this
+    // window to both `exp` (expiration) and `nbf` (not-before) checks.
+    user_validation.leeway = JWT_CLOCK_SKEW_LEEWAY_SECS;
     decode::<UserClaims>(token, dk, &user_validation)
         .ok()
         .map(|data| data.claims)
 }
+
+/// Clock-skew grace window applied to JWT `exp` / `nbf` validation.
+/// 30 s is the standard leeway recommended by RFC 7519 §4.1.4 commentary
+/// and matches what downstream services (Cloudflare, Okta, AWS IAM)
+/// default to. Any larger is a security smell; any smaller and an NTP
+/// correction can start rejecting freshly-refreshed tokens.
+pub const JWT_CLOCK_SKEW_LEEWAY_SECS: u64 = 30;
 
 #[cfg(test)]
 mod tests {

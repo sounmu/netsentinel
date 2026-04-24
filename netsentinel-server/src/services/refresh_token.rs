@@ -178,7 +178,13 @@ pub async fn rotate(
         return Ok(RotateOutcome::Rejected);
     };
 
-    if row.expires_at <= Utc::now() {
+    // Clock-skew grace matches the JWT `exp` leeway in
+    // `services::user_auth::JWT_CLOCK_SKEW_LEEWAY_SECS`. Without it a
+    // tiny NTP correction between issuance and rotation could reject a
+    // rotation request that is still valid everywhere else in the system.
+    // A refresh token's TTL is measured in days (`REFRESH_TTL_DAYS`), so
+    // adding 30 s of slack is well under one permille of the lifetime.
+    if row.expires_at + Duration::seconds(30) <= Utc::now() {
         return Ok(RotateOutcome::Rejected);
     }
 

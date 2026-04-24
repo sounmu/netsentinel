@@ -53,6 +53,12 @@ pub(crate) async fn auth_middleware(req: Request, next: Next) -> Result<Response
     // slip through on legacy_validation and hit the agent).
     let mut validation = Validation::new(Algorithm::HS256);
     validation.set_audience(&["agent"]);
+    // Clock-skew grace: NetSentinel's agent tokens have a 60 s `exp`, so a
+    // homelab pair of boxes where one has drifted ~20 s ahead of NTP
+    // would reject perfectly valid scrape tokens. 30 s leeway matches
+    // the server's `JWT_CLOCK_SKEW_LEEWAY_SECS` and is well under the
+    // token lifetime — no practical extension of attacker replay windows.
+    validation.leeway = 30;
 
     match decode::<Claims>(token, key, &validation) {
         Ok(_) => Ok(next.run(req).await),
