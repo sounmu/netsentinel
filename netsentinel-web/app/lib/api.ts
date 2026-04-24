@@ -83,16 +83,25 @@ async function silentRefresh(): Promise<boolean> {
 
 // ── Unauthorized handler ────────────────────────────────────────────────
 
+/**
+ * Custom event fired on the window when the server declares the session
+ * dead (401 after a silent refresh retry). AuthContext subscribes to this
+ * and performs a soft logout (`router.replace("/login")`) — far cheaper
+ * than the previous `window.location.href = "/login"` hard reload, which
+ * tore down the SSE stream, the SWR cache, and every in-memory status
+ * map on every incidental 401.
+ */
+export const UNAUTHORIZED_EVENT = "netsentinel:unauthorized";
+
 function handleUnauthorized(): never {
   setAccessToken(null);
-  if (typeof window !== "undefined") {
-    // Guard against redirect loop: if we are already on /login, do not
-    // trigger another hard reload. AuthContext's render guard prevents
-    // protected children from mounting, so this path is a last resort
-    // for fetch calls that slip through.
-    if (!window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
-    }
+  if (typeof window !== "undefined"
+    && !window.location.pathname.startsWith("/login")
+  ) {
+    // Let AuthContext decide whether to navigate — it has the Next.js
+    // router and can preserve the SWR cache. Falls back to a hard reload
+    // only if no listener is registered (e.g. during a bundle split bug).
+    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
   }
   throw new Error("Session expired");
 }

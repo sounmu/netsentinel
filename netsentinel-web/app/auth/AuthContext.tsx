@@ -18,6 +18,7 @@ import {
   serverLogout,
   tryRefreshSession,
   getMe,
+  UNAUTHORIZED_EVENT,
 } from "@/app/lib/api";
 
 interface AuthContextValue {
@@ -86,6 +87,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [isLoading, user, pathname, router]);
+
+  // Soft-redirect on session death: `api.ts::handleUnauthorized` fires this
+  // event when the silent-refresh retry also 401s. We clear the user state
+  // and let the router navigate — much cheaper than the previous
+  // `window.location.href = "/login"` hard reload, which tore down the SSE
+  // stream, SWR cache, theme state, and every other in-memory context on
+  // every incidental 401 (e.g. a pod restart mid-dashboard).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onUnauthorized = () => {
+      setAccessToken(null);
+      setUser(null);
+      router.replace("/login");
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    };
+  }, [router]);
 
   const login = useCallback((token: string, userInfo: UserInfo) => {
     setAccessToken(token);
