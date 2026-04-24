@@ -54,13 +54,26 @@ pub async fn connect(
         })
         .unwrap_or_else(|| "MEMORY".to_string());
 
+    // SQLite's `busy_timeout` is how long a single connection waits for the
+    // writer lock before giving up; `acquire_timeout` is how long a caller
+    // waits to check out a connection from the pool. Making them equal
+    // (both 5 s historically) sets up a cascading failure: when a writer
+    // genuinely holds the lock for ~5 s (e.g. first cold `retention_worker`
+    // purge + a concurrent `rollup_worker` bucket), every in-flight query
+    // exhausts `busy_timeout` *and* every new handler exhausts
+    // `acquire_timeout` at the same instant. Bumping the pool timeout above
+    // the query timeout lets the query failure surface first while fresh
+    // handlers keep queueing — the server degrades instead of double-failing.
+    const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+    const ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(7);
+
     let connect_options = SqliteConnectOptions::from_str(database_url)
         .context("Invalid DATABASE_URL — SQLite expects `sqlite://path` or `sqlite::memory:`")?
         .create_if_missing(true)
         .foreign_keys(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-        .busy_timeout(std::time::Duration::from_secs(5))
+        .busy_timeout(BUSY_TIMEOUT)
         .pragma("mmap_size", mmap_size.to_string())
         .pragma("cache_size", format!("-{cache_size_kib}"))
         .pragma("temp_store", temp_store)
@@ -69,7 +82,7 @@ pub async fn connect(
     let pool = SqlitePoolOptions::new()
         .max_connections(max_connections)
         .min_connections(1)
-        .acquire_timeout(std::time::Duration::from_secs(5))
+        .acquire_timeout(ACQUIRE_TIMEOUT)
         .connect_with(connect_options)
         .await
         .context("Failed to open SQLite database")?;
