@@ -11,8 +11,7 @@ use crate::models::GpuInfo;
 /// `*const IOReportSubscription` + a `*mut __CFDictionary`, neither of
 /// which implements `Send`, so it must continue being constructed per
 /// call on whichever thread `spawn_blocking` picks. Keep that path short.
-static SOC_INFO: LazyLock<Option<macmon::SocInfo>> =
-    LazyLock::new(|| macmon::SocInfo::new().ok());
+static SOC_INFO: LazyLock<Option<macmon::SocInfo>> = LazyLock::new(|| macmon::SocInfo::new().ok());
 
 /// Collect Apple Silicon GPU metrics via macmon (IOReport).
 /// Returns empty vec on non-Apple-Silicon hardware or if macmon fails.
