@@ -467,17 +467,21 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
             metrics.network.rx_bytes_per_sec = result.metrics_payload.network_rate.rx_bytes_per_sec;
             metrics.network.tx_bytes_per_sec = result.metrics_payload.network_rate.tx_bytes_per_sec;
 
+            // Wrap once so every subscriber gets an `Arc::clone` via the
+            // broadcast fan-out rather than a full `HostMetricsPayload` clone
+            // (see `SseBroadcast` docs).
             let _ = ctx
                 .state
                 .sse_tx
-                .send(SseBroadcast::Metrics(result.metrics_payload));
+                .send(SseBroadcast::Metrics(Arc::new(result.metrics_payload)));
 
             if let Some(status_payload) = result.status_payload {
+                let arc = Arc::new(status_payload);
                 // SAFETY: no .await while lock is held
                 if let Ok(mut lks) = ctx.state.last_known_status.write() {
-                    lks.insert(ctx.target.clone(), status_payload.clone());
+                    lks.insert(ctx.target.clone(), Arc::clone(&arc));
                 }
-                let _ = ctx.state.sse_tx.send(SseBroadcast::Status(status_payload));
+                let _ = ctx.state.sse_tx.send(SseBroadcast::Status(arc));
             }
         }
         Err(e) => {
@@ -488,24 +492,15 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
 
     // Recovery (host back online) alert.
     //
-    // Fast path: most cycles the host is already "online" (offline_alerted == false),
-    // so we peek at the state under a read lock first and skip the write lock entirely.
-    // Only when a transition is actually needed do we re-acquire as writer.
-    let needs_recovery_check = {
-        // SAFETY: no .await while lock is held
-        match ctx.state.store.read() {
-            Ok(store) => store
-                .hosts
-                .get(ctx.target.as_str())
-                .is_some_and(|r| r.alert_state.offline_alerted),
-            Err(e) => {
-                tracing::warn!(err = %e, "⚠️ [Scraper] Store read lock poisoned in recovery check");
-                return ScrapeOutcome::Online(Box::new(metrics));
-            }
-        }
-    };
-
-    let recovery_msg = if needs_recovery_check {
+    // Single write-lock acquisition: previously this path peeked under a
+    // read lock to decide whether a transition was pending, then reopened
+    // as writer when one was. That two-step pattern let another task slip
+    // between the read and the write — which we then had to re-check —
+    // and it doubled lock entries on the hot path for zero latency win:
+    // the write guard itself is cheap, and the recovery branch is rare.
+    // Taking write once up front eliminates the TOCTOU and one whole
+    // `store` critical section per scrape cycle.
+    let recovery_msg = {
         // SAFETY: no .await while lock is held
         let mut store = match ctx.state.store.write() {
             Ok(s) => s,
@@ -514,16 +509,14 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
                 return ScrapeOutcome::Online(Box::new(metrics));
             }
         };
-        let Some(record) = store.hosts.get_mut(ctx.target.as_str()) else {
-            return ScrapeOutcome::Online(Box::new(metrics));
-        };
-
-        // Re-check under the write lock in case another task flipped the flag
-        // between our read and write acquisitions.
-        mark_recovery_if_cooldown_passed(record, &metrics.hostname, Instant::now())
-    } else {
-        None
+        match store.hosts.get_mut(ctx.target.as_str()) {
+            Some(record) => {
+                mark_recovery_if_cooldown_passed(record, &metrics.hostname, Instant::now())
+            }
+            None => None,
+        }
     };
+    let was_offline = recovery_msg.is_some();
 
     // Recovery alert: fan out to webhooks + alert_history write on a detached
     // task. `send_alert` can spend hundreds of ms on external HTTP, and the
@@ -549,7 +542,6 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
     }
 
     // ── System info fetch (on reconnection or stale > 24h) ──
-    let was_offline = needs_recovery_check;
     let sys_info_stale = ctx.system_info_updated_at.is_none_or(|t| {
         Utc::now().signed_duration_since(t).num_seconds() > SYSTEM_INFO_REFRESH_SECS
     });
@@ -644,8 +636,9 @@ async fn fetch_and_store_system_info(
 
     // Update in-memory SSE status
     if let Ok(mut lks) = state.last_known_status.write()
-        && let Some(status) = lks.get_mut(target)
+        && let Some(arc) = lks.get_mut(target)
     {
+        let status = Arc::make_mut(arc);
         status.os_info = Some(info.os.clone());
         status.cpu_model = Some(info.cpu_model.clone());
         status.memory_total_mb = Some(info.memory_total_mb as i64);
@@ -735,9 +728,8 @@ async fn handle_down(
         let server_ts = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
         if let Ok(mut lks) = state.last_known_status.write() {
-            let status = lks
-                .entry(host_key.clone())
-                .or_insert_with(|| HostStatusPayload {
+            let arc = lks.entry(host_key.clone()).or_insert_with(|| {
+                Arc::new(HostStatusPayload {
                     host_key: host_key.clone(),
                     display_name: hostname.clone(),
                     scrape_interval_secs,
@@ -755,14 +747,21 @@ async fn handle_down(
                     memory_total_mb: None,
                     boot_time: None,
                     ip_address: None,
-                });
-            // Update only the fields that change — reuse existing Vec data (no clone)
+                })
+            });
+            // `Arc::make_mut` is cheap (no-op) while the Arc is uniquely owned —
+            // the common case when no SSE subscriber is currently holding the
+            // previous broadcast. It clones only when a slow consumer still
+            // references the prior payload, which is exactly when we need to
+            // avoid mutating a value other tasks are reading.
+            let status = Arc::make_mut(arc);
             status.scrape_interval_secs = scrape_interval_secs;
             status.is_online = false;
             status.last_seen = server_ts;
             status.processes = vec![];
+            let broadcast_arc = Arc::clone(arc);
 
-            let _ = state.sse_tx.send(SseBroadcast::Status(status.clone()));
+            let _ = state.sse_tx.send(SseBroadcast::Status(broadcast_arc));
         }
     }
 

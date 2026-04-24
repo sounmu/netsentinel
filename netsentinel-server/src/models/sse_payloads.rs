@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::models::agent_metrics::{
@@ -88,9 +90,16 @@ pub struct HostStatusPayload {
     pub ip_address: Option<String>,
 }
 
-/// Event variants delivered to SSE handlers via a `tokio::sync::broadcast` channel
+/// Event variants delivered to SSE handlers via a `tokio::sync::broadcast` channel.
+///
+/// Payloads are wrapped in `Arc` so the `broadcast::Sender` can hand each
+/// subscriber a cheap reference-count bump instead of a full `HostMetricsPayload`
+/// / `HostStatusPayload` clone per receiver. `HostStatusPayload` alone carries
+/// five sizeable `Vec`s (docker containers, ports, disks, processes, etc.) —
+/// with N connected SSE clients the pre-Arc shape was O(N × payload) allocation
+/// per scrape tick.
 #[derive(Clone, Debug)]
 pub enum SseBroadcast {
-    Metrics(HostMetricsPayload),
-    Status(HostStatusPayload),
+    Metrics(Arc<HostMetricsPayload>),
+    Status(Arc<HostStatusPayload>),
 }

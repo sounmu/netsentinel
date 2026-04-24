@@ -125,13 +125,13 @@ pub async fn sse_handler(
                     result = stream_state.rx.recv() => {
                         match result {
                             Ok(SseBroadcast::Metrics(payload)) => {
-                                if let Ok(json) = serde_json::to_string(&payload) {
+                                if let Ok(json) = serde_json::to_string(&*payload) {
                                     let event = Event::default().event("metrics").data(json);
                                     return Some((Ok(event), stream_state));
                                 }
                             }
                             Ok(SseBroadcast::Status(payload)) => {
-                                if let Ok(json) = serde_json::to_string(&payload) {
+                                if let Ok(json) = serde_json::to_string(&*payload) {
                                     let event = Event::default().event("status").data(json);
                                     return Some((Ok(event), stream_state));
                                 }
@@ -164,15 +164,25 @@ pub async fn sse_handler(
 /// Serialize the current `last_known_status` map into an `Event` list.
 /// Extracted so both the handshake path and the `Lagged` recovery path can
 /// reuse the same snapshot logic.
+///
+/// Drains the map into a `Vec<Arc<HostStatusPayload>>` under the read lock
+/// — each `Arc::clone` is an atomic refcount bump, not a deep copy — then
+/// releases the lock and performs the O(hosts × payload-size) JSON
+/// serialization outside the critical section. This matters on the `Lagged`
+/// recovery path: a slow consumer that triggers resync must not stall the
+/// scraper's `last_known_status.write()` while `serde_json` walks every host.
 fn build_initial_events(state: &AppState) -> Result<Vec<Event>, AppError> {
-    let lks = state
-        .last_known_status
-        .read()
-        .map_err(|e| AppError::Internal(format!("last_known_status lock: {e}")))?;
-    Ok(lks
-        .values()
+    let snapshot: Vec<Arc<crate::models::sse_payloads::HostStatusPayload>> = {
+        let lks = state
+            .last_known_status
+            .read()
+            .map_err(|e| AppError::Internal(format!("last_known_status lock: {e}")))?;
+        lks.values().map(Arc::clone).collect()
+    };
+    Ok(snapshot
+        .into_iter()
         .filter_map(|payload| {
-            serde_json::to_string(payload)
+            serde_json::to_string(&*payload)
                 .ok()
                 .map(|json| Event::default().event("status").data(json))
         })

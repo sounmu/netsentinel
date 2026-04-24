@@ -166,8 +166,9 @@ pub async fn update_host(
         .ok_or_else(|| AppError::NotFound(format!("Host not found: {}", host_key)))?;
 
     if let Ok(mut lks) = state.last_known_status.write()
-        && let Some(status) = lks.get_mut(&host.host_key)
+        && let Some(arc) = lks.get_mut(&host.host_key)
     {
+        let status = std::sync::Arc::make_mut(arc);
         status.display_name = host.display_name.clone();
         status.scrape_interval_secs = u64::try_from(host.scrape_interval_secs)
             .ok()

@@ -37,7 +37,13 @@ pub struct AppState {
     /// lock scopes are micro-duration data shuffles with **no `.await` inside**,
     /// so the lower per-access overhead of std RwLock beats tokio's cooperative
     /// scheduling cost. Do not add `.await` calls inside lock scopes.
-    pub last_known_status: Arc<RwLock<HashMap<String, HostStatusPayload>>>,
+    /// Values are `Arc<HostStatusPayload>` so `build_initial_events`
+    /// (SSE handshake + `Lagged` re-sync) can drain the map to a `Vec`
+    /// of cheap reference-count bumps under the read lock, then serialize
+    /// each payload **outside** the critical section. Writers either
+    /// insert a freshly-built `Arc::new(...)` or swap in a new `Arc`
+    /// via `Arc::make_mut` for in-place field updates.
+    pub last_known_status: Arc<RwLock<HashMap<String, Arc<HostStatusPayload>>>>,
     /// TTL cache for long-range metric queries (avoids repeated DB scans for same range)
     pub metrics_query_cache: Arc<MetricsQueryCache>,
     /// Per-IP login attempt rate limiter
@@ -91,8 +97,8 @@ impl AppState {
             e.into_inner()
         });
         for host in hosts {
-            lks.entry(host.host_key.clone())
-                .or_insert_with(|| HostStatusPayload {
+            lks.entry(host.host_key.clone()).or_insert_with(|| {
+                Arc::new(HostStatusPayload {
                     host_key: host.host_key.clone(),
                     display_name: host.display_name.clone(),
                     scrape_interval_secs: u64::try_from(host.scrape_interval_secs)
@@ -113,7 +119,8 @@ impl AppState {
                     memory_total_mb: host.memory_total_mb,
                     boot_time: host.boot_time,
                     ip_address: host.ip_address.clone(),
-                });
+                })
+            });
         }
     }
 }
