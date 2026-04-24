@@ -166,23 +166,40 @@ pub(crate) async fn system_info_handler() -> Json<SystemInfoResponse> {
             cpu_model: "Unknown".to_string(),
             memory_total_mb: 0,
             boot_time: 0,
-            ip_address: "Unknown".to_string(),
+            ip_address: UNKNOWN_IP.to_string(),
         }
     });
 
     Json(info)
 }
 
+/// Sentinel returned when the primary-IP probe fails. Case matches the
+/// other `"Unknown"` strings in the SystemInfo payload so the server
+/// never has to handle a mixed-case tri-state. Kept as a single
+/// `&'static str` constant so every fallback points at the same value.
+const UNKNOWN_IP: &str = "Unknown";
+
 /// Determine the primary IP address by creating a UDP socket aimed at a
-/// public address. No data is actually sent — the OS routing table selects
-/// the source interface, giving us the default outbound IP.
+/// non-routable probe address. No data is actually sent — the OS routing
+/// table selects the source interface, giving us the default outbound IP.
+///
+/// The probe target is `192.0.2.1` (RFC 5737 TEST-NET-1) rather than the
+/// previous `8.8.8.8` (Google Public DNS) because:
+///
+/// * TEST-NET-1 is guaranteed never to be allocated, so enterprise
+///   egress filters and air-gapped homelabs cannot mistake the probe
+///   for real external traffic.
+/// * Google rate-limits repeated UDP connects to 8.8.8.8 on some
+///   networks, producing inconsistent `local_addr()` behaviour.
+/// * Using a documentation range makes intent explicit to anyone
+///   reading packet traces ("oh, that's a routing probe").
 fn get_primary_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
         .ok()
         .and_then(|s| {
-            s.connect("8.8.8.8:80").ok()?;
+            s.connect("192.0.2.1:80").ok()?;
             s.local_addr().ok()
         })
         .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+        .unwrap_or_else(|| UNKNOWN_IP.to_string())
 }
