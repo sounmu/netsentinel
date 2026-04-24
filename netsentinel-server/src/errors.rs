@@ -48,13 +48,22 @@ impl From<std::fmt::Error> for AppError {
 }
 
 /// Automatically convert sqlx DB errors into AppError.
-/// Uses `{err:#}` (alternate Display) to include the full error chain.
+///
+/// The response body MUST NOT echo the raw DB error message. SQLite's
+/// `UniqueViolation` text is of the form
+/// `"UNIQUE constraint failed: hosts.host_key"` — letting that reach the
+/// client leaks the schema (table + column names) and turns 409 responses
+/// into an enumeration oracle. We still want the detail in logs, so the
+/// full `{err:#}` chain is emitted via `tracing::warn!` before mapping to
+/// a generic body, mirroring the masking policy already applied to
+/// `AppError::Internal` (CLAUDE.md §Error Handling).
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
         if let sqlx::Error::Database(ref dbe) = err
             && matches!(dbe.kind(), sqlx::error::ErrorKind::UniqueViolation)
         {
-            return AppError::Conflict(format!("Resource already exists: {}", dbe.message()));
+            tracing::warn!(detail = %dbe.message(), "DB unique-violation masked to Conflict");
+            return AppError::Conflict("Resource already exists".to_string());
         }
         if matches!(err, sqlx::Error::RowNotFound) {
             return AppError::NotFound("Resource not found".to_string());
