@@ -458,6 +458,16 @@ pub async fn prometheus_metrics(
 
     // Build the exposition text without any lock held. Pre-size the output
     // to avoid repeated allocations for large host counts.
+    //
+    // Formatting uses `write!` against the pre-sized `String` directly, so
+    // every interpolation writes into the same heap buffer. The old
+    // `output.push_str(&format!(...))` pattern allocated a throwaway
+    // `String` per metric line — negligible for a handful of hosts but
+    // O(hosts × metrics) allocations on large fleets. The `std::fmt::Write`
+    // calls into `String` cannot fail (grow() handles capacity), so we
+    // swallow the `Result` with `let _ =`.
+    use std::fmt::Write as _;
+
     let mut output =
         String::with_capacity(256 + status_snapshot.len() * 96 + metric_snapshot.len() * 192);
     output
@@ -467,46 +477,37 @@ pub async fn prometheus_metrics(
     output.push_str("# TYPE netmonitor_cpu_usage_percent gauge\n");
     output.push_str("# HELP netmonitor_memory_usage_percent Memory usage percentage.\n");
     output.push_str("# TYPE netmonitor_memory_usage_percent gauge\n");
-    output.push_str("# HELP netmonitor_load_1min Load average (1 minute).\n");
-    output.push_str("# TYPE netmonitor_load_1min gauge\n");
-    output.push_str("# HELP netmonitor_load_5min Load average (5 minutes).\n");
-    output.push_str("# TYPE netmonitor_load_5min gauge\n");
-    output.push_str("# HELP netmonitor_load_15min Load average (15 minutes).\n");
-    output.push_str("# TYPE netmonitor_load_15min gauge\n");
     output.push_str("# HELP netmonitor_legacy_fallback_total Agent bincode payloads decoded via the legacy compatibility path.\n");
     output.push_str("# TYPE netmonitor_legacy_fallback_total counter\n");
-    output.push_str(&format!(
-        "netmonitor_legacy_fallback_total {}\n",
+    let _ = writeln!(
+        output,
+        "netmonitor_legacy_fallback_total {}",
         crate::services::metrics_service::legacy_fallback_total()
-    ));
+    );
 
     for row in &status_snapshot {
-        let labels = format!(
-            "host_key=\"{}\",display_name=\"{}\"",
-            escape_prom_label(&row.host_key),
-            escape_prom_label(&row.display_name),
-        );
+        let host_key = escape_prom_label(&row.host_key);
+        let display_name = escape_prom_label(&row.display_name);
         let online = if row.is_online { 1 } else { 0 };
-        output.push_str(&format!(
-            "netmonitor_host_online{{{}}} {}\n",
-            labels, online
-        ));
+        let _ = writeln!(
+            output,
+            "netmonitor_host_online{{host_key=\"{host_key}\",display_name=\"{display_name}\"}} {online}"
+        );
     }
 
     for row in &metric_snapshot {
-        let labels = format!(
-            "host_key=\"{}\",display_name=\"{}\"",
-            escape_prom_label(&row.host_key),
-            escape_prom_label(&row.display_name),
+        let host_key = escape_prom_label(&row.host_key);
+        let display_name = escape_prom_label(&row.display_name);
+        let cpu = row.cpu_usage_percent;
+        let mem = row.memory_usage_percent;
+        let _ = writeln!(
+            output,
+            "netmonitor_cpu_usage_percent{{host_key=\"{host_key}\",display_name=\"{display_name}\"}} {cpu:.2}"
         );
-        output.push_str(&format!(
-            "netmonitor_cpu_usage_percent{{{}}} {:.2}\n",
-            labels, row.cpu_usage_percent
-        ));
-        output.push_str(&format!(
-            "netmonitor_memory_usage_percent{{{}}} {:.2}\n",
-            labels, row.memory_usage_percent
-        ));
+        let _ = writeln!(
+            output,
+            "netmonitor_memory_usage_percent{{host_key=\"{host_key}\",display_name=\"{display_name}\"}} {mem:.2}"
+        );
     }
 
     Ok((
