@@ -302,6 +302,12 @@ pub(crate) async fn docker_stats_poller(
     stats_cache: DockerStatsCache,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
+    // If the Docker daemon pauses responding for minutes, `tokio::interval`
+    // would fire every missed tick back-to-back on recovery. `Delay` skips
+    // the backlog and resumes cleanly from the next boundary — avoids a
+    // burst of `poll_container_stats` calls that can overwhelm the
+    // freshly-recovered daemon.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let _ = interval.tick().await; // skip first immediate tick
 
     let mut backoff = Duration::from_secs(10);
