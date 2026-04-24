@@ -165,6 +165,12 @@ struct MetricsRowRaw {
     docker_stats: Option<String>,
     rx_bytes_per_sec: Option<f64>,
     tx_bytes_per_sec: Option<f64>,
+    /// Scalar totals sourced from `metrics_5min` in the rollup/wide
+    /// branches. Populated as `Some(_)` only when `networks` is `None`
+    /// (i.e. the SQL did not pre-build the JSON via `json_object`); the
+    /// `TryFrom` synthesizes the networks object in Rust.
+    total_rx_bytes: Option<i64>,
+    total_tx_bytes: Option<i64>,
     timestamp: DateTime<Utc>,
 }
 
@@ -182,7 +188,38 @@ impl TryFrom<MetricsRowRaw> for MetricsRow {
 
     fn try_from(raw: MetricsRowRaw) -> Result<Self, Self::Error> {
         let mut networks = parse_opt_json(raw.networks)?;
-        if let Some(Value::Object(ref mut map)) = networks {
+
+        // Synthesize the `networks` JSON object on the Rust side when the
+        // rollup / wide-aggregation branches supply scalar totals instead.
+        // Skipping SQLite's `json_object(...)` per-row call saves the
+        // planner's string-building pass inside the query — measurable on
+        // 30-day windows at >14d.
+        //
+        // Gate on `total_*_bytes` specifically — only the rollup branches
+        // populate those, never the raw branches. This preserves the
+        // contract that offline rows from `insert_offline_metrics_batch`
+        // (which bind `rx_bytes_per_sec = 0.0` but leave `networks` NULL)
+        // surface as `networks = None`, not a misleading
+        // `{"rx_bytes_per_sec": 0, "tx_bytes_per_sec": 0}` object.
+        if networks.is_none() && (raw.total_rx_bytes.is_some() || raw.total_tx_bytes.is_some()) {
+            let mut map = serde_json::Map::with_capacity(4);
+            if let Some(v) = raw.total_rx_bytes {
+                map.insert("total_rx_bytes".into(), Value::from(v));
+            }
+            if let Some(v) = raw.total_tx_bytes {
+                map.insert("total_tx_bytes".into(), Value::from(v));
+            }
+            if let Some(v) = raw.rx_bytes_per_sec {
+                map.insert("rx_bytes_per_sec".into(), Value::from(v));
+            }
+            if let Some(v) = raw.tx_bytes_per_sec {
+                map.insert("tx_bytes_per_sec".into(), Value::from(v));
+            }
+            networks = Some(Value::Object(map));
+        } else if let Some(Value::Object(ref mut map)) = networks {
+            // Raw-branch path: `networks` was read as JSON text from
+            // `metrics.networks`; merge the scalar rate columns so the
+            // shape matches the rollup branches above.
             if let Some(rx) = raw.rx_bytes_per_sec {
                 map.insert("rx_bytes_per_sec".to_string(), Value::from(rx));
             }
@@ -311,6 +348,8 @@ pub async fn fetch_recent_metrics(
                processes, temperatures, gpus,
                cpu_cores, network_interfaces, docker_stats,
                rx_bytes_per_sec, tx_bytes_per_sec,
+               NULL AS total_rx_bytes,
+               NULL AS total_tx_bytes,
                timestamp
         FROM metrics
         WHERE host_key = ?1
@@ -362,12 +401,14 @@ pub async fn fetch_metrics_range(
                    docker_stats,
                    rx_bytes_per_sec,
                    tx_bytes_per_sec,
+                   NULL AS total_rx_bytes,
+                   NULL AS total_tx_bytes,
                    timestamp
             FROM metrics
             WHERE host_key = ?1
               AND timestamp >= ?2
               AND timestamp <= ?3
-            ORDER BY timestamp ASC
+            ORDER BY timestamp ASC, id ASC
             "#,
         )
         .bind(host_key)
@@ -375,16 +416,20 @@ pub async fn fetch_metrics_range(
         .bind(end.timestamp())
         .fetch_all(pool)
         .await?;
+        // `id ASC` is the tie-breaker for rows inserted within the same
+        // second — without it, `ORDER BY timestamp ASC` alone leaves the
+        // relative ordering of same-second rows unspecified, which showed
+        // up as line-chart jitter when a flapping host emitted two scrapes
+        // in the same wall-clock second.
         return raws.into_iter().map(MetricsRow::try_from).collect();
     }
 
     if hours <= 336 {
         // 6h–14d: direct read from metrics_5min rollup (populated by the
-        // rollup worker). `json_object` synthesizes the `networks`
-        // snapshot from the scalar rx/tx totals + bucket-averaged
-        // bandwidth. NULL rate columns are preserved for buckets rolled up
-        // before the 0002 migration so the frontend can still fall back to
-        // differentiating cumulative counters.
+        // rollup worker). Return the scalar bandwidth totals directly; the
+        // `networks` JSON object is synthesized Rust-side in
+        // `TryFrom<MetricsRowRaw>`. Skipping SQLite's per-row
+        // `json_object(...)` measurably lowers query CPU over long ranges.
         let raws = sqlx::query_as::<_, MetricsRowRaw>(
             r#"
             SELECT
@@ -395,10 +440,7 @@ pub async fn fetch_metrics_range(
                 cpu_usage_percent,
                 memory_usage_percent,
                 load_1min, load_5min, load_15min,
-                json_object('total_rx_bytes', total_rx_bytes,
-                            'total_tx_bytes', total_tx_bytes,
-                            'rx_bytes_per_sec', avg_rx_bytes_per_sec,
-                            'tx_bytes_per_sec', avg_tx_bytes_per_sec) AS networks,
+                NULL AS networks,
                 NULL AS docker_containers,
                 NULL AS ports,
                 disks,
@@ -408,8 +450,10 @@ pub async fn fetch_metrics_range(
                 NULL AS cpu_cores,
                 NULL AS network_interfaces,
                 docker_stats,
-                NULL AS rx_bytes_per_sec,
-                NULL AS tx_bytes_per_sec,
+                avg_rx_bytes_per_sec AS rx_bytes_per_sec,
+                avg_tx_bytes_per_sec AS tx_bytes_per_sec,
+                total_rx_bytes,
+                total_tx_bytes,
                 bucket AS timestamp
             FROM metrics_5min
             WHERE host_key = ?1
@@ -473,10 +517,7 @@ pub async fn fetch_metrics_range(
             CAST(AVG(load_1min) AS REAL) AS load_1min,
             CAST(AVG(load_5min) AS REAL) AS load_5min,
             CAST(AVG(load_15min) AS REAL) AS load_15min,
-            json_object('total_rx_bytes', MAX(total_rx_bytes),
-                        'total_tx_bytes', MAX(total_tx_bytes),
-                        'rx_bytes_per_sec', AVG(avg_rx_bytes_per_sec),
-                        'tx_bytes_per_sec', AVG(avg_tx_bytes_per_sec)) AS networks,
+            NULL AS networks,
             NULL AS docker_containers,
             NULL AS ports,
             MAX(CASE WHEN rn = 1 THEN disks END) AS disks,
@@ -486,8 +527,10 @@ pub async fn fetch_metrics_range(
             NULL AS cpu_cores,
             NULL AS network_interfaces,
             MAX(CASE WHEN rn = 1 THEN docker_stats END) AS docker_stats,
-            NULL AS rx_bytes_per_sec,
-            NULL AS tx_bytes_per_sec,
+            CAST(AVG(avg_rx_bytes_per_sec) AS REAL) AS rx_bytes_per_sec,
+            CAST(AVG(avg_tx_bytes_per_sec) AS REAL) AS tx_bytes_per_sec,
+            MAX(total_rx_bytes) AS total_rx_bytes,
+            MAX(total_tx_bytes) AS total_tx_bytes,
             bucket_15m AS timestamp
         FROM tagged
         GROUP BY host_key, bucket_15m
