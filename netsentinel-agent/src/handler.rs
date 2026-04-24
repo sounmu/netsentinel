@@ -31,13 +31,18 @@ pub(crate) async fn metrics_handler(
     docker_stats_cache: DockerStatsCache,
     query: Query<MetricsQuery>,
 ) -> Response {
-    // Ports are managed server-side and sent via query param (capped at 100 to prevent DoS)
-    let mut monitor_ports = query
+    // Ports are managed server-side and sent via query param (CLAUDE.md §Security
+    // "Port scan cap: 100 entries"). The cap flows into `parse_comma_separated_ports`
+    // as a `take(max)` applied during iteration, so `str::split` stays lazy and a
+    // hostile multi-megabyte query string cannot force us to materialise the full
+    // Vec before trimming. hyper/axum already reject oversized URIs before we get
+    // here, so no additional application-level byte-length gate is needed.
+    const MAX_MONITOR_PORTS: usize = 100;
+    let monitor_ports = query
         .ports
-        .as_ref()
-        .map(|p| parse_comma_separated_ports(p))
+        .as_deref()
+        .map(|p| parse_comma_separated_ports(p, MAX_MONITOR_PORTS))
         .unwrap_or_default();
-    monitor_ports.truncate(100);
 
     let target_containers = query.containers.as_ref().map(|c| {
         let mut seen = std::collections::HashSet::new();
