@@ -291,27 +291,33 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   // renders outside the domain or gets clipped, and the rightmost tick
   // label never reflects "now".
   //
-  // Two gotchas the first attempt missed:
-  //   1. `setNowTick` must fire immediately on preset entry. Waiting
-  //      for the first interval tick leaves a 1–5 s window where the
-  //      chart points at a stale slice from minutes ago (whatever the
-  //      `nowTick` initializer happened to capture at mount).
-  //   2. The cadence must be tight enough that the drift between
-  //      `effectiveRange.end` and real time is less than one scrape
-  //      interval (10 s). Using 1 s keeps drift sub-second which is
-  //      imperceptible.
+  // Cadence rationale:
+  //   The previous 1 s setInterval was driving a cascading recompute
+  //   chain (`effectiveRange` → `timeTicks` → `<XAxis domain>`) that
+  //   shifted every existing data point by ~1/60 of the chart width
+  //   each second — a 1 Hz discrete step that the eye perceives as a
+  //   "jump" right after each SSE-pushed point arrives. The agent
+  //   scrape interval is 10 s, so a finer cadence than that produces
+  //   no new data — only re-positions the same points.
+  //
+  //   Snapping the tick to a 5 s grid trades sub-second X-axis
+  //   smoothness for a single positional update halfway between SSE
+  //   arrivals. The right-edge tick label updates twice per scrape
+  //   cycle, which is plenty for "live" feel without cascading every
+  //   second through Recharts. Most production live charts (Datadog,
+  //   Grafana realtime panels) use 5–10 s cadences for the same
+  //   reason.
+  //
+  //   `setNowTick` must still fire immediately on preset entry —
+  //   waiting for the first interval would leave a 0–5 s window where
+  //   the chart points at a stale slice. Deferred to a microtask so
+  //   the synchronous-set-in-effect lint doesn't trip.
   const isLivePreset = range.preset === "1m" || range.preset === "5m";
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
   useEffect(() => {
     if (!isLivePreset) return;
-    // Catch up on preset entry / switch. Deferred to a microtask instead
-    // of being called synchronously in the effect body so we don't trip
-    // `react-hooks/set-state-in-effect` — a synchronous setState here
-    // triggers an immediate cascading render before paint, whereas the
-    // microtask-scheduled one lands in the same commit cycle without
-    // the double render. The perceived latency difference is zero.
     queueMicrotask(() => setNowTick(Date.now()));
-    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    const id = setInterval(() => setNowTick(Date.now()), 5000);
     return () => clearInterval(id);
   }, [isLivePreset, range.preset]);
 
@@ -370,13 +376,8 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
   const allRows = useMemo(() => {
     if (!liveMetrics) return rows;
-    const liveTs = new Date(liveMetrics.timestamp).getTime();
-    // Window-bounds guard: when SWR is still serving the previous key's
-    // rows (`keepPreviousData: true`), a long-stale `liveMetrics` from
-    // a host that has since gone offline could in theory predate the
-    // current display window. Reject rather than render outside-domain.
-    if (liveTs < effectiveRange.start.getTime()) return rows;
     const lastRestTs = rows.length > 0 ? new Date(rows[rows.length - 1].timestamp).getTime() : 0;
+    const liveTs = new Date(liveMetrics.timestamp).getTime();
     if (liveTs <= lastRestTs) return rows;
     const syntheticRow: MetricsRow = {
       id: 0, host_key: liveMetrics.host_key, display_name: liveMetrics.display_name,
@@ -402,7 +403,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       timestamp: liveMetrics.timestamp,
     };
     return [...rows, syntheticRow];
-  }, [rows, liveMetrics, effectiveRange]);
+  }, [rows, liveMetrics]);
 
   const isInitialLoading = allRows.length === 0 && isValidating;
 
