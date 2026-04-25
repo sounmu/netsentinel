@@ -334,10 +334,21 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         hostKey,
         effectiveRange.start,
         effectiveRange.end,
-        // Live presets round to 10 s so the fetch window matches the
-        // chart's 1 min / 5 min display window within one scrape.
-        // Static presets keep the 60 s default for better SWR dedup.
-        isLivePreset ? 10 : 60,
+        // Round-up granularity for the SWR cache key. Live presets used
+        // to round to 10 s, which meant the URL rotated **every 10 s of
+        // wall clock** — and SWR treats a different URL as a different
+        // cache entry. Combined with `keepPreviousData: false`, that
+        // emptied `rows` for the duration of each fetch (~hundreds of
+        // ms) and produced a visible flicker right after every SSE
+        // synthetic point landed.
+        //
+        // Bumping live presets to 30 s thirds the rotation rate; the
+        // displayed window itself still rolls every second through
+        // `nowTick` (the X-axis ticks update independently), so the
+        // user-visible cadence is unchanged. The right-edge data point
+        // is supplied by SSE in real time anyway, so the REST baseline
+        // can be slightly stale without any visible degradation.
+        isLivePreset ? 30 : 60,
       ),
     [hostKey, effectiveRange, isLivePreset]
   );
@@ -347,16 +358,25 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     revalidateOnReconnect: false,
     refreshInterval: 0,
     dedupingInterval: 30000,
-    // Live presets re-calculate the window every second. Keeping stale
-    // rows there makes the synthetic append compare against a previous
-    // window; static presets keep previous rows to avoid flicker.
-    keepPreviousData: !isLivePreset,
+    // `keepPreviousData: true` even on live presets. The synthetic-point
+    // append below is gated by both `liveTs > lastRestTs` AND a window
+    // bounds check, so a stale `rows` from the previous SWR key cannot
+    // produce a visually wrong synthetic position. Conversely, dropping
+    // `rows` on every key rotation produced a 10-s-period flicker right
+    // after each SSE update because the chart briefly rendered with no
+    // baseline data while the fresh fetch was in flight.
+    keepPreviousData: true,
   });
 
   const allRows = useMemo(() => {
     if (!liveMetrics) return rows;
-    const lastRestTs = rows.length > 0 ? new Date(rows[rows.length - 1].timestamp).getTime() : 0;
     const liveTs = new Date(liveMetrics.timestamp).getTime();
+    // Window-bounds guard: when SWR is still serving the previous key's
+    // rows (`keepPreviousData: true`), a long-stale `liveMetrics` from
+    // a host that has since gone offline could in theory predate the
+    // current display window. Reject rather than render outside-domain.
+    if (liveTs < effectiveRange.start.getTime()) return rows;
+    const lastRestTs = rows.length > 0 ? new Date(rows[rows.length - 1].timestamp).getTime() : 0;
     if (liveTs <= lastRestTs) return rows;
     const syntheticRow: MetricsRow = {
       id: 0, host_key: liveMetrics.host_key, display_name: liveMetrics.display_name,
@@ -382,7 +402,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       timestamp: liveMetrics.timestamp,
     };
     return [...rows, syntheticRow];
-  }, [rows, liveMetrics]);
+  }, [rows, liveMetrics, effectiveRange]);
 
   const isInitialLoading = allRows.length === 0 && isValidating;
 
