@@ -2,7 +2,6 @@
 
 import { useState, useMemo, useCallback, memo } from "react";
 import useSWR from "swr";
-import { useSSE } from "@/app/lib/sse-context";
 import {
   AreaChart,
   Area,
@@ -20,6 +19,8 @@ import {
   DockerContainerStats,
 } from "@/app/types/metrics";
 import { formatNetworkSpeed, formatNetworkSpeedTick } from "@/app/lib/formatters";
+import { mergeMetricsRows } from "@/app/lib/live-metrics";
+import { useHostLiveRows } from "@/app/lib/live-metrics-store";
 import DateTimePicker from "./DateTimePicker";
 import { useI18n } from "@/app/i18n/I18nContext";
 
@@ -292,12 +293,12 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     return { start, end, preset: "1h" };
   });
 
-  const { metricsMap } = useSSE();
-  const liveMetrics = metricsMap[hostKey] ?? null;
+  const liveRows = useHostLiveRows(hostKey);
+  const latestLiveTimestamp = liveRows.at(-1)?.timestamp ?? null;
 
   // For live presets (1m, 5m) the window rolls in step with **incoming
   // data**, not wall clock — Grafana-realtime style. The chart's right
-  // edge anchors to the most recent SSE-pushed `liveMetrics.timestamp`
+  // edge anchors to the most recent SSE-pushed live-row timestamp
   // (every ~10 s), so each shift coincides with new content arriving
   // rather than the chart drifting on its own between scrapes.
   //
@@ -315,11 +316,11 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   const [initialAnchorTs] = useState<number>(() => Date.now());
   const liveAnchorTs = useMemo(() => {
     if (!isLivePreset) return null;
-    if (liveMetrics?.timestamp) {
-      return new Date(liveMetrics.timestamp).getTime();
+    if (latestLiveTimestamp) {
+      return new Date(latestLiveTimestamp).getTime();
     }
     return initialAnchorTs;
-  }, [isLivePreset, liveMetrics, initialAnchorTs]);
+  }, [isLivePreset, latestLiveTimestamp, initialAnchorTs]);
 
   const effectiveRange = useMemo<TimeRange>(() => {
     if (!isLivePreset || liveAnchorTs == null) return range;
@@ -345,12 +346,10 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         // ms) and produced a visible flicker right after every SSE
         // synthetic point landed.
         //
-        // Bumping live presets to 30 s thirds the rotation rate; the
-        // displayed window itself still rolls every second through
-        // `nowTick` (the X-axis ticks update independently), so the
-        // user-visible cadence is unchanged. The right-edge data point
-        // is supplied by SSE in real time anyway, so the REST baseline
-        // can be slightly stale without any visible degradation.
+        // Bumping live presets to 30 s thirds the rotation rate. Recent
+        // SSE samples are held in a tiny per-chart ring buffer, so the
+        // REST baseline can lag briefly without dropping an in-between
+        // point from the visible series.
         isLivePreset ? 30 : 60,
       ),
     [hostKey, effectiveRange, isLivePreset]
@@ -361,46 +360,24 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     revalidateOnReconnect: false,
     refreshInterval: 0,
     dedupingInterval: 30000,
-    // `keepPreviousData: true` even on live presets. The synthetic-point
-    // append below is gated by both `liveTs > lastRestTs` AND a window
-    // bounds check, so a stale `rows` from the previous SWR key cannot
-    // produce a visually wrong synthetic position. Conversely, dropping
-    // `rows` on every key rotation produced a 10-s-period flicker right
-    // after each SSE update because the chart briefly rendered with no
-    // baseline data while the fresh fetch was in flight.
+    // `keepPreviousData: true` even on live presets. The live-row merge
+    // below filters by the visible window and de-dupes against REST rows,
+    // so a stale baseline cannot draw the live points in the wrong place.
+    // Dropping `rows` on every key rotation produced a 10-s-period flicker
+    // while the fresh fetch was in flight.
     keepPreviousData: true,
   });
 
-  const allRows = useMemo(() => {
-    if (!liveMetrics) return rows;
-    const lastRestTs = rows.length > 0 ? new Date(rows[rows.length - 1].timestamp).getTime() : 0;
-    const liveTs = new Date(liveMetrics.timestamp).getTime();
-    if (liveTs <= lastRestTs) return rows;
-    const syntheticRow: MetricsRow = {
-      id: 0, host_key: liveMetrics.host_key, display_name: liveMetrics.display_name,
-      is_online: liveMetrics.is_online, cpu_usage_percent: liveMetrics.cpu_usage_percent,
-      memory_usage_percent: liveMetrics.memory_usage_percent,
-      load_1min: liveMetrics.load_1min, load_5min: liveMetrics.load_5min, load_15min: liveMetrics.load_15min,
-      // SSE payload already carries a computed bandwidth — surface it
-      // as a `NetworkTotal`-shaped row so the chart's "agent rate wins"
-      // branch can push the live point directly, without needing the
-      // old fallback analogue further below.
-      networks: {
-        total_rx_bytes: liveMetrics.network_rate.total_rx_bytes,
-        total_tx_bytes: liveMetrics.network_rate.total_tx_bytes,
-        rx_bytes_per_sec: liveMetrics.network_rate.rx_bytes_per_sec,
-        tx_bytes_per_sec: liveMetrics.network_rate.tx_bytes_per_sec,
-      },
-      docker_containers: null, ports: null,
-      disks: liveMetrics.disks ?? null,
-      processes: null,
-      temperatures: liveMetrics.temperatures ?? null,
-      gpus: null, cpu_cores: null, network_interfaces: null,
-      docker_stats: liveMetrics.docker_stats ?? null,
-      timestamp: liveMetrics.timestamp,
-    };
-    return [...rows, syntheticRow];
-  }, [rows, liveMetrics]);
+  const allRows = useMemo(
+    () =>
+      mergeMetricsRows(
+        rows,
+        liveRows,
+        effectiveRange.start.getTime(),
+        effectiveRange.end.getTime(),
+      ),
+    [rows, liveRows, effectiveRange],
+  );
 
   const isInitialLoading = allRows.length === 0 && isValidating;
 

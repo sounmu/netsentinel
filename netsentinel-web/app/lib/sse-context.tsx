@@ -12,6 +12,7 @@ import React, {
 import { HostMetricsPayload, HostStatusPayload } from "@/app/types/metrics";
 import { issueSseTicket } from "@/app/lib/api";
 import { useAuth } from "@/app/auth/AuthContext";
+import { clearLiveMetricRows, pushLiveMetricPayload } from "@/app/lib/live-metrics-store";
 
 // ──────────────────────────────────────────
 // Context type definitions
@@ -136,6 +137,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
     delete metricsBufRef.current[hostKey];
     delete statusBufRef.current[hostKey];
     offlineKeysBufRef.current.delete(hostKey);
+    clearLiveMetricRows(hostKey);
     setMetricsMap((prev) => {
       if (!(hostKey in prev)) return prev;
       const next = { ...prev };
@@ -231,6 +233,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
           if (tombstonedAt) {
             deletedTombstoneRef.current.delete(payload.host_key);
           }
+          pushLiveMetricPayload(payload);
           metricsBufRef.current[payload.host_key] = payload;
           scheduleFlush();
         } catch {
