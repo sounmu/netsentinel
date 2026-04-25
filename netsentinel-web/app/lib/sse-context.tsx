@@ -52,7 +52,14 @@ const SSEContext = createContext<SSEContextValue>({
 // Reconnection settings
 // ──────────────────────────────────────────
 
-const INITIAL_RETRY_MS = 1000;
+// `EventSource` itself defaults its `retry` field to ~3000 ms when the
+// server doesn't override it. Matching that floor here means a transient
+// hiccup (Wi-Fi handoff, VPN reconnect, brief DNS flap) does not race
+// the browser's own reconnect logic; the previous 1000 ms start was
+// fast enough to mint a fresh SSE ticket on every micro-flap, which
+// trickled into the per-user 2 s ticket cooldown server-side and
+// surfaced as 429s during long-running sessions.
+const INITIAL_RETRY_MS = 3000;
 const MAX_RETRY_MS = 30000;
 
 // ──────────────────────────────────────────
@@ -266,7 +273,21 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
         esRef.current = null;
       }
     };
-  }, [user, scheduleFlush]); // Reconnect when auth state changes
+    // Reconnect only when the *identity* of the authenticated principal
+    // changes — not when AuthContext happens to swap in a fresh `user`
+    // object that represents the same person (e.g. after a silent
+    // `/api/auth/refresh` rotation, which `setUser` calls with a freshly
+    // deserialized payload). The previous `[user, ...]` form treated
+    // every refresh as a logout-then-login from this hook's perspective:
+    // close the EventSource, mint a new ticket, reconnect — for zero
+    // user-observable state change. `user?.id` is the stable identity
+    // key; it survives every refresh and only changes on actual
+    // login/logout transitions.
+    //
+    // The closure reads `user` (truthy guard) but we deliberately omit
+    // it from deps — only the `id` matters for re-running the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, scheduleFlush]);
 
   // ── Pre-computed derived state (avoids duplicate O(n) in page + sidebar) ──
   const { hostList, onlineCount, offlineCount } = useMemo(() => {
