@@ -28,12 +28,28 @@ pub async fn update_global_configs(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Vec<UpsertAlertRequest>>,
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
-    let mut results = Vec::new();
+    // Validate every request before touching the DB so a bad rule in
+    // position N never partially-applies rules 0..N-1.
     for req in &body {
         validate_alert_request(req)?;
-        let row = alert_configs_repo::upsert_alert_config(&state.db_pool, None, req).await?;
+    }
+
+    // Wrap the whole batch in one transaction. The previous implementation
+    // looped over the requests with the bare `&pool` executor, so a
+    // mid-loop UPSERT failure (UNIQUE conflict, FK violation, the writer
+    // lock timing out) would leave alert rules half-applied — exactly the
+    // shape of bug that produces "I clicked save but only some thresholds
+    // updated" support tickets. `BEGIN IMMEDIATE` (sqlx's default for
+    // SQLite WAL transactions) holds the writer lock for the upsert chain
+    // and rolls back atomically on the first `?` propagation.
+    let mut tx = state.db_pool.begin().await?;
+    let mut results = Vec::with_capacity(body.len());
+    for req in &body {
+        let row = alert_configs_repo::upsert_alert_config(&mut *tx, None, req).await?;
         results.push(row);
     }
+    tx.commit().await?;
+
     hosts_snapshot::refresh(&state.db_pool, &state.hosts_snapshot).await;
     tracing::info!("🔔 [AlertConfig] Global alert configs updated");
     Ok(Json(results))
@@ -56,13 +72,21 @@ pub async fn update_host_configs(
     Path(host_key): Path<String>,
     Json(body): Json<Vec<UpsertAlertRequest>>,
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
-    let mut results = Vec::new();
+    // Validate up-front, then run the whole upsert chain inside one
+    // transaction — see `update_global_configs` for the rationale. The
+    // per-host path is the same shape with a non-NULL host_key bind.
     for req in &body {
         validate_alert_request(req)?;
-        let row =
-            alert_configs_repo::upsert_alert_config(&state.db_pool, Some(&host_key), req).await?;
+    }
+
+    let mut tx = state.db_pool.begin().await?;
+    let mut results = Vec::with_capacity(body.len());
+    for req in &body {
+        let row = alert_configs_repo::upsert_alert_config(&mut *tx, Some(&host_key), req).await?;
         results.push(row);
     }
+    tx.commit().await?;
+
     hosts_snapshot::refresh(&state.db_pool, &state.hosts_snapshot).await;
     // `?host_key` (Debug) escapes control chars so a maliciously-crafted
     // path param cannot forge additional log lines (CRLF injection).

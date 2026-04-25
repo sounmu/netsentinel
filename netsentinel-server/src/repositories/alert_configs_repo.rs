@@ -242,11 +242,22 @@ pub async fn load_all_as_map(pool: &DbPool) -> Result<HashMap<String, AlertConfi
 }
 
 /// Upsert a global or per-host alert config row.
-pub async fn upsert_alert_config(
-    pool: &DbPool,
+///
+/// Generic over `SqliteExecutor` so callers can pass either a `&DbPool`
+/// (single-shot upsert with implicit commit) or `&mut *tx` from
+/// `pool.begin()` (batched upsert that all-or-nothing-commits with the
+/// caller's transaction). The handler-side update endpoints loop over
+/// 7+ rules per call; running each through its own pool acquisition
+/// used to leave the DB in a half-applied state when rule N+1 failed
+/// validation or hit a row-level conflict mid-loop.
+pub async fn upsert_alert_config<'e, E>(
+    executor: E,
     host_key: Option<&str>,
     req: &UpsertAlertRequest,
-) -> Result<AlertConfigRow, sqlx::Error> {
+) -> Result<AlertConfigRow, sqlx::Error>
+where
+    E: sqlx::SqliteExecutor<'e>,
+{
     let sql = format!(
         r#"
         INSERT INTO alert_configs
@@ -270,7 +281,7 @@ pub async fn upsert_alert_config(
         .bind(req.threshold)
         .bind(req.sustained_secs)
         .bind(req.cooldown_secs)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await
 }
 
@@ -508,6 +519,56 @@ mod sqlite_tests {
             a.iter()
                 .any(|r| r.metric_type == MetricType::Cpu && r.threshold == 75.0)
         );
+    }
+
+    #[tokio::test]
+    async fn upsert_inside_rolled_back_tx_does_not_persist() {
+        // Pin the new transactional contract: if a handler-level batch
+        // calls `upsert_alert_config(&mut *tx, ...)` and the surrounding
+        // transaction rolls back (whether explicit or via `?` early-exit),
+        // the upserted row must not survive. Regression-protects the
+        // half-applied state shape that was possible when the handler
+        // looped over the bare pool.
+        let pool = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        let row = upsert_alert_config(&mut *tx, None, &req(MetricType::Cpu, 42.0))
+            .await
+            .unwrap();
+        // Inside the tx, the row exists; we just got it back from RETURNING.
+        assert_eq!(row.threshold, 42.0);
+
+        // Drop the transaction *without* committing — sqlx auto-rolls
+        // back on Drop, but make the rollback explicit so the assertion
+        // below tests the semantics, not the Drop timing.
+        tx.rollback().await.unwrap();
+
+        let globals = get_global_configs(&pool).await.unwrap();
+        assert!(
+            globals.is_empty(),
+            "rolled-back upsert must not leave a row behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn upsert_committed_tx_persists() {
+        // Mirror of the rollback test: if the transaction commits, the
+        // row must be visible to a subsequent fresh read. Catches a
+        // future refactor that accidentally double-buffers the upserts
+        // in memory and forgets to commit.
+        let pool = fresh_pool().await;
+        let mut tx = pool.begin().await.unwrap();
+
+        upsert_alert_config(&mut *tx, None, &req(MetricType::Cpu, 42.0))
+            .await
+            .unwrap();
+        upsert_alert_config(&mut *tx, None, &req(MetricType::Memory, 88.0))
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let globals = get_global_configs(&pool).await.unwrap();
+        assert_eq!(globals.len(), 2);
     }
 
     #[tokio::test]
