@@ -13,7 +13,12 @@ pub fn collect() -> Vec<GpuInfo> {
     (0..count)
         .filter_map(|i| {
             let device = nvml.device_by_index(i).ok()?;
-            let name = device.name().unwrap_or_default();
+            // `unwrap_or_default()` previously yielded an empty string on
+            // NVML driver bugs, which propagated through the dashboard as a
+            // blank row. `GPU {i}` keeps the UI labelled so operators can
+            // still spot which device is misbehaving even without a real
+            // product name.
+            let name = device.name().unwrap_or_else(|_| format!("GPU {i}"));
             let utilization = device.utilization_rates().ok()?;
             let memory = device.memory_info().ok()?;
             let temp = device

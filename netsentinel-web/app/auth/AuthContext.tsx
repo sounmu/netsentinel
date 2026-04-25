@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useMemo,
+  useRef,
   useState,
   useEffect,
   type ReactNode,
@@ -18,6 +19,7 @@ import {
   serverLogout,
   tryRefreshSession,
   getMe,
+  UNAUTHORIZED_EVENT,
 } from "@/app/lib/api";
 
 interface AuthContextValue {
@@ -38,6 +40,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
+  // StrictMode-safe single-flight guard for the bootstrap. React 19's
+  // dev-mode StrictMode mounts → unmounts → remounts every component
+  // once on first render to surface effect-cleanup bugs; without this
+  // ref the init effect would call `getMe()` (or `tryRefreshSession()`)
+  // twice on every developer page load. The guard is a `useRef` rather
+  // than module-scope state so multiple AuthProvider instances (tests,
+  // Storybook) get independent budgets.
+  const initStartedRef = useRef(false);
 
   // On mount: attempt session restoration. Priority order:
   //   1. In-memory access token (tab-reuse — already present if we didn't
@@ -46,6 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //      /api/auth/refresh to mint a fresh access token.
   //   3. Neither → unauthenticated.
   useEffect(() => {
+    if (initStartedRef.current) return;
+    initStartedRef.current = true;
+
     let cancelled = false;
     clearLegacyStorage();
 
@@ -86,6 +99,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [isLoading, user, pathname, router]);
+
+  // Soft-redirect on session death: `api.ts::handleUnauthorized` fires this
+  // event when the silent-refresh retry also 401s. We clear the user state
+  // and let the router navigate — much cheaper than the previous
+  // `window.location.href = "/login"` hard reload, which tore down the SSE
+  // stream, SWR cache, theme state, and every other in-memory context on
+  // every incidental 401 (e.g. a pod restart mid-dashboard).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onUnauthorized = () => {
+      setAccessToken(null);
+      setUser(null);
+      router.replace("/login");
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    };
+  }, [router]);
 
   const login = useCallback((token: string, userInfo: UserInfo) => {
     setAccessToken(token);

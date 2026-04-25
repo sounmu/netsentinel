@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::Query;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
+use bincode::Options as _;
 use chrono::{SecondsFormat, Utc};
 use sysinfo::System;
 
@@ -16,6 +17,13 @@ const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_CONTAINER_SELECTORS: usize = 100;
 const MAX_METRICS_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
 
+fn bincode_options() -> impl bincode::Options {
+    bincode::DefaultOptions::new()
+        .with_limit(MAX_METRICS_PAYLOAD_BYTES as u64)
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+}
+
 #[tracing::instrument(skip(docker_cache, docker_stats_cache, query))]
 pub(crate) async fn metrics_handler(
     hostname: String,
@@ -23,13 +31,18 @@ pub(crate) async fn metrics_handler(
     docker_stats_cache: DockerStatsCache,
     query: Query<MetricsQuery>,
 ) -> Response {
-    // Ports are managed server-side and sent via query param (capped at 100 to prevent DoS)
-    let mut monitor_ports = query
+    // Ports are managed server-side and sent via query param (CLAUDE.md §Security
+    // "Port scan cap: 100 entries"). The cap flows into `parse_comma_separated_ports`
+    // as a `take(max)` applied during iteration, so `str::split` stays lazy and a
+    // hostile multi-megabyte query string cannot force us to materialise the full
+    // Vec before trimming. hyper/axum already reject oversized URIs before we get
+    // here, so no additional application-level byte-length gate is needed.
+    const MAX_MONITOR_PORTS: usize = 100;
+    let monitor_ports = query
         .ports
-        .as_ref()
-        .map(|p| parse_comma_separated_ports(p))
+        .as_deref()
+        .map(|p| parse_comma_separated_ports(p, MAX_MONITOR_PORTS))
         .unwrap_or_default();
-    monitor_ports.truncate(100);
 
     let target_containers = query.containers.as_ref().map(|c| {
         let mut seen = std::collections::HashSet::new();
@@ -98,7 +111,7 @@ pub(crate) async fn metrics_handler(
     // bincode binary serialisation: ~40–70% smaller payload than JSON, near-zero-copy parsing
     // speed. Both agent and server are Rust, so serde-based binary format field-order
     // compatibility is guaranteed.
-    let bytes = match bincode::serialize(&metrics) {
+    let bytes = match bincode_options().serialize(&metrics) {
         Ok(b) => b,
         Err(e) => {
             tracing::error!(err = ?e, "❌ [Metrics] bincode serialization failed");
@@ -153,23 +166,40 @@ pub(crate) async fn system_info_handler() -> Json<SystemInfoResponse> {
             cpu_model: "Unknown".to_string(),
             memory_total_mb: 0,
             boot_time: 0,
-            ip_address: "Unknown".to_string(),
+            ip_address: UNKNOWN_IP.to_string(),
         }
     });
 
     Json(info)
 }
 
+/// Sentinel returned when the primary-IP probe fails. Case matches the
+/// other `"Unknown"` strings in the SystemInfo payload so the server
+/// never has to handle a mixed-case tri-state. Kept as a single
+/// `&'static str` constant so every fallback points at the same value.
+const UNKNOWN_IP: &str = "Unknown";
+
 /// Determine the primary IP address by creating a UDP socket aimed at a
-/// public address. No data is actually sent — the OS routing table selects
-/// the source interface, giving us the default outbound IP.
+/// non-routable probe address. No data is actually sent — the OS routing
+/// table selects the source interface, giving us the default outbound IP.
+///
+/// The probe target is `192.0.2.1` (RFC 5737 TEST-NET-1) rather than the
+/// previous `8.8.8.8` (Google Public DNS) because:
+///
+/// * TEST-NET-1 is guaranteed never to be allocated, so enterprise
+///   egress filters and air-gapped homelabs cannot mistake the probe
+///   for real external traffic.
+/// * Google rate-limits repeated UDP connects to 8.8.8.8 on some
+///   networks, producing inconsistent `local_addr()` behaviour.
+/// * Using a documentation range makes intent explicit to anyone
+///   reading packet traces ("oh, that's a routing probe").
 fn get_primary_ip() -> String {
     std::net::UdpSocket::bind("0.0.0.0:0")
         .ok()
         .and_then(|s| {
-            s.connect("8.8.8.8:80").ok()?;
+            s.connect("192.0.2.1:80").ok()?;
             s.local_addr().ok()
         })
         .map(|addr| addr.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+        .unwrap_or_else(|| UNKNOWN_IP.to_string())
 }

@@ -69,58 +69,78 @@ pub async fn run_once(pool: &DbPool) -> Result<u64, sqlx::Error> {
 async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Error> {
     let bucket_end = bucket_start + BUCKET_SECS;
 
-    // The scalar aggregates (AVG/MIN/MAX/COUNT) are straightforward.
-    // The four JSON snapshot columns are "last-in-bucket", which PG
-    // expresses as `last(col, timestamp)` — here we re-query the
-    // same bucket in a correlated subquery. Each subquery picks the
-    // latest row deterministically using `(timestamp DESC, id DESC)`
-    // so multiple inserts in the same second still resolve to one
-    // well-defined row.
+    // Previous shape issued **four correlated subqueries per host row**
+    // (disks / temperatures / gpus / docker_stats), each a fresh index
+    // probe on `metrics`. At 100 hosts × 30 samples/bucket × 4 snapshots
+    // that was ~12 000 json-column fetches per 60 s tick, each holding
+    // the SQLite writer lock against the scraper batch INSERT.
     //
-    // `networks` is stored as TEXT JSON on the raw side; the rollup
-    // table splits it into scalar columns so uptime / bandwidth
-    // queries don't have to re-parse JSON on every read.
+    // New shape: a single `tagged` CTE scans the bucket once, stamping
+    // every row with `ROW_NUMBER() OVER (PARTITION BY host_key
+    // ORDER BY timestamp DESC, id DESC)`. The outer GROUP BY then picks
+    // the "last-in-bucket" snapshot with `MAX(CASE WHEN rn = 1 THEN col END)`
+    // — SQLite's idiomatic equivalent of PostgreSQL's `last(col, timestamp)`
+    // — without re-entering the table. Scalar aggregates (AVG/MIN/COUNT)
+    // piggyback on the same scan.
+    //
+    // `networks` is stored as TEXT JSON on the raw side; the rollup table
+    // splits it into scalar columns so uptime / bandwidth queries don't
+    // have to re-parse JSON on every read.
+    // Bandwidth aggregation (`avg_*_bytes_per_sec`) uses AVG because each
+    // raw sample already carries a rate — the agent differentiates the
+    // kernel counter across its own 200 ms window before sending. Taking
+    // the bucket average mirrors how `cpu_usage_percent` is rolled up and
+    // yields a real bandwidth that long-range dashboard queries can read
+    // without re-deriving it from `MAX(total_*_bytes)` deltas.
     let res = sqlx::query(
         r#"
+        WITH tagged AS (
+            SELECT
+                host_key,
+                timestamp,
+                id,
+                is_online,
+                cpu_usage_percent,
+                memory_usage_percent,
+                load_1min, load_5min, load_15min,
+                rx_bytes_per_sec, tx_bytes_per_sec,
+                CAST(json_extract(networks, '$.total_rx_bytes') AS INTEGER) AS rx_total,
+                CAST(json_extract(networks, '$.total_tx_bytes') AS INTEGER) AS tx_total,
+                disks, temperatures, gpus, docker_stats,
+                ROW_NUMBER() OVER (PARTITION BY host_key
+                                   ORDER BY timestamp DESC, id DESC) AS rn
+            FROM metrics
+            WHERE timestamp >= ?1 AND timestamp < ?2
+        )
         INSERT INTO metrics_5min (
             host_key, bucket,
             cpu_usage_percent, memory_usage_percent,
             load_1min, load_5min, load_15min,
             is_online, sample_count,
             total_rx_bytes, total_tx_bytes,
+            avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
             disks, temperatures, gpus, docker_stats
         )
         SELECT
-            m.host_key,
+            host_key,
             ?1 AS bucket,
-            CAST(AVG(m.cpu_usage_percent) AS REAL)    AS cpu_usage_percent,
-            CAST(AVG(m.memory_usage_percent) AS REAL) AS memory_usage_percent,
-            CAST(AVG(m.load_1min)  AS REAL) AS load_1min,
-            CAST(AVG(m.load_5min)  AS REAL) AS load_5min,
-            CAST(AVG(m.load_15min) AS REAL) AS load_15min,
-            MIN(m.is_online) AS is_online,
-            COUNT(*)         AS sample_count,
-            MAX(CAST(json_extract(m.networks, '$.total_rx_bytes') AS INTEGER)) AS total_rx_bytes,
-            MAX(CAST(json_extract(m.networks, '$.total_tx_bytes') AS INTEGER)) AS total_tx_bytes,
-            (SELECT disks FROM metrics
-              WHERE host_key = m.host_key
-                AND timestamp >= ?1 AND timestamp < ?2
-              ORDER BY timestamp DESC, id DESC LIMIT 1) AS disks,
-            (SELECT temperatures FROM metrics
-              WHERE host_key = m.host_key
-                AND timestamp >= ?1 AND timestamp < ?2
-              ORDER BY timestamp DESC, id DESC LIMIT 1) AS temperatures,
-            (SELECT gpus FROM metrics
-              WHERE host_key = m.host_key
-                AND timestamp >= ?1 AND timestamp < ?2
-              ORDER BY timestamp DESC, id DESC LIMIT 1) AS gpus,
-            (SELECT docker_stats FROM metrics
-              WHERE host_key = m.host_key
-                AND timestamp >= ?1 AND timestamp < ?2
-              ORDER BY timestamp DESC, id DESC LIMIT 1) AS docker_stats
-        FROM metrics m
-        WHERE m.timestamp >= ?1 AND m.timestamp < ?2
-        GROUP BY m.host_key
+            CAST(AVG(cpu_usage_percent) AS REAL)    AS cpu_usage_percent,
+            CAST(AVG(memory_usage_percent) AS REAL) AS memory_usage_percent,
+            CAST(AVG(load_1min)  AS REAL) AS load_1min,
+            CAST(AVG(load_5min)  AS REAL) AS load_5min,
+            CAST(AVG(load_15min) AS REAL) AS load_15min,
+            MIN(is_online) AS is_online,
+            COUNT(*)       AS sample_count,
+            MAX(rx_total)  AS total_rx_bytes,
+            MAX(tx_total)  AS total_tx_bytes,
+            CAST(AVG(rx_bytes_per_sec) AS REAL) AS avg_rx_bytes_per_sec,
+            CAST(AVG(tx_bytes_per_sec) AS REAL) AS avg_tx_bytes_per_sec,
+            MAX(CASE WHEN rn = 1 THEN disks END)        AS disks,
+            MAX(CASE WHEN rn = 1 THEN temperatures END) AS temperatures,
+            MAX(CASE WHEN rn = 1 THEN gpus END)         AS gpus,
+            MAX(CASE WHEN rn = 1 THEN docker_stats END) AS docker_stats
+        FROM tagged
+        GROUP BY host_key
         ON CONFLICT (host_key, bucket) DO UPDATE SET
             cpu_usage_percent    = excluded.cpu_usage_percent,
             memory_usage_percent = excluded.memory_usage_percent,
@@ -131,6 +151,8 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             sample_count         = excluded.sample_count,
             total_rx_bytes       = excluded.total_rx_bytes,
             total_tx_bytes       = excluded.total_tx_bytes,
+            avg_rx_bytes_per_sec = excluded.avg_rx_bytes_per_sec,
+            avg_tx_bytes_per_sec = excluded.avg_tx_bytes_per_sec,
             disks                = excluded.disks,
             temperatures         = excluded.temperatures,
             gpus                 = excluded.gpus,
@@ -197,10 +219,13 @@ mod tests {
         tx: i64,
         timestamp: i64,
     ) {
+        // Seed a bandwidth proportional to the counter so
+        // `test_rollup_aggregates_bandwidth_averages` below can verify
+        // the AVG() column without having to hand-tune three inputs.
+        let rx_bps = rx as f64;
+        let tx_bps = tx as f64;
         let networks = format!(
-            r#"{{"total_rx_bytes":{rx},"total_tx_bytes":{tx}}}"#,
-            rx = rx,
-            tx = tx
+            r#"{{"total_rx_bytes":{rx},"total_tx_bytes":{tx},"rx_bytes_per_sec":{rx_bps},"tx_bytes_per_sec":{tx_bps}}}"#,
         );
         sqlx::query(
             r#"
@@ -208,21 +233,24 @@ mod tests {
                 host_key, display_name, is_online,
                 cpu_usage_percent, memory_usage_percent,
                 load_1min, load_5min, load_15min,
-                networks,
+                networks, rx_bytes_per_sec, tx_bytes_per_sec,
                 disks, temperatures, gpus, docker_stats,
                 timestamp
             )
             VALUES (?1, 'test', ?2, ?3, 0.0, 0.0, 0.0, 0.0, ?4,
+                    ?5, ?6,
                     '[{"name":"/","usage_percent":10}]',
                     '[{"label":"cpu","temperature_c":42}]',
                     '[]', '[]',
-                    ?5)
+                    ?7)
             "#,
         )
         .bind(host)
         .bind(online)
         .bind(cpu)
         .bind(&networks)
+        .bind(rx_bps)
+        .bind(tx_bps)
         .bind(timestamp)
         .execute(pool)
         .await
@@ -272,6 +300,39 @@ mod tests {
             "MAX(rx) reads json_extract on the raw networks column"
         );
         assert_eq!(row.4, 250);
+    }
+
+    #[tokio::test]
+    async fn rollup_aggregates_bandwidth_averages() {
+        // `seed_metric` stores scalar `rx_bytes_per_sec = rx` and same for tx.
+        // With three samples of rx = 100, 300, 500 the expected bucket
+        // average is 300 — this pins the raw scalar-column rollup path.
+        let pool = fresh_pool().await;
+        let bucket = current_bucket_start(&pool).await;
+
+        seed_metric(&pool, "a:9101", 10.0, true, 100, 50, bucket + 10).await;
+        seed_metric(&pool, "a:9101", 30.0, true, 300, 150, bucket + 120).await;
+        seed_metric(&pool, "a:9101", 50.0, true, 500, 250, bucket + 240).await;
+
+        run_once(&pool).await.unwrap();
+
+        let (avg_rx, avg_tx): (f64, f64) = sqlx::query_as(
+            "SELECT avg_rx_bytes_per_sec, avg_tx_bytes_per_sec \
+             FROM metrics_5min WHERE host_key = 'a:9101' AND bucket = ?1",
+        )
+        .bind(bucket)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            (avg_rx - 300.0).abs() < 0.01,
+            "AVG(rx_bytes_per_sec) mismatch: {avg_rx}"
+        );
+        assert!(
+            (avg_tx - 150.0).abs() < 0.01,
+            "AVG(tx_bytes_per_sec) mismatch: {avg_tx}"
+        );
     }
 
     #[tokio::test]

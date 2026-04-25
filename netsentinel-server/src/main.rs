@@ -55,8 +55,15 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
     if jwt_secret.len() < 32 {
+        // `str::len()` returns *bytes*, not characters. The original message
+        // said "characters" which would mislead anyone passing a multi-byte
+        // UTF-8 secret through this check. RFC 7518 §3.2 specifies that the
+        // HS256 MAC key SHOULD be ≥ 256 bits (32 bytes), and that threshold
+        // is what this guard enforces — so we report bytes and cite the RFC
+        // so the number doesn't look arbitrary in a support thread later.
         anyhow::bail!(
-            "JWT_SECRET is {} characters — must be ≥ 32 for adequate HS256 security.\n\n\
+            "JWT_SECRET is {} bytes — must be ≥ 32 bytes for adequate HS256 security\n\
+             (RFC 7518 §3.2 recommends ≥ 256 bits of keying material).\n\n\
              Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
              secret and invalidates every previously-issued JWT). Be sure to\n\
              distribute the new value to every agent afterwards.",
@@ -83,16 +90,13 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(10);
 
     let max_db_connections: u32 = std::env::var("MAX_DB_CONNECTIONS")
-        .unwrap_or_else(|_| "10".to_string())
+        .unwrap_or_else(|_| "4".to_string())
         .parse()
-        .unwrap_or(10);
+        .unwrap_or(4);
 
     // ── Database connection pool ──
-    // Backend is selected at build time via Cargo feature flags
-    // (`backend-postgres` default, `backend-sqlite` experimental).
-    // `crate::db` is the single seam that knows which driver to load
-    // and which migrations directory to run — main.rs stays backend-
-    // agnostic. See docs/SQLITE_MIGRATION.md §6.
+    // SQLite is the single embedded backend. `crate::db` owns the pool
+    // setup and migration runner so the startup path stays compact.
     let statement_timeout_secs: u64 = std::env::var("DB_STATEMENT_TIMEOUT_SECS")
         .unwrap_or_else(|_| "30".to_string())
         .parse()
@@ -124,10 +128,13 @@ async fn main() -> anyhow::Result<()> {
             0
         }
     };
+    // Floor is 128 — empirically the point where a single Lagged event
+    // resync (re-snapshotting last_known_status) stays under 100 ms for
+    // host counts we expect to support. Env can raise but not lower.
     let env_buffer: usize = std::env::var("SSE_BUFFER_SIZE")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+        .unwrap_or(128);
     let auto_buffer = (host_count as usize) * 3;
     let sse_buffer = env_buffer.max(auto_buffer).max(128);
     tracing::info!(sse_buffer, host_count, "📡 [SSE] Broadcast channel sized");
@@ -137,13 +144,13 @@ async fn main() -> anyhow::Result<()> {
     // Cap the query cache size. v0.3.0 multiplied per-sample payload size by
     // adding per-core CPU, per-interface network, and per-container docker_stats
     // JSONB — an unbounded cache here was the primary driver of the v0.3.x
-    // RSS regression observed in production. 200 entries ≈ a few hundred MB
-    // worst case and is generous for typical dashboard usage (a handful of
-    // hosts × a few range presets × a few concurrent viewers).
+    // RSS regression observed in production. 20 entries covers a handful of
+    // concurrent dashboard widget range presets; raise via env for heavy
+    // multi-user setups.
     let metrics_cache_max_entries: usize = std::env::var("METRICS_CACHE_MAX_ENTRIES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(200);
+        .unwrap_or(20);
     let metrics_query_cache = Arc::new(models::app_state::MetricsQueryCache::new(
         std::time::Duration::from_secs(120),
         metrics_cache_max_entries,
@@ -175,11 +182,29 @@ async fn main() -> anyhow::Result<()> {
         http_client: reqwest::Client::new(),
         db_pool,
         scrape_interval_secs,
+        max_db_connections,
         sse_tx,
         last_known_status: Arc::new(RwLock::new(HashMap::new())),
         metrics_query_cache: metrics_query_cache.clone(),
+        // Per-IP bucket — default raised from 10 → 30 when the per-username
+        // bucket was introduced. A NAT office with several concurrent
+        // dashboards needs headroom for the occasional typo'd password from
+        // one user without locking out the rest; the per-username bucket
+        // (below) keeps targeted brute force at the original tight cap.
         login_rate_limiter: Arc::new(LoginRateLimiter::new(
             std::env::var("LOGIN_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
+            std::time::Duration::from_secs(
+                std::env::var("LOGIN_RATE_LIMIT_WINDOW_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(300),
+            ),
+        )),
+        login_user_rate_limiter: Arc::new(LoginRateLimiter::new(
+            std::env::var("LOGIN_USER_RATE_LIMIT_MAX")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10),
@@ -222,7 +247,7 @@ async fn main() -> anyhow::Result<()> {
             .ok()
             .and_then(|v| v.parse().ok())
             .filter(|&n: &usize| n > 0)
-            .unwrap_or(512),
+            .unwrap_or(32),
         hosts_snapshot: hosts_snapshot.clone(),
     });
 
@@ -357,10 +382,40 @@ async fn main() -> anyhow::Result<()> {
         let raw = std::env::var("ALLOWED_ORIGINS")
             .unwrap_or_else(|_| "http://localhost:3001".to_string());
         tracing::info!("🌐 [CORS] ALLOWED_ORIGINS = {:?}", raw);
+        // Invalid origins were previously dropped silently by `filter_map` —
+        // a typo in `.env` would produce a working-looking CORS layer with
+        // zero allowed origins and *every* cross-origin request rejected.
+        // That looked identical to a "CORS is broken" bug at the browser
+        // but had nothing to do with the code path the operator was
+        // debugging. Log each reject loudly so the misconfiguration
+        // surfaces on startup.
         let origins: Vec<HeaderValue> = raw
             .split(',')
-            .filter_map(|s| s.trim().parse::<HeaderValue>().ok())
+            .filter_map(|s| {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                match trimmed.parse::<HeaderValue>() {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        tracing::warn!(
+                            origin = trimmed,
+                            err = %e,
+                            "⚠️ [CORS] Ignoring invalid ALLOWED_ORIGINS entry"
+                        );
+                        None
+                    }
+                }
+            })
             .collect();
+        if origins.is_empty() {
+            tracing::error!(
+                "❌ [CORS] No valid origins parsed from ALLOWED_ORIGINS — \
+                 every cross-origin request will be rejected. Check the env \
+                 var for typos (protocol required, e.g. https://example.com)."
+            );
+        }
         tracing::info!("🌐 [CORS] Parsed origins: {:?}", origins);
         CorsLayer::new()
             .allow_origin(origins)

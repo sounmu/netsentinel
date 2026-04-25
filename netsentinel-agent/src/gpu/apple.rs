@@ -1,4 +1,17 @@
+use std::sync::LazyLock;
+
 use crate::models::GpuInfo;
+
+/// Lazily cached `SocInfo` — `chip_name` / `gpu_cores` are hardware-fixed
+/// and never change at runtime, so re-querying IOKit on every 10 s scrape
+/// was wasted work. This is plain data (String + Vec<u32> + u8) and
+/// therefore `Send + Sync`, which lets it live in a `static LazyLock`.
+///
+/// `macmon::Sampler` cannot be cached the same way: it wraps
+/// `*const IOReportSubscription` + a `*mut __CFDictionary`, neither of
+/// which implements `Send`, so it must continue being constructed per
+/// call on whichever thread `spawn_blocking` picks. Keep that path short.
+static SOC_INFO: LazyLock<Option<macmon::SocInfo>> = LazyLock::new(|| macmon::SocInfo::new().ok());
 
 /// Collect Apple Silicon GPU metrics via macmon (IOReport).
 /// Returns empty vec on non-Apple-Silicon hardware or if macmon fails.
@@ -7,7 +20,7 @@ pub fn collect() -> Vec<GpuInfo> {
 }
 
 fn collect_inner() -> Option<Vec<GpuInfo>> {
-    let soc = macmon::SocInfo::new().ok()?;
+    let soc = SOC_INFO.as_ref()?;
     let mut sampler = macmon::Sampler::new().ok()?;
     // Sample for 200ms to match the CPU delta measurement duration in collect_sysinfo
     let metrics = sampler.get_metrics(200).ok()?;

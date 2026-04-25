@@ -164,13 +164,34 @@ pub async fn login(
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, AppError> {
-    // Rate limit by client IP (secure extraction, immune to X-Forwarded-For spoofing)
+    // Two-bucket rate limit: per-IP (broad, catches scatter-gun brute force)
+    // and per-username (tight, catches targeted brute force). Both must
+    // admit the request. The IP bucket is deliberately looser than the
+    // per-username one so NAT'd / Cloudflare-tunnel deployments with
+    // several dashboards do not 429 each other out when one user mistypes.
     let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    // `username` is trimmed + lowered-case for bucket keying only; the
+    // actual credential lookup below uses the supplied value unchanged so
+    // case-sensitivity policy still lives with `users_repo`.
+    let user_key = body.username.trim().to_lowercase();
 
     if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
-        tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited");
+        tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited (IP bucket)");
         return Err(AppError::TooManyRequests(format!(
             "Too many login attempts. Try again in {retry_after} seconds."
+        )));
+    }
+    if !user_key.is_empty()
+        && let Err(retry_after) = state.login_user_rate_limiter.check(&user_key)
+    {
+        // Intentionally don't log the username — that would turn our own
+        // rate-limit log into an account-enumeration oracle if it leaks.
+        tracing::warn!(
+            ip = %ip_str,
+            "🔒 [Auth] Login rate limited (user bucket)"
+        );
+        return Err(AppError::TooManyRequests(format!(
+            "Too many login attempts for this account. Try again in {retry_after} seconds."
         )));
     }
 
@@ -327,26 +348,22 @@ pub async fn setup(
         .fetch_one(&mut *tx)
         .await?;
     if count > 0 {
+        // Explicit rollback rather than relying on `Transaction`'s `Drop`
+        // impl. Drop-based rollback is correct in sqlx but happens
+        // *during stack unwind*, so a panic between this point and the
+        // actual drop would leak the writer lock until the runtime
+        // reclaims the connection. An explicit `await` here also gives
+        // us a deterministic place to log if rollback itself errors —
+        // which we currently swallow with `.ok()` because the only
+        // remediation is "tell the operator the writer lock is wedged",
+        // and at that point the next request will fail loudly anyway.
+        tx.rollback().await.ok();
         return Err(AppError::BadRequest(
             "Setup already completed. Use login instead.".to_string(),
         ));
     }
 
-    let user = users_repo::create_user(&mut *tx, &body.username, &password_hash, "admin")
-        .await
-        .map_err(|e| {
-            // `users.username UNIQUE` surfaces as a Database error here
-            // if another bootstrap race landed first. Fold it into the
-            // same friendly message as the count check above.
-            if let sqlx::Error::Database(ref dbe) = e
-                && dbe.message().to_lowercase().contains("unique")
-            {
-                return AppError::BadRequest(
-                    "Setup already completed. Use login instead.".to_string(),
-                );
-            }
-            AppError::Internal(format!("Failed to create user: {e:#}"))
-        })?;
+    let user = users_repo::create_user(&mut *tx, &body.username, &password_hash, "admin").await?;
 
     tx.commit()
         .await
@@ -532,19 +549,32 @@ pub struct SseTicketResponse {
 ///
 /// Requires a valid user JWT on the `Authorization` header. The returned ticket is
 /// bound to the caller's `user_id` and is consumed atomically on the SSE handshake.
-/// See `services::sse_ticket` for rationale.
+/// Per-user `ISSUE_COOLDOWN` (2 s) prevents a tight retry loop on a flaky
+/// SSE connection from burning the entire authenticated API rate-limit
+/// budget on ticket traffic — see `services::sse_ticket` for rationale.
 pub async fn issue_sse_ticket(
     auth: UserGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<SseTicketResponse>, AppError> {
-    let ticket = state
+    match state
         .sse_ticket_store
-        .issue(auth.claims.sub, auth.claims.iat);
-
-    Ok(Json(SseTicketResponse {
-        ticket,
-        expires_in_secs: 60,
-    }))
+        .issue(auth.claims.sub, auth.claims.iat)
+    {
+        crate::services::sse_ticket::IssueOutcome::Minted(ticket) => Ok(Json(SseTicketResponse {
+            ticket,
+            expires_in_secs: 60,
+        })),
+        crate::services::sse_ticket::IssueOutcome::CoolingDown { retry_after_secs } => {
+            tracing::warn!(
+                user_id = auth.claims.sub,
+                retry_after_secs,
+                "🔒 [Auth] SSE ticket issue throttled (per-user cooldown)"
+            );
+            Err(AppError::TooManyRequests(format!(
+                "SSE ticket issued too recently; retry in {retry_after_secs} s"
+            )))
+        }
+    }
 }
 
 /// Validate password strength: min 8 chars, uppercase, lowercase, digit, special char.

@@ -75,6 +75,13 @@ pub(crate) async fn initial_docker_load(docker: &Docker) -> Vec<DockerContainer>
 pub(crate) async fn docker_event_listener(cache: DockerCache) {
     let mut backoff = Duration::from_secs(5);
     const MAX_BACKOFF: Duration = Duration::from_secs(300);
+    /// Mirrors `docker_stats_poller::HEALTHY_DURATION_FOR_RESET` — the
+    /// stream must stay open this long before the backoff resets to its
+    /// 5 s floor. Without this gate, a daemon that accepts the connect
+    /// but kills the events stream within a second would oscillate at
+    /// the base interval, hammering a recovering daemon. 60 s is well
+    /// above any realistic startup race.
+    const HEALTHY_DURATION_FOR_RESET: Duration = Duration::from_secs(60);
 
     loop {
         let docker = match Docker::connect_with_local_defaults() {
@@ -106,7 +113,7 @@ pub(crate) async fn docker_event_listener(cache: DockerCache) {
 
         let mut stream = docker.events(Some(options));
         tracing::info!("🐳 [Docker Events] Listening for container lifecycle events");
-        backoff = Duration::from_secs(5); // reset on successful connection + stream start
+        let stream_started_at = std::time::Instant::now();
 
         while let Some(event_result) = stream.next().await {
             match event_result {
@@ -116,6 +123,19 @@ pub(crate) async fn docker_event_listener(cache: DockerCache) {
                     break;
                 }
             }
+        }
+
+        // Reset backoff only if the stream stayed open long enough to
+        // prove the daemon is stable. Fast-flap (connect ok, stream
+        // dies within seconds) keeps the exponential escalation alive.
+        if stream_started_at.elapsed() >= HEALTHY_DURATION_FOR_RESET {
+            backoff = Duration::from_secs(5);
+        } else {
+            tracing::warn!(
+                "⚠️  [Docker Events] Stream ended after {} s — keeping backoff at {} s",
+                stream_started_at.elapsed().as_secs(),
+                backoff.as_secs()
+            );
         }
 
         tracing::warn!(
@@ -269,7 +289,19 @@ pub(crate) async fn read_docker_cache(
 
             for c in containers.iter() {
                 for t in &targets {
-                    if c.image.contains(t.as_str()) {
+                    // Match against the image's **repository name** segment,
+                    // not a raw `contains`. The old substring match reported
+                    // `nginx-exporter` as matching a `nginx` target — which
+                    // is what the Prometheus folks ship *alongside* the real
+                    // nginx image, so a user watching `nginx` could silently
+                    // end up monitoring the exporter and miss the outage.
+                    //
+                    // The image reference format is
+                    // `[registry/]repo[:tag][@digest]` (see Docker image
+                    // reference spec). We care about the repo portion — take
+                    // the substring between the last `/` (or start) and the
+                    // first `:` / `@`, then match exactly.
+                    if image_repo_matches(&c.image, t.as_str()) {
                         matched.insert(t.as_str());
                         result.push(c.clone());
                         break;
@@ -294,6 +326,72 @@ pub(crate) async fn read_docker_cache(
     }
 }
 
+/// Match a Docker image reference against a target name, comparing only
+/// the **repository** component. Returns `true` when `target` equals the
+/// repo name exactly OR equals a full `namespace/repo` prefix.
+///
+/// Examples:
+///   - `image="nginx:1.25", target="nginx"`            → true
+///   - `image="nginx:1.25", target="nginx-exporter"`   → false  ← regression fix
+///   - `image="library/nginx:1.25", target="nginx"`    → true
+///   - `image="ghcr.io/foo/bar:v1@sha256:…", target="bar"` → true
+///   - `image="ghcr.io/foo/bar:v1", target="foo/bar"`  → true
+///
+/// Not a full OCI reference parser — a registry with a port
+/// (`localhost:5000/foo`) is deliberately treated as registry-stripped.
+/// Covers the common case that caused false positives without adding a
+/// dependency on an image-reference crate.
+fn image_repo_matches(image: &str, target: &str) -> bool {
+    // Drop `@sha256:…` digest suffix first.
+    let without_digest = image.split('@').next().unwrap_or(image);
+    // Drop the `:tag` suffix, but only when the colon belongs to the tag —
+    // a `host:port/` registry prefix has its own colon that must survive.
+    // Find the tag colon by looking only inside the segment after the
+    // final `/` (or the whole string if there is no `/`).
+    let path_start = without_digest.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let without_tag = match without_digest[path_start..].find(':') {
+        Some(rel) => &without_digest[..path_start + rel],
+        None => without_digest,
+    };
+
+    // Match full namespaced form first (`library/nginx` == target).
+    if without_tag == target {
+        return true;
+    }
+    // Then match the bare repo name (last path segment).
+    let repo_only = without_tag.rsplit('/').next().unwrap_or(without_tag);
+    repo_only == target
+}
+
+#[cfg(test)]
+mod image_match_tests {
+    use super::image_repo_matches;
+
+    #[test]
+    fn matches_bare_repo() {
+        assert!(image_repo_matches("nginx:1.25", "nginx"));
+        assert!(image_repo_matches("nginx", "nginx"));
+    }
+
+    #[test]
+    fn does_not_match_partial_repo_name() {
+        // The original bug: `nginx-exporter` used to match a `nginx` target.
+        assert!(!image_repo_matches("nginx-exporter:1.0", "nginx"));
+        assert!(!image_repo_matches("quay.io/nginx-exporter", "nginx"));
+    }
+
+    #[test]
+    fn matches_namespace_slash_repo() {
+        assert!(image_repo_matches("library/nginx:1.25", "nginx"));
+        assert!(image_repo_matches("library/nginx:1.25", "library/nginx"));
+    }
+
+    #[test]
+    fn matches_through_registry_and_digest() {
+        assert!(image_repo_matches("ghcr.io/foo/bar:v1@sha256:abc", "bar"));
+    }
+}
+
 /// Background task that polls container resource stats every 10 seconds.
 /// Uses bollard's one-shot stats API to avoid maintaining per-container streaming connections.
 /// Docker client is created once and reused across cycles; reconnects only on error.
@@ -302,18 +400,27 @@ pub(crate) async fn docker_stats_poller(
     stats_cache: DockerStatsCache,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
+    // If the Docker daemon pauses responding for minutes, `tokio::interval`
+    // would fire every missed tick back-to-back on recovery. `Delay` skips
+    // the backlog and resumes cleanly from the next boundary — avoids a
+    // burst of `poll_container_stats` calls that can overwhelm the
+    // freshly-recovered daemon.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let _ = interval.tick().await; // skip first immediate tick
 
     let mut backoff = Duration::from_secs(10);
     const MAX_BACKOFF: Duration = Duration::from_secs(300);
+    /// Minimum time the inner poll loop must run without erroring before
+    /// we trust the connection enough to reset the reconnect backoff.
+    /// Without this, a daemon that accepts a connect but then dies
+    /// within the first poll would endlessly oscillate at the base
+    /// 10 s backoff, hammering the recovering daemon with reconnects.
+    const HEALTHY_DURATION_FOR_RESET: Duration = Duration::from_secs(60);
 
     loop {
         // Connect once, reuse across multiple poll cycles
         let docker = match Docker::connect_with_local_defaults() {
-            Ok(d) => {
-                backoff = Duration::from_secs(10); // reset on success
-                d
-            }
+            Ok(d) => d,
             Err(e) => {
                 tracing::warn!(err = ?e, "Docker stats connection failed, retrying in {}s", backoff.as_secs());
                 tokio::time::sleep(backoff).await;
@@ -321,6 +428,7 @@ pub(crate) async fn docker_stats_poller(
                 continue;
             }
         };
+        let connected_at = std::time::Instant::now();
 
         // Inner loop: reuse this docker client until an error forces reconnect
         loop {
@@ -331,6 +439,19 @@ pub(crate) async fn docker_stats_poller(
             {
                 break; // reconnect outer loop
             }
+        }
+
+        // Reset backoff only when the inner loop stayed healthy long enough
+        // to prove the daemon is actually stable. A fast flap (connect OK,
+        // first poll errors) keeps the exponential escalation alive.
+        if connected_at.elapsed() >= HEALTHY_DURATION_FOR_RESET {
+            backoff = Duration::from_secs(10);
+        } else {
+            tracing::warn!(
+                "Docker poll loop died after {} s — keeping backoff at {} s",
+                connected_at.elapsed().as_secs(),
+                backoff.as_secs()
+            );
         }
     }
 }
@@ -344,7 +465,15 @@ const STATS_POLL_CONCURRENCY: usize = 16;
 const STATS_POLL_WARN_THRESHOLD: usize = 200;
 
 /// Single poll cycle: fetch stats for all running containers.
-/// Returns Err(()) if the Docker client should be reconnected.
+///
+/// Returns `Err(())` when the Docker client should be reconnected. The
+/// failure signal fires when **every** stats call in the cycle fails while
+/// the lifecycle cache still believes at least one container is running —
+/// that combination is characteristic of a dead daemon handle (for example,
+/// after `dockerd` restarts without tearing down the socket we connected
+/// through). Per-container failures on a healthy daemon (e.g. a container
+/// exiting mid-poll and returning 404) don't trigger reconnect since at
+/// least one sibling call still succeeds.
 async fn poll_container_stats(
     docker: &Docker,
     lifecycle_cache: &DockerCache,
@@ -441,13 +570,28 @@ async fn poll_container_stats(
         .collect()
         .await;
 
+    let attempted = results.len();
+    let succeeded = results.iter().filter(|r| r.is_some()).count();
+
     // Atomic swap: build new map first, then replace to avoid readers seeing empty cache
-    let mut new_map = HashMap::with_capacity(results.len());
+    let mut new_map = HashMap::with_capacity(succeeded);
     for stat in results.into_iter().flatten() {
         new_map.insert(stat.container_name.clone(), stat);
     }
     let mut cache = stats_cache.write().await;
     *cache = new_map;
+    drop(cache);
+
+    // Dead-daemon signal: every attempt failed despite the lifecycle cache
+    // reporting running containers. Surface this to the outer loop so it
+    // reconnects the Docker client instead of polling a stale handle forever.
+    if attempted > 0 && succeeded == 0 {
+        tracing::warn!(
+            attempted,
+            "Docker stats: all container stat calls failed in this cycle — reconnecting Docker client"
+        );
+        return Err(());
+    }
 
     Ok(())
 }

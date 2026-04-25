@@ -21,13 +21,14 @@ pub struct AppState {
     pub store: SharedStore,
     /// Shared HTTP client reused for alert notifications and any future external API calls
     pub http_client: reqwest::Client,
-    /// Database connection pool. Concrete type is resolved at build
-    /// time by the `backend-postgres` / `backend-sqlite` Cargo feature
-    /// flags (see `crate::db::DbPool`). The repo layer still expects
-    /// `&PgPool` directly today — that conversion is Phase 3 work.
+    /// Database connection pool. NetSentinel is SQLite-only; the alias
+    /// keeps downstream modules from importing sqlx internals directly.
     pub db_pool: crate::db::DbPool,
     /// Global scrape interval in seconds (from env var or default 10)
     pub scrape_interval_secs: u64,
+    /// Configured sqlx pool size, used by fan-out handlers to avoid
+    /// out-concurrencying the SQLite connection pool.
+    pub max_db_connections: u32,
     /// SSE event broadcast channel sender
     pub sse_tx: broadcast::Sender<SseBroadcast>,
     /// Cache of the most recently sent per-host status payload.
@@ -36,11 +37,28 @@ pub struct AppState {
     /// lock scopes are micro-duration data shuffles with **no `.await` inside**,
     /// so the lower per-access overhead of std RwLock beats tokio's cooperative
     /// scheduling cost. Do not add `.await` calls inside lock scopes.
-    pub last_known_status: Arc<RwLock<HashMap<String, HostStatusPayload>>>,
+    /// Values are `Arc<HostStatusPayload>` so `build_initial_events`
+    /// (SSE handshake + `Lagged` re-sync) can drain the map to a `Vec`
+    /// of cheap reference-count bumps under the read lock, then serialize
+    /// each payload **outside** the critical section. Writers either
+    /// insert a freshly-built `Arc::new(...)` or swap in a new `Arc`
+    /// via `Arc::make_mut` for in-place field updates.
+    pub last_known_status: Arc<RwLock<HashMap<String, Arc<HostStatusPayload>>>>,
     /// TTL cache for long-range metric queries (avoids repeated DB scans for same range)
     pub metrics_query_cache: Arc<MetricsQueryCache>,
-    /// Per-IP login attempt rate limiter
+    /// Per-IP login attempt rate limiter. Broad bucket that catches
+    /// scatter-gun brute force attempts varying the username. Default 30 per
+    /// 5 min — sized so a small NAT / Cloudflare-tunnel deployment with
+    /// several concurrent dashboards does not lock itself out when one user
+    /// mistypes a password. See the companion `login_user_rate_limiter`
+    /// below for the per-username bucket that catches targeted attempts.
     pub login_rate_limiter: Arc<LoginRateLimiter>,
+    /// Per-username login attempt rate limiter. Tighter bucket (default
+    /// 10 / 5 min) that catches focused brute force against a single
+    /// account. Keyed by the **supplied username**, so an attacker cannot
+    /// evade the per-account limit by rotating IPs. Both limiters must
+    /// admit the request; either tripping returns 429.
+    pub login_user_rate_limiter: Arc<LoginRateLimiter>,
     /// Number of trusted reverse proxies in front of the server.
     /// When 0, X-Forwarded-For is ignored and the peer socket IP is used.
     /// When >0, the Nth IP from the right of X-Forwarded-For is used.
@@ -90,8 +108,8 @@ impl AppState {
             e.into_inner()
         });
         for host in hosts {
-            lks.entry(host.host_key.clone())
-                .or_insert_with(|| HostStatusPayload {
+            lks.entry(host.host_key.clone()).or_insert_with(|| {
+                Arc::new(HostStatusPayload {
                     host_key: host.host_key.clone(),
                     display_name: host.display_name.clone(),
                     scrape_interval_secs: u64::try_from(host.scrape_interval_secs)
@@ -112,7 +130,8 @@ impl AppState {
                     memory_total_mb: host.memory_total_mb,
                     boot_time: host.boot_time,
                     ip_address: host.ip_address.clone(),
-                });
+                })
+            });
         }
     }
 }
@@ -349,10 +368,36 @@ impl MetricsQueryCache {
     }
 
     /// Build a cache key from query parameters.
-    /// Rounds timestamps to 5-minute boundaries so near-identical queries share a cache entry.
+    ///
+    /// Rounds timestamps so *near-identical* dashboard queries collapse onto a
+    /// shared cache entry. The rounding granularity is **dynamic** — it must
+    /// stay aligned with the frontend rounding contract in
+    /// `netsentinel-web/app/lib/api.ts` (default 60 s, live 1 m/5 m presets
+    /// use 10 s). Previously this was a fixed 300 s bucket, which meant a
+    /// 10-s-resolution live query hit the same cache key for the whole 5-min
+    /// window and saw stale data for up to 120 s (the cache TTL).
+    ///
+    /// The tiers here match the three `fetch_metrics_range` branches: raw
+    /// (≤ 6 h) gets tight 10 s buckets so live dashboards see fresh data;
+    /// 5-min rollup (6 h–14 d) gets 60 s buckets; wide re-aggregation
+    /// (> 14 d) keeps the old 300 s buckets since the query itself is
+    /// rounded to 15-min windows anyway. A wider bucket is never used for a
+    /// tighter request — that would flood the cache — but it's always safe
+    /// to use a tighter bucket for a longer range, just less cache-efficient.
     pub fn make_key(host_key: &str, start_ts: i64, end_ts: i64) -> String {
-        let start_rounded = start_ts / 300 * 300;
-        let end_rounded = (end_ts + 299) / 300 * 300;
+        const RAW_BOUNDARY_SECS: i64 = 6 * 3600;
+        const ROLLUP_BOUNDARY_SECS: i64 = 14 * 24 * 3600;
+
+        let range = (end_ts - start_ts).max(0);
+        let bucket: i64 = if range <= RAW_BOUNDARY_SECS {
+            10
+        } else if range <= ROLLUP_BOUNDARY_SECS {
+            60
+        } else {
+            300
+        };
+        let start_rounded = start_ts.div_euclid(bucket) * bucket;
+        let end_rounded = (end_ts + bucket - 1).div_euclid(bucket) * bucket;
         format!("{}:{}:{}", host_key, start_rounded, end_rounded)
     }
 
@@ -442,7 +487,13 @@ impl LoginRateLimiter {
     pub fn check(&self, ip: &str) -> Result<(), u64> {
         let mut map = match self.attempts.write() {
             Ok(m) => m,
-            Err(_) => return Ok(()), // On lock poisoning, allow the attempt
+            Err(_) => {
+                tracing::error!(
+                    limiter = std::any::type_name::<Self>(),
+                    "Rate limiter lock poisoned; failing closed"
+                );
+                return Err(self.window.as_secs().max(1));
+            }
         };
         let now = Instant::now();
         let entry = map.entry(ip.to_string()).or_insert_with(VecDeque::new);
@@ -526,6 +577,22 @@ mod tests {
     }
 
     #[test]
+    fn rate_limiter_fails_closed_on_poison() {
+        let limiter = Arc::new(LoginRateLimiter::new(10, Duration::from_secs(60)));
+        let limiter_for_thread = Arc::clone(&limiter);
+
+        let _ = std::thread::spawn(move || {
+            let _guard = limiter_for_thread.attempts.write().unwrap();
+            panic!("poison rate limiter lock");
+        })
+        .join();
+
+        let result = limiter.check("10.0.0.1");
+        assert!(result.is_err(), "poisoned limiter must reject requests");
+        assert_eq!(result.unwrap_err(), 60);
+    }
+
+    #[test]
     fn rate_limiter_expired_attempts_cleaned_up() {
         // Use a tiny window so attempts expire almost immediately
         let limiter = LoginRateLimiter::new(1, Duration::from_millis(1));
@@ -559,6 +626,30 @@ mod tests {
         for i in 0..7 {
             assert!(cache.get(&format!("k{i}")).is_none());
         }
+    }
+
+    #[test]
+    fn make_key_picks_different_bucket_per_tier() {
+        // Pin the dynamic-granularity contract: the three tiers
+        // (≤ 6 h / ≤ 14 d / > 14 d) emit distinguishable keys for the same
+        // absolute start. Without this, the fixed 300 s bucket regression
+        // silently resurfaces — live dashboards would see stale data again
+        // (see the comment on `make_key`).
+        let start: i64 = 1_700_000_000;
+        let k_live = MetricsQueryCache::make_key("h", start, start + 5 * 60);
+        let k_rollup = MetricsQueryCache::make_key("h", start, start + 12 * 3600);
+        let k_wide = MetricsQueryCache::make_key("h", start, start + 30 * 86400);
+        assert_ne!(k_live, k_rollup, "live vs rollup must not collide");
+        assert_ne!(k_rollup, k_wide, "rollup vs wide must not collide");
+
+        // Live tier advances one bucket after a 10 s shift (frontend's own
+        // live rounding granularity in `api.ts`). Pin the boundary so a
+        // regression to a coarser server bucket is caught immediately.
+        let k_live_next = MetricsQueryCache::make_key("h", start + 10, start + 10 + 5 * 60);
+        assert_ne!(
+            k_live, k_live_next,
+            "10 s shift on live range must cross a bucket boundary"
+        );
     }
 
     #[test]

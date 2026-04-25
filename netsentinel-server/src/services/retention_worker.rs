@@ -54,10 +54,18 @@ impl RetentionStats {
 }
 
 /// How many rows a single DELETE chunk processes. Keeps the SQLite writer
-/// lock held for O(10k row deletions) per chunk — at WAL + default page
-/// size that is single-digit-millisecond work — after which the task
-/// `yield_now()`s so the scraper's batch INSERT can slip in.
-const DELETE_CHUNK: i64 = 10_000;
+/// lock held for a bounded, cooperative slice per chunk — at WAL + default
+/// page size that is ≤ low-single-digit-millisecond work — after which the
+/// task `yield_now()`s so the scraper's batch INSERT can slip in.
+///
+/// 2_000 was chosen so the worst-case chunk duration stays comfortably below
+/// the scrape tick (10 s) and the SQLite `busy_timeout` (5 s). A cold first
+/// pass touching millions of stale rows used to hold the writer lock long
+/// enough that rollup (60 s tick) + scraper (10 s tick) + retention could
+/// all fail at once when the `busy_timeout` and `acquire_timeout` windows
+/// coincided. See commit `895312e` for the asymmetric pool-timeout split
+/// that is the other half of this fix.
+const DELETE_CHUNK: i64 = 2_000;
 
 /// Run one retention pass. Each table deletes in its own statement —
 /// wrapping all five in a single transaction could hold the writer

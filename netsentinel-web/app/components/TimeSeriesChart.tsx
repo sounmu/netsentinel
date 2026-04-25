@@ -2,7 +2,6 @@
 
 import { useState, useMemo, useCallback, useEffect, memo } from "react";
 import useSWR from "swr";
-import { useSSE } from "@/app/lib/sse-context";
 import {
   AreaChart,
   Area,
@@ -20,6 +19,8 @@ import {
   DockerContainerStats,
 } from "@/app/types/metrics";
 import { formatNetworkSpeed, formatNetworkSpeedTick } from "@/app/lib/formatters";
+import { mergeMetricsRows } from "@/app/lib/live-metrics";
+import { useHostLiveRows } from "@/app/lib/live-metrics-store";
 import DateTimePicker from "./DateTimePicker";
 import { useI18n } from "@/app/i18n/I18nContext";
 
@@ -59,7 +60,13 @@ function getPresetRange(minutes: number): { start: Date; end: Date } {
   return { start: new Date(end.getTime() - minutes * 60 * 1000), end };
 }
 
-function formatAxisTime(ts: string, rangeHours: number, locale: string): string {
+// Recharts hands the tick formatter a numeric epoch ms (the value
+// from the X-axis `domain`). The previous shape converted that number
+// to an ISO string at the call site, then this function called
+// `new Date(isoString)` — a pointless round-trip through string
+// formatting and parsing on every tick render. Take `number` directly
+// so `new Date(ms)` is a single allocation per tick.
+function formatAxisTime(ts: number, rangeHours: number, locale: string): string {
   const d = new Date(ts);
   const loc = locale === "ko" ? "ko-KR" : "en-US";
   if (rangeHours <= 1) return d.toLocaleTimeString(loc, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -146,17 +153,26 @@ interface ChartCardProps {
   yDomain?: [number, number] | ["auto", "auto"];
   span2?: boolean;
   height?: number;
+  curveType?: "monotone" | "linear" | "stepAfter";
 }
 
 const ChartCard = memo(function ChartCard({
   title, color, isLoading, data, dataKey, colors, rangeHours, timeTicks,
   yTickFormatter, tooltipFormatter, yUnit, yDomain, span2 = false, height = 192,
+  curveType = "monotone",
 }: ChartCardProps) {
   const { t, locale } = useI18n();
+  // Stringify the dataKey into a stable dep so `useMemo` recomputes only
+  // when the underlying keys actually change. The previous shape spread
+  // `dataKey` into the deps array directly, which made React see a new
+  // deps array identity on every render — defeating the memoisation — and
+  // is also a hooks-rule violation because the deps length varied with
+  // the prop (see the now-removed `eslint-disable` comment).
+  const keysSignature = Array.isArray(dataKey) ? dataKey.join("|") : dataKey;
   const keys = useMemo(
     () => (Array.isArray(dataKey) ? dataKey : [dataKey]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(dataKey)]
+    [keysSignature]
   );
   const lineColors = colors ?? [color];
   const domain = useMemo(() => {
@@ -213,7 +229,8 @@ const ChartCard = memo(function ChartCard({
               // producing a 5→3→5 flicker). `generateTimeTicks`
               // produces ~6 ticks so physical overlap is a non-issue.
               interval={0}
-              tickFormatter={(val) => formatAxisTime(new Date(val).toISOString(), rangeHours, locale)}
+              minTickGap={40}
+              tickFormatter={(val) => formatAxisTime(val as number, rangeHours, locale)}
               tick={{ fill: "var(--text-muted)", fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: "var(--border-subtle)" }}
@@ -245,7 +262,7 @@ const ChartCard = memo(function ChartCard({
             {keys.map((k, idx) => (
               <Area
                 key={k}
-                type="monotone"
+                type={curveType}
                 dataKey={k}
                 stroke={lineColors[idx % lineColors.length] ?? color}
                 strokeWidth={1.5}
@@ -276,47 +293,44 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     return { start, end, preset: "1h" };
   });
 
-  // For live presets (1m, 5m) the window must roll in step with real
-  // time — otherwise SSE-pushed data past the click-time `range.end`
-  // renders outside the domain or gets clipped, and the rightmost tick
-  // label never reflects "now".
+  const liveRows = useHostLiveRows(hostKey);
+  const latestLiveTimestamp = liveRows.at(-1)?.timestamp ?? null;
+
+  // For live presets (1m, 5m) the window rolls in step with **incoming
+  // data**, not wall clock — Grafana-realtime style. The chart's right
+  // edge anchors to the most recent SSE-pushed live-row timestamp
+  // (every ~10 s), so each shift coincides with new content arriving
+  // rather than the chart drifting on its own between scrapes.
   //
-  // Two gotchas the first attempt missed:
-  //   1. `setNowTick` must fire immediately on preset entry. Waiting
-  //      for the first interval tick leaves a 1–5 s window where the
-  //      chart points at a stale slice from minutes ago (whatever the
-  //      `nowTick` initializer happened to capture at mount).
-  //   2. The cadence must be tight enough that the drift between
-  //      `effectiveRange.end` and real time is less than one scrape
-  //      interval (10 s). Using 1 s keeps drift sub-second which is
-  //      imperceptible.
+  // Earlier wall-clock-based cadences (1 s `nowTick` setInterval and
+  // 5 s coarse grid) both produced the same complaint at different
+  // pitches — small frequent stutter vs. larger periodic jumps. The
+  // root cause was decoupling chart movement from data arrival; once
+  // those are tied together, every motion has a meaning ("a new
+  // sample landed") and the chart looks intentional, not jittery.
+  //
+  // Initial mount fallback uses `Date.now()` captured by the lazy
+  // `useState` initializer; once an SSE event lands the anchor jumps
+  // to that timestamp and stays in sync from there.
   const isLivePreset = range.preset === "1m" || range.preset === "5m";
-  const [nowTick, setNowTick] = useState<number>(() => Date.now());
-  useEffect(() => {
-    if (!isLivePreset) return;
-    // Catch up on preset entry / switch. Deferred to a microtask instead
-    // of being called synchronously in the effect body so we don't trip
-    // `react-hooks/set-state-in-effect` — a synchronous setState here
-    // triggers an immediate cascading render before paint, whereas the
-    // microtask-scheduled one lands in the same commit cycle without
-    // the double render. The perceived latency difference is zero.
-    queueMicrotask(() => setNowTick(Date.now()));
-    const id = setInterval(() => setNowTick(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [isLivePreset, range.preset]);
+  const [initialAnchorTs] = useState<number>(() => Date.now());
+  const liveAnchorTs = useMemo(() => {
+    if (!isLivePreset) return null;
+    if (latestLiveTimestamp) {
+      return new Date(latestLiveTimestamp).getTime();
+    }
+    return initialAnchorTs;
+  }, [isLivePreset, latestLiveTimestamp, initialAnchorTs]);
 
   const effectiveRange = useMemo<TimeRange>(() => {
-    if (!isLivePreset) return range;
+    if (!isLivePreset || liveAnchorTs == null) return range;
     const windowMs = range.preset === "1m" ? 60_000 : 300_000;
     return {
-      start: new Date(nowTick - windowMs),
-      end: new Date(nowTick),
+      start: new Date(liveAnchorTs - windowMs),
+      end: new Date(liveAnchorTs),
       preset: range.preset,
     };
-  }, [range, isLivePreset, nowTick]);
-
-  const { metricsMap } = useSSE();
-  const liveMetrics = metricsMap[hostKey] ?? null;
+  }, [range, isLivePreset, liveAnchorTs]);
 
   const swrKey = useMemo(
     () =>
@@ -324,10 +338,19 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         hostKey,
         effectiveRange.start,
         effectiveRange.end,
-        // Live presets round to 10 s so the fetch window matches the
-        // chart's 1 min / 5 min display window within one scrape.
-        // Static presets keep the 60 s default for better SWR dedup.
-        isLivePreset ? 10 : 60,
+        // Round-up granularity for the SWR cache key. Live presets used
+        // to round to 10 s, which meant the URL rotated **every 10 s of
+        // wall clock** — and SWR treats a different URL as a different
+        // cache entry. Combined with `keepPreviousData: false`, that
+        // emptied `rows` for the duration of each fetch (~hundreds of
+        // ms) and produced a visible flicker right after every SSE
+        // synthetic point landed.
+        //
+        // Bumping live presets to 30 s thirds the rotation rate. Recent
+        // SSE samples are held in a tiny per-chart ring buffer, so the
+        // REST baseline can lag briefly without dropping an in-between
+        // point from the visible series.
+        isLivePreset ? 30 : 60,
       ),
     [hostKey, effectiveRange, isLivePreset]
   );
@@ -337,29 +360,24 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     revalidateOnReconnect: false,
     refreshInterval: 0,
     dedupingInterval: 30000,
+    // `keepPreviousData: true` even on live presets. The live-row merge
+    // below filters by the visible window and de-dupes against REST rows,
+    // so a stale baseline cannot draw the live points in the wrong place.
+    // Dropping `rows` on every key rotation produced a 10-s-period flicker
+    // while the fresh fetch was in flight.
     keepPreviousData: true,
   });
 
-  const allRows = useMemo(() => {
-    if (!liveMetrics) return rows;
-    const lastRestTs = rows.length > 0 ? new Date(rows[rows.length - 1].timestamp).getTime() : 0;
-    const liveTs = new Date(liveMetrics.timestamp).getTime();
-    if (liveTs <= lastRestTs) return rows;
-    const syntheticRow: MetricsRow = {
-      id: 0, host_key: liveMetrics.host_key, display_name: liveMetrics.display_name,
-      is_online: liveMetrics.is_online, cpu_usage_percent: liveMetrics.cpu_usage_percent,
-      memory_usage_percent: liveMetrics.memory_usage_percent,
-      load_1min: liveMetrics.load_1min, load_5min: liveMetrics.load_5min, load_15min: liveMetrics.load_15min,
-      networks: null, docker_containers: null, ports: null,
-      disks: liveMetrics.disks ?? null,
-      processes: null,
-      temperatures: liveMetrics.temperatures ?? null,
-      gpus: null, cpu_cores: null, network_interfaces: null,
-      docker_stats: liveMetrics.docker_stats ?? null,
-      timestamp: liveMetrics.timestamp,
-    };
-    return [...rows, syntheticRow];
-  }, [rows, liveMetrics]);
+  const allRows = useMemo(
+    () =>
+      mergeMetricsRows(
+        rows,
+        liveRows,
+        effectiveRange.start.getTime(),
+        effectiveRange.end.getTime(),
+      ),
+    [rows, liveRows, effectiveRange],
+  );
 
   const isInitialLoading = allRows.length === 0 && isValidating;
 
@@ -413,18 +431,39 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       cpu.push({ ts: tsMs, "CPU (%)": +r.cpu_usage_percent.toFixed(1) });
       ram.push({ ts: tsMs, "RAM (%)": +r.memory_usage_percent.toFixed(1) });
 
-      // Network: RX + TX merged
-      if (i > 0) {
+      // Network Bandwidth — backend-provided rate preferred.
+      //
+      // The backend now emits `rx_bytes_per_sec` / `tx_bytes_per_sec`
+      // alongside the cumulative `total_*_bytes` counters (raw rows carry
+      // either the agent-reported rate or the server delta fallback; rollup
+      // rows carry the 5 min bucket average). When rate fields are present we
+      // push every sample directly — including the first one, which
+      // eliminates the left-edge gap the old delta-based path had on
+      // 1 m / 5 m live presets.
+      //
+      // The `i > 0` delta-fallback branch survives for rows that pre-
+      // date the 0002 rollup migration (or agents still on the old
+      // version): they expose only the counters, so we differentiate
+      // them here just like before.
+      const currNet = r.networks;
+      if (
+        currNet &&
+        typeof currNet.rx_bytes_per_sec === "number" &&
+        typeof currNet.tx_bytes_per_sec === "number"
+      ) {
+        net.push({
+          ts: tsMs,
+          RX: +currNet.rx_bytes_per_sec.toFixed(0),
+          TX: +currNet.tx_bytes_per_sec.toFixed(0),
+        });
+      } else if (i > 0) {
         const prev = s[i - 1];
-        const currNet = r.networks;
         const prevNet = prev.networks;
         if (currNet && prevNet) {
           const dt = Math.max((tsMs - new Date(prev.timestamp).getTime()) / 1000, 1);
           const rxD = currNet.total_rx_bytes - prevNet.total_rx_bytes;
           const txD = currNet.total_tx_bytes - prevNet.total_tx_bytes;
           net.push({ ts: tsMs, RX: rxD >= 0 ? +(rxD / dt).toFixed(0) : 0, TX: txD >= 0 ? +(txD / dt).toFixed(0) : 0 });
-        } else if (!currNet && liveMetrics && r.timestamp === liveMetrics.timestamp) {
-          net.push({ ts: tsMs, RX: +liveMetrics.network_rate.rx_bytes_per_sec.toFixed(0), TX: +liveMetrics.network_rate.tx_bytes_per_sec.toFixed(0) });
         }
       }
 
@@ -478,10 +517,16 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       dockerMemData, dockerMemKeys: [...dockerMemNames],
       tempData,
     };
-  }, [allRows, liveMetrics]);
+    // `allRows` is itself derived from `[rows, liveMetrics]`, so including
+    // `liveMetrics` in this deps array is redundant — every identity change
+    // of `liveMetrics` already flows through `allRows` and would re-fire
+    // this memo anyway. Dropping it matches the hooks-exhaustive-deps lint.
+  }, [allRows]);
 
   const cpuDomain = useMemo(() => autoYDomainMulti(chartData.cpu, ["CPU (%)"], 0), [chartData.cpu]);
   const ramDomain = useMemo(() => autoYDomainMulti(chartData.ram, ["RAM (%)"], 0), [chartData.ram]);
+
+  const curveType: "monotone" | "linear" = isLivePreset ? "linear" : "monotone";
 
   return (
     <div>
@@ -514,6 +559,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           timeTicks={timeTicks}
           yTickFormatter={fmtPercent}
           yDomain={cpuDomain}
+          curveType={curveType}
         />
         <ChartCard
           title={t.chart.ramUsage}
@@ -525,6 +571,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           timeTicks={timeTicks}
           yTickFormatter={fmtPercent}
           yDomain={ramDomain}
+          curveType={curveType}
         />
 
         {/* Network Bandwidth (RX + TX) */}
@@ -539,6 +586,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
           timeTicks={timeTicks}
           yTickFormatter={formatNetworkSpeedTick}
           tooltipFormatter={fmtNetTooltip}
+          curveType={curveType}
         />
 
         {/* CPU Temperature */}
@@ -552,6 +600,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtTemp}
+            curveType={curveType}
           />
         )}
 
@@ -567,6 +616,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtPercent}
+            curveType={curveType}
           />
         )}
 
@@ -583,6 +633,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             timeTicks={timeTicks}
             yTickFormatter={formatNetworkSpeedTick}
             tooltipFormatter={fmtIoTooltip}
+            curveType={curveType}
           />
         )}
 
@@ -598,6 +649,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtPercent}
+            curveType={curveType}
           />
         )}
 
@@ -613,6 +665,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             rangeHours={rangeHours}
             timeTicks={timeTicks}
             yTickFormatter={fmtMb}
+            curveType={curveType}
           />
         )}
       </div>

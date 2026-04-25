@@ -9,7 +9,6 @@ use crate::models::app_state::AppState;
 use crate::repositories::alert_configs_repo::{
     self, AlertConfigRow, MetricType, UpsertAlertRequest,
 };
-use crate::repositories::hosts_repo;
 use crate::services::auth::{AdminGuard, UserGuard};
 use crate::services::hosts_snapshot;
 
@@ -28,12 +27,28 @@ pub async fn update_global_configs(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Vec<UpsertAlertRequest>>,
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
-    let mut results = Vec::new();
+    // Validate every request before touching the DB so a bad rule in
+    // position N never partially-applies rules 0..N-1.
     for req in &body {
         validate_alert_request(req)?;
-        let row = alert_configs_repo::upsert_alert_config(&state.db_pool, None, req).await?;
+    }
+
+    // Wrap the whole batch in one transaction. The previous implementation
+    // looped over the requests with the bare `&pool` executor, so a
+    // mid-loop UPSERT failure (UNIQUE conflict, FK violation, the writer
+    // lock timing out) would leave alert rules half-applied — exactly the
+    // shape of bug that produces "I clicked save but only some thresholds
+    // updated" support tickets. `BEGIN IMMEDIATE` (sqlx's default for
+    // SQLite WAL transactions) holds the writer lock for the upsert chain
+    // and rolls back atomically on the first `?` propagation.
+    let mut tx = state.db_pool.begin().await?;
+    let mut results = Vec::with_capacity(body.len());
+    for req in &body {
+        let row = alert_configs_repo::upsert_alert_config(&mut *tx, None, req).await?;
         results.push(row);
     }
+    tx.commit().await?;
+
     hosts_snapshot::refresh(&state.db_pool, &state.hosts_snapshot).await;
     tracing::info!("🔔 [AlertConfig] Global alert configs updated");
     Ok(Json(results))
@@ -56,15 +71,25 @@ pub async fn update_host_configs(
     Path(host_key): Path<String>,
     Json(body): Json<Vec<UpsertAlertRequest>>,
 ) -> Result<Json<Vec<AlertConfigRow>>, AppError> {
-    let mut results = Vec::new();
+    // Validate up-front, then run the whole upsert chain inside one
+    // transaction — see `update_global_configs` for the rationale. The
+    // per-host path is the same shape with a non-NULL host_key bind.
     for req in &body {
         validate_alert_request(req)?;
-        let row =
-            alert_configs_repo::upsert_alert_config(&state.db_pool, Some(&host_key), req).await?;
+    }
+
+    let mut tx = state.db_pool.begin().await?;
+    let mut results = Vec::with_capacity(body.len());
+    for req in &body {
+        let row = alert_configs_repo::upsert_alert_config(&mut *tx, Some(&host_key), req).await?;
         results.push(row);
     }
+    tx.commit().await?;
+
     hosts_snapshot::refresh(&state.db_pool, &state.hosts_snapshot).await;
-    tracing::info!(host_key = %host_key, "🔔 [AlertConfig] Per-host alert configs updated");
+    // `?host_key` (Debug) escapes control chars so a maliciously-crafted
+    // path param cannot forge additional log lines (CRLF injection).
+    tracing::info!(host_key = ?host_key, "🔔 [AlertConfig] Per-host alert configs updated");
     Ok(Json(results))
 }
 
@@ -76,10 +101,9 @@ pub async fn delete_host_configs(
 ) -> Result<Json<serde_json::Value>, AppError> {
     let deleted = alert_configs_repo::delete_host_configs(&state.db_pool, &host_key).await?;
     if !deleted {
-        return Err(AppError::NotFound(format!(
-            "No alert config overrides found for host: {}",
-            host_key
-        )));
+        return Err(AppError::NotFound(
+            "No alert config overrides found for host".to_string(),
+        ));
     }
     hosts_snapshot::refresh(&state.db_pool, &state.hosts_snapshot).await;
     tracing::info!(host_key = %host_key, "🔔 [AlertConfig] Per-host overrides deleted, reverted to global");
@@ -121,12 +145,32 @@ pub async fn bulk_update_host_configs(
         validate_alert_request(req)?;
     }
 
-    // Make sure every targeted host actually exists; this gives a cleaner 4xx
-    // than letting a FK violation surface from Postgres.
-    for hk in &body.host_keys {
-        if hosts_repo::get_host(&state.db_pool, hk).await?.is_none() {
-            return Err(AppError::BadRequest(format!("unknown host_key: {hk}")));
-        }
+    // Existence check via the in-memory hosts snapshot instead of
+    // `hosts_repo::get_host` per host. The snapshot refreshes on every
+    // host mutation handler and on a 60 s background tick, so it is
+    // authoritative for "host registered" checks; the previous N+1 DB
+    // round-trip cost up to 500 SELECTs against the writer-locked
+    // SQLite pool just to give a friendlier error than the eventual
+    // FK violation. The error body intentionally drops the unknown
+    // `host_key` value — same CRLF-reflection rationale as the other
+    // handlers.
+    let snapshot = hosts_snapshot::load(&state.hosts_snapshot);
+    let known: std::collections::HashSet<&str> =
+        snapshot.hosts.iter().map(|h| h.host_key.as_str()).collect();
+    if let Some(unknown) = body
+        .host_keys
+        .iter()
+        .find(|hk| !known.contains(hk.as_str()))
+    {
+        // Log the offending value (Debug-formatted to escape CRLF) so
+        // operators can still diagnose without echoing it to clients.
+        tracing::warn!(
+            unknown_host_key = ?unknown,
+            "🔔 [AlertConfig] bulk apply rejected: unknown host_key"
+        );
+        return Err(AppError::BadRequest(
+            "one or more host_key entries are not registered".into(),
+        ));
     }
 
     let rows = alert_configs_repo::bulk_upsert_host_configs(

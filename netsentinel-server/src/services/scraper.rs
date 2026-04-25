@@ -7,7 +7,7 @@ use futures::StreamExt;
 use futures::stream;
 use reqwest::Client;
 
-use crate::models::agent_metrics::{AgentMetrics, SystemInfoResponse};
+use crate::models::agent_metrics::{AgentMetrics, SystemInfoResponse, deserialize_agent_metrics};
 use crate::models::app_state::{AlertConfig, AppState, HostRecord};
 use crate::models::sse_payloads::{HostStatusPayload, SseBroadcast};
 use crate::repositories::{alert_configs_repo, hosts_repo, metrics_repo};
@@ -171,8 +171,20 @@ async fn scrape_all(
             .unwrap_or(state.scrape_interval_secs);
         let host_interval = Duration::from_secs(scrape_interval_secs);
 
+        // Slack on the "is host due?" check to absorb 1-Hz scheduler
+        // jitter. Without it the cadence drifts by exactly one tick
+        // (1 s) per scrape: the outer loop tick fires at T = 0, 1, 2, …
+        // but `last_attempt` is stamped via `Instant::now()` *after*
+        // tick fire (T = 0 + ε). At T = host_interval the elapsed comes
+        // out as `host_interval − ε`, which is `< host_interval`, so the
+        // comparison treats the host as "not yet due" and we skip until
+        // T = host_interval + 1. That turned a configured 10 s scrape
+        // into an effective ~11 s SSE cadence. 500 ms is generous
+        // enough for any realistic clock jitter while still firing
+        // strictly before the next interval boundary.
+        const SCHEDULER_SLACK: Duration = Duration::from_millis(500);
         if let Some(last_attempt) = last_scrape_attempt.get(&host.host_key)
-            && last_attempt.elapsed() < host_interval
+            && last_attempt.elapsed() + SCHEDULER_SLACK < host_interval
         {
             continue;
         }
@@ -182,7 +194,11 @@ async fn scrape_all(
         {
             let power = backoff.consecutive_failures.min(MAX_BACKOFF_POWER);
             let wait = host_interval * 2u32.pow(power);
-            if backoff.last_attempt.elapsed() < wait {
+            // Same `SCHEDULER_SLACK` rationale as above — the backoff
+            // wait is wall-clock derived but checked at 1-Hz tick
+            // resolution, so without slack a `wait = 10 s` would also
+            // drift by one tick per cycle.
+            if backoff.last_attempt.elapsed() + SCHEDULER_SLACK < wait {
                 continue;
             }
         }
@@ -203,7 +219,6 @@ async fn scrape_all(
             jwt_token: jwt_token.clone(),
             system_info_updated_at: host.system_info_updated_at,
             scrape_interval_secs,
-            is_known_host: true,
         });
     }
 
@@ -298,7 +313,6 @@ struct ScrapeContext {
     jwt_token: String,
     system_info_updated_at: Option<DateTime<Utc>>,
     scrape_interval_secs: u64,
-    is_known_host: bool,
 }
 
 async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
@@ -350,13 +364,15 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                 }
             }
 
-            match bincode::deserialize::<AgentMetrics>(&bytes) {
+            match deserialize_agent_metrics(&bytes) {
                 Ok(mut metrics) => {
                     // Defense-in-depth: cap untrusted Vec fields to sane maximums
                     metrics.cpu_cores.truncate(1024);
                     metrics.network_interfaces.truncate(256);
                     metrics.docker_stats.truncate(512);
                     metrics.system.processes.truncate(100);
+
+                    sanitize_metrics(&mut metrics);
 
                     if metrics.agent_version.is_empty() {
                         tracing::warn!(target = %ctx.target, "⚠️ [Scraper] Agent has no version field — consider upgrading");
@@ -397,6 +413,53 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
     }
 }
 
+fn sanitize_metrics(metrics: &mut AgentMetrics) {
+    metrics.system.cpu_usage_percent =
+        metrics_service::sanitize_f32(metrics.system.cpu_usage_percent);
+    metrics.system.memory_usage_percent =
+        metrics_service::sanitize_f32(metrics.system.memory_usage_percent);
+
+    metrics.load_average.one_min = metrics_service::sanitize_f64(metrics.load_average.one_min);
+    metrics.load_average.five_min = metrics_service::sanitize_f64(metrics.load_average.five_min);
+    metrics.load_average.fifteen_min =
+        metrics_service::sanitize_f64(metrics.load_average.fifteen_min);
+
+    metrics.network.rx_bytes_per_sec =
+        metrics_service::sanitize_f64(metrics.network.rx_bytes_per_sec);
+    metrics.network.tx_bytes_per_sec =
+        metrics_service::sanitize_f64(metrics.network.tx_bytes_per_sec);
+
+    for disk in &mut metrics.system.disks {
+        disk.usage_percent = metrics_service::sanitize_f32(disk.usage_percent);
+        disk.read_bytes_per_sec = metrics_service::sanitize_f64(disk.read_bytes_per_sec);
+        disk.write_bytes_per_sec = metrics_service::sanitize_f64(disk.write_bytes_per_sec);
+        disk.total_gb = metrics_service::sanitize_f64(disk.total_gb);
+        disk.available_gb = metrics_service::sanitize_f64(disk.available_gb);
+    }
+
+    for core in &mut metrics.cpu_cores {
+        *core = metrics_service::sanitize_f32(*core);
+    }
+
+    for temperature in &mut metrics.system.temperatures {
+        temperature.temperature_c = metrics_service::sanitize_f32(temperature.temperature_c);
+    }
+
+    for gpu in &mut metrics.system.gpus {
+        if let Some(power_watts) = gpu.power_watts {
+            gpu.power_watts = Some(metrics_service::sanitize_f32(power_watts));
+        }
+    }
+
+    for stats in &mut metrics.docker_stats {
+        stats.cpu_percent = metrics_service::sanitize_f32(stats.cpu_percent);
+    }
+
+    for process in &mut metrics.system.processes {
+        process.cpu_usage = metrics_service::sanitize_f32(process.cpu_usage);
+    }
+}
+
 // ──────────────────────────────────────────────
 // Success path
 // ──────────────────────────────────────────────
@@ -404,17 +467,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
 /// System info refresh interval: 24 hours
 const SYSTEM_INFO_REFRESH_SECS: i64 = 24 * 3600;
 
-async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOutcome {
-    // SP-01: Only call ensure_host_registered for unknown hosts — avoids N
-    // unnecessary DB writes per scrape cycle for already-registered hosts.
-    if !ctx.is_known_host
-        && let Err(e) =
-            hosts_repo::ensure_host_registered(&ctx.state.db_pool, &ctx.target, &metrics.hostname)
-                .await
-    {
-        tracing::warn!(err = ?e, "⚠️ [Scraper] Failed to auto-register host");
-    }
-
+async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOutcome {
     match metrics_service::process_metrics(
         &metrics,
         &ctx.target,
@@ -427,17 +480,24 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
         Ok(result) => {
             tracing::info!(target = %ctx.target, "✅ [Scraper] {}", result.log_msg);
 
+            metrics.network.rx_bytes_per_sec = result.metrics_payload.network_rate.rx_bytes_per_sec;
+            metrics.network.tx_bytes_per_sec = result.metrics_payload.network_rate.tx_bytes_per_sec;
+
+            // Wrap once so every subscriber gets an `Arc::clone` via the
+            // broadcast fan-out rather than a full `HostMetricsPayload` clone
+            // (see `SseBroadcast` docs).
             let _ = ctx
                 .state
                 .sse_tx
-                .send(SseBroadcast::Metrics(result.metrics_payload));
+                .send(SseBroadcast::Metrics(Arc::new(result.metrics_payload)));
 
             if let Some(status_payload) = result.status_payload {
+                let arc = Arc::new(status_payload);
                 // SAFETY: no .await while lock is held
                 if let Ok(mut lks) = ctx.state.last_known_status.write() {
-                    lks.insert(ctx.target.clone(), status_payload.clone());
+                    lks.insert(ctx.target.clone(), Arc::clone(&arc));
                 }
-                let _ = ctx.state.sse_tx.send(SseBroadcast::Status(status_payload));
+                let _ = ctx.state.sse_tx.send(SseBroadcast::Status(arc));
             }
         }
         Err(e) => {
@@ -448,24 +508,15 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
 
     // Recovery (host back online) alert.
     //
-    // Fast path: most cycles the host is already "online" (offline_alerted == false),
-    // so we peek at the state under a read lock first and skip the write lock entirely.
-    // Only when a transition is actually needed do we re-acquire as writer.
-    let needs_recovery_check = {
-        // SAFETY: no .await while lock is held
-        match ctx.state.store.read() {
-            Ok(store) => store
-                .hosts
-                .get(ctx.target.as_str())
-                .is_some_and(|r| r.alert_state.offline_alerted),
-            Err(e) => {
-                tracing::warn!(err = %e, "⚠️ [Scraper] Store read lock poisoned in recovery check");
-                return ScrapeOutcome::Online(Box::new(metrics));
-            }
-        }
-    };
-
-    let recovery_msg = if needs_recovery_check {
+    // Single write-lock acquisition: previously this path peeked under a
+    // read lock to decide whether a transition was pending, then reopened
+    // as writer when one was. That two-step pattern let another task slip
+    // between the read and the write — which we then had to re-check —
+    // and it doubled lock entries on the hot path for zero latency win:
+    // the write guard itself is cheap, and the recovery branch is rare.
+    // Taking write once up front eliminates the TOCTOU and one whole
+    // `store` critical section per scrape cycle.
+    let recovery_msg = {
         // SAFETY: no .await while lock is held
         let mut store = match ctx.state.store.write() {
             Ok(s) => s,
@@ -474,33 +525,14 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
                 return ScrapeOutcome::Online(Box::new(metrics));
             }
         };
-        let Some(record) = store.hosts.get_mut(ctx.target.as_str()) else {
-            return ScrapeOutcome::Online(Box::new(metrics));
-        };
-
-        // Re-check under the write lock in case another task flipped the flag
-        // between our read and write acquisitions.
-        if record.alert_state.offline_alerted {
-            let last_offline = record.alert_state.last_offline_alert;
-            let cooldown_passed =
-                last_offline.is_none_or(|t| t.elapsed() > Duration::from_secs(FLAP_COOLDOWN_SECS));
-
-            if cooldown_passed {
-                record.alert_state.offline_alerted = false;
-                record.alert_state.last_recovery_alert = Some(Instant::now());
-                Some(format!(
-                    "✅ **[Host Recovery]** `{}` — agent is back online.",
-                    metrics.hostname
-                ))
-            } else {
-                None
+        match store.hosts.get_mut(ctx.target.as_str()) {
+            Some(record) => {
+                mark_recovery_if_cooldown_passed(record, &metrics.hostname, Instant::now())
             }
-        } else {
-            None
+            None => None,
         }
-    } else {
-        None
     };
+    let was_offline = recovery_msg.is_some();
 
     // Recovery alert: fan out to webhooks + alert_history write on a detached
     // task. `send_alert` can spend hundreds of ms on external HTTP, and the
@@ -526,7 +558,6 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
     }
 
     // ── System info fetch (on reconnection or stale > 24h) ──
-    let was_offline = needs_recovery_check;
     let sys_info_stale = ctx.system_info_updated_at.is_none_or(|t| {
         Utc::now().signed_duration_since(t).num_seconds() > SYSTEM_INFO_REFRESH_SECS
     });
@@ -542,6 +573,31 @@ async fn handle_success(metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOut
     }
 
     ScrapeOutcome::Online(Box::new(metrics))
+}
+
+fn mark_recovery_if_cooldown_passed(
+    record: &mut HostRecord,
+    hostname: &str,
+    now: Instant,
+) -> Option<String> {
+    if !record.alert_state.offline_alerted {
+        return None;
+    }
+
+    let cooldown_passed = record
+        .alert_state
+        .last_recovery_alert
+        .is_none_or(|t| now.duration_since(t) > Duration::from_secs(FLAP_COOLDOWN_SECS));
+
+    if !cooldown_passed {
+        return None;
+    }
+
+    record.alert_state.offline_alerted = false;
+    record.alert_state.last_recovery_alert = Some(now);
+    Some(format!(
+        "✅ **[Host Recovery]** `{hostname}` — agent is back online."
+    ))
 }
 
 /// Fetch system info from the agent and persist to DB + in-memory status.
@@ -596,8 +652,9 @@ async fn fetch_and_store_system_info(
 
     // Update in-memory SSE status
     if let Ok(mut lks) = state.last_known_status.write()
-        && let Some(status) = lks.get_mut(target)
+        && let Some(arc) = lks.get_mut(target)
     {
+        let status = Arc::make_mut(arc);
         status.os_info = Some(info.os.clone());
         status.cpu_model = Some(info.cpu_model.clone());
         status.memory_total_mb = Some(info.memory_total_mb as i64);
@@ -659,9 +716,9 @@ async fn handle_down(
         let alert = if record.alert_state.offline_alerted {
             None
         } else {
-            let last_recovery = record.alert_state.last_recovery_alert;
+            let last_offline = record.alert_state.last_offline_alert;
             let cooldown_passed =
-                last_recovery.is_none_or(|t| t.elapsed() > Duration::from_secs(FLAP_COOLDOWN_SECS));
+                last_offline.is_none_or(|t| t.elapsed() > Duration::from_secs(FLAP_COOLDOWN_SECS));
 
             if cooldown_passed {
                 record.alert_state.offline_alerted = true;
@@ -687,9 +744,8 @@ async fn handle_down(
         let server_ts = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
 
         if let Ok(mut lks) = state.last_known_status.write() {
-            let status = lks
-                .entry(host_key.clone())
-                .or_insert_with(|| HostStatusPayload {
+            let arc = lks.entry(host_key.clone()).or_insert_with(|| {
+                Arc::new(HostStatusPayload {
                     host_key: host_key.clone(),
                     display_name: hostname.clone(),
                     scrape_interval_secs,
@@ -707,14 +763,21 @@ async fn handle_down(
                     memory_total_mb: None,
                     boot_time: None,
                     ip_address: None,
-                });
-            // Update only the fields that change — reuse existing Vec data (no clone)
+                })
+            });
+            // `Arc::make_mut` is cheap (no-op) while the Arc is uniquely owned —
+            // the common case when no SSE subscriber is currently holding the
+            // previous broadcast. It clones only when a slow consumer still
+            // references the prior payload, which is exactly when we need to
+            // avoid mutating a value other tasks are reading.
+            let status = Arc::make_mut(arc);
             status.scrape_interval_secs = scrape_interval_secs;
             status.is_online = false;
             status.last_seen = server_ts;
             status.processes = vec![];
+            let broadcast_arc = Arc::clone(arc);
 
-            let _ = state.sse_tx.send(SseBroadcast::Status(status.clone()));
+            let _ = state.sse_tx.send(SseBroadcast::Status(broadcast_arc));
         }
     }
 
@@ -734,5 +797,46 @@ async fn handle_down(
                 tracing::error!(err = ?e, "⚠️ [AlertHistory] Failed to log host_down");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_cooldown_uses_last_recovery_alert() {
+        let now = Instant::now();
+        let mut record = HostRecord::new("test-host".to_string());
+        record.alert_state.offline_alerted = true;
+        record.alert_state.last_offline_alert = Some(now);
+
+        let first = mark_recovery_if_cooldown_passed(&mut record, "test-host", now);
+        assert!(first.is_some(), "first recovery after host down must send");
+        assert!(!record.alert_state.offline_alerted);
+        assert_eq!(record.alert_state.last_recovery_alert, Some(now));
+
+        record.alert_state.offline_alerted = true;
+        let duplicate = mark_recovery_if_cooldown_passed(
+            &mut record,
+            "test-host",
+            now + Duration::from_secs(30),
+        );
+        assert!(
+            duplicate.is_none(),
+            "second recovery inside cooldown must be suppressed"
+        );
+        assert!(record.alert_state.offline_alerted);
+
+        let after_cooldown = mark_recovery_if_cooldown_passed(
+            &mut record,
+            "test-host",
+            now + Duration::from_secs(FLAP_COOLDOWN_SECS + 1),
+        );
+        assert!(
+            after_cooldown.is_some(),
+            "recovery after cooldown must send again"
+        );
+        assert!(!record.alert_state.offline_alerted);
     }
 }

@@ -229,7 +229,7 @@ export default function DockerCharts({ hostKey }: DockerChartsProps) {
               tickLine={false}
               axisLine={{ stroke: "var(--border-subtle)" }}
               interval="preserveStartEnd"
-              minTickGap={60}
+              minTickGap={40}
             />
             <YAxis
               tick={{ fill: "var(--text-muted)", fontSize: 10 }}
