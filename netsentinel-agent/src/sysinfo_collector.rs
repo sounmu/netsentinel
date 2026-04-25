@@ -16,6 +16,14 @@ use std::time::{Duration, Instant};
 /// refresh phases stabilises the output at the cost of ~200 ms on the
 /// very first scrape only. Subsequent scrapes revert to the tight loop.
 static CPU_WARMED_UP: AtomicBool = AtomicBool::new(false);
+
+/// One-shot guards for the "lock was poisoned, recovering" warn lines.
+/// Without these, every scrape after a panic emits a fresh WARN, flooding
+/// logs at 6 lines/min/host indefinitely. Once the operator has been
+/// notified once, subsequent recoveries are a silent no-op (still
+/// recovered, just not re-logged).
+static DISK_IO_POISON_LOGGED: AtomicBool = AtomicBool::new(false);
+static NET_PREV_POISON_LOGGED: AtomicBool = AtomicBool::new(false);
 use sysinfo::{Components, DiskUsage, Disks, Networks, System};
 
 use crate::gpu;
@@ -141,7 +149,12 @@ fn compute_disk_io(dev_key: &str, usage: &DiskUsage) -> (f64, f64) {
     let now = Instant::now();
 
     let mut prev_map = DISK_IO_PREV.lock().unwrap_or_else(|e| {
-        tracing::warn!("DISK_IO_PREV mutex was poisoned, recovering");
+        if !DISK_IO_POISON_LOGGED.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "DISK_IO_PREV mutex was poisoned, recovering (further \
+                 occurrences suppressed for the lifetime of this process)"
+            );
+        }
         e.into_inner()
     });
 
@@ -176,7 +189,12 @@ fn compute_network_rate(total_rx: u64, total_tx: u64) -> (f64, f64) {
     let now = Instant::now();
 
     let mut prev = NET_PREV.lock().unwrap_or_else(|e| {
-        tracing::warn!("NET_PREV mutex was poisoned, recovering");
+        if !NET_PREV_POISON_LOGGED.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                "NET_PREV mutex was poisoned, recovering (further \
+                 occurrences suppressed for the lifetime of this process)"
+            );
+        }
         e.into_inner()
     });
 
@@ -342,7 +360,19 @@ pub(crate) async fn collect_sysinfo() -> SysinfoResult {
 
         // Aggregate physical interface traffic + per-interface breakdown.
         let mut nets = NETS.lock().unwrap_or_else(|e| e.into_inner());
-        nets.refresh(true); // refresh in place instead of creating new
+        // `refresh(true)` keeps known interfaces and just updates their
+        // counters; it does NOT remove interfaces that have disappeared
+        // since the previous refresh. After a suspend/resume cycle (or
+        // a Wi-Fi card teardown) `nets` will keep emitting stale rows
+        // for the dropped interface with frozen counters until the
+        // process restarts. Acceptable because:
+        //   1. Counters are cumulative — a frozen counter contributes 0
+        //      to the bandwidth delta, just slightly inflated totals.
+        //   2. Real fix (`Networks::new_with_refreshed_list()` per
+        //      cycle) re-allocates the entire interface list and shows
+        //      up as a measurable per-scrape allocation; not worth it
+        //      for a once-per-suspend edge case.
+        nets.refresh(true);
         let mut network = NetworkTotal::default();
         let mut network_interfaces = Vec::new();
         for (name, data) in nets.iter().filter(|(name, _)| is_physical_interface(name)) {

@@ -75,6 +75,13 @@ pub(crate) async fn initial_docker_load(docker: &Docker) -> Vec<DockerContainer>
 pub(crate) async fn docker_event_listener(cache: DockerCache) {
     let mut backoff = Duration::from_secs(5);
     const MAX_BACKOFF: Duration = Duration::from_secs(300);
+    /// Mirrors `docker_stats_poller::HEALTHY_DURATION_FOR_RESET` — the
+    /// stream must stay open this long before the backoff resets to its
+    /// 5 s floor. Without this gate, a daemon that accepts the connect
+    /// but kills the events stream within a second would oscillate at
+    /// the base interval, hammering a recovering daemon. 60 s is well
+    /// above any realistic startup race.
+    const HEALTHY_DURATION_FOR_RESET: Duration = Duration::from_secs(60);
 
     loop {
         let docker = match Docker::connect_with_local_defaults() {
@@ -106,7 +113,7 @@ pub(crate) async fn docker_event_listener(cache: DockerCache) {
 
         let mut stream = docker.events(Some(options));
         tracing::info!("🐳 [Docker Events] Listening for container lifecycle events");
-        backoff = Duration::from_secs(5); // reset on successful connection + stream start
+        let stream_started_at = std::time::Instant::now();
 
         while let Some(event_result) = stream.next().await {
             match event_result {
@@ -116,6 +123,19 @@ pub(crate) async fn docker_event_listener(cache: DockerCache) {
                     break;
                 }
             }
+        }
+
+        // Reset backoff only if the stream stayed open long enough to
+        // prove the daemon is stable. Fast-flap (connect ok, stream
+        // dies within seconds) keeps the exponential escalation alive.
+        if stream_started_at.elapsed() >= HEALTHY_DURATION_FOR_RESET {
+            backoff = Duration::from_secs(5);
+        } else {
+            tracing::warn!(
+                "⚠️  [Docker Events] Stream ended after {} s — keeping backoff at {} s",
+                stream_started_at.elapsed().as_secs(),
+                backoff.as_secs()
+            );
         }
 
         tracing::warn!(
