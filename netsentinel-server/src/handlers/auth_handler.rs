@@ -348,6 +348,16 @@ pub async fn setup(
         .fetch_one(&mut *tx)
         .await?;
     if count > 0 {
+        // Explicit rollback rather than relying on `Transaction`'s `Drop`
+        // impl. Drop-based rollback is correct in sqlx but happens
+        // *during stack unwind*, so a panic between this point and the
+        // actual drop would leak the writer lock until the runtime
+        // reclaims the connection. An explicit `await` here also gives
+        // us a deterministic place to log if rollback itself errors —
+        // which we currently swallow with `.ok()` because the only
+        // remediation is "tell the operator the writer lock is wedged",
+        // and at that point the next request will fail loudly anyway.
+        tx.rollback().await.ok();
         return Err(AppError::BadRequest(
             "Setup already completed. Use login instead.".to_string(),
         ));
