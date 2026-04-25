@@ -593,6 +593,13 @@ mod tests {
         assert!(!is_physical_interface("utun0"));
     }
 
+    // Apple-only prefixes (`awdl`, `llw`, `anpi`, `ap`) are filtered ONLY on
+    // macOS — on Linux/BSD the same prefixes might appear on real interfaces
+    // (e.g. OpenWRT's `apcli0` AP-client interface starts with `ap`). The
+    // four tests below run only on macOS so the filter contract is verified
+    // on the platform that actually applies it; running them on Linux CI
+    // would assert the wrong invariant.
+    #[cfg(target_os = "macos")]
     #[test]
     fn filtered_awdl() {
         assert!(!is_physical_interface("awdl0"));
@@ -603,6 +610,7 @@ mod tests {
         assert!(!is_physical_interface("br-abc123"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn filtered_llw() {
         assert!(!is_physical_interface("llw0"));
@@ -618,14 +626,25 @@ mod tests {
         assert!(!is_physical_interface("stf0"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn filtered_anpi() {
         assert!(!is_physical_interface("anpi0"));
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn filtered_ap() {
         assert!(!is_physical_interface("ap1"));
+    }
+
+    /// On Linux the OpenWRT `apcli0` AP-client interface must NOT be
+    /// filtered — the L-A1 fix specifically narrows the `ap` prefix
+    /// to macOS so this regression is impossible. Pin the contract.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn linux_keeps_apcli0_visible() {
+        assert!(is_physical_interface("apcli0"));
     }
 
     #[test]
