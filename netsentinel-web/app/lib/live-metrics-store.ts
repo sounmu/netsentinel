@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useSyncExternalStore } from "react";
-import type { HostMetricsPayload, MetricsRow } from "@/app/types/metrics";
+import type { ChartMetricsRow, HostMetricsPayload } from "@/app/types/metrics";
 // Relative import keeps the module testable under vitest, which does not
 // resolve the `@/` path alias by default. The two files always live in
 // the same directory anyway, so the alias gave no real abstraction win.
@@ -9,8 +9,8 @@ import { appendLiveMetricRow } from "./live-metrics";
 
 type Listener = () => void;
 
-const EMPTY_ROWS: readonly MetricsRow[] = Object.freeze([]);
-const rowsByHost = new Map<string, readonly MetricsRow[]>();
+const EMPTY_ROWS: readonly ChartMetricsRow[] = Object.freeze([]);
+const rowsByHost = new Map<string, readonly ChartMetricsRow[]>();
 const listenersByHost = new Map<string, Set<Listener>>();
 
 function emit(hostKey: string) {
@@ -45,15 +45,26 @@ function subscribe(hostKey: string, listener: Listener): () => void {
   };
 }
 
-function getSnapshot(hostKey: string): readonly MetricsRow[] {
+function getSnapshot(hostKey: string): readonly ChartMetricsRow[] {
   return rowsByHost.get(hostKey) ?? EMPTY_ROWS;
 }
 
-function getServerSnapshot(): readonly MetricsRow[] {
+function getServerSnapshot(): readonly ChartMetricsRow[] {
   return EMPTY_ROWS;
 }
 
 export function pushLiveMetricPayload(payload: HostMetricsPayload) {
+  // Drop SSE samples that nobody is consuming. Without this guard the
+  // store accumulates a per-host ring buffer for every host the user has
+  // ever viewed in this tab, even after every chart for that host has
+  // unmounted. Newly mounted charts get their historical baseline from
+  // the REST `/api/metrics/.../chart` fetch, so missing the gap between
+  // mount and the first SSE tick is not user-visible — the live overlay
+  // simply starts populating from the next event onward. See the
+  // companion test in `live-metrics.test.ts` (`live-metrics-store cleanup`).
+  const listeners = listenersByHost.get(payload.host_key);
+  if (!listeners || listeners.size === 0) return;
+
   const previousRows = rowsByHost.get(payload.host_key) ?? EMPTY_ROWS;
   const nextRows = appendLiveMetricRow(previousRows, payload);
   // `appendLiveMetricRow` returns the same reference when the payload
@@ -80,7 +91,7 @@ export function __hasLiveMetricEntry(hostKey: string): boolean {
   return rowsByHost.has(hostKey) || listenersByHost.has(hostKey);
 }
 
-export function useHostLiveRows(hostKey: string): readonly MetricsRow[] {
+export function useHostLiveRows(hostKey: string): readonly ChartMetricsRow[] {
   const subscribeHost = useCallback(
     (listener: Listener) => subscribe(hostKey, listener),
     [hostKey],

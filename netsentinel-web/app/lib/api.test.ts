@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
+  getMetricsChartRangeUrl,
   getMetricsRangeUrl,
   getMetricsUrl,
   clearLegacyStorage,
@@ -66,6 +67,21 @@ describe("getMetricsRangeUrl", () => {
     const parsed1 = new URL(url1, TEST_ORIGIN);
     const parsed2 = new URL(url2, TEST_ORIGIN);
     expect(parsed1.searchParams.get("start")).toBe(parsed2.searchParams.get("start"));
+  });
+});
+
+describe("getMetricsChartRangeUrl", () => {
+  it("uses the lightweight chart endpoint and preserves rounding behavior", () => {
+    const start = new Date("2025-01-15T10:05:30.500Z");
+    const end = new Date("2025-01-15T11:05:30.000Z");
+    const url = getMetricsChartRangeUrl("192.168.1.10:9101", start, end, 30);
+
+    const parsed = new URL(url, TEST_ORIGIN);
+    expect(parsed.pathname).toBe(
+      `/api/metrics/${encodeURIComponent("192.168.1.10:9101")}/chart`,
+    );
+    expect(parsed.searchParams.get("start")).toBe("2025-01-15T10:05:30.000Z");
+    expect(parsed.searchParams.get("end")).toBe("2025-01-15T11:05:30.000Z");
   });
 });
 

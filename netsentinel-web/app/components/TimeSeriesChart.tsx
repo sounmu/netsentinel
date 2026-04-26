@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect, memo } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import useSWR from "swr";
 import {
   AreaChart,
@@ -11,12 +11,12 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { fetcher, getMetricsRangeUrl } from "@/app/lib/api";
+import { fetcher, getMetricsChartRangeUrl } from "@/app/lib/api";
 import {
-  MetricsRow,
-  DiskInfo,
+  ChartDiskInfo,
+  ChartDockerStats,
+  ChartMetricsRow,
   TemperatureInfo,
-  DockerContainerStats,
 } from "@/app/types/metrics";
 import { formatNetworkSpeed, formatNetworkSpeedTick } from "@/app/lib/formatters";
 import { mergeMetricsRows } from "@/app/lib/live-metrics";
@@ -219,7 +219,7 @@ const ChartCard = memo(function ChartCard({
               // The default (`false`) treats `domain` as a minimum
               // range and silently expands it to fit any data points
               // outside — exactly what was happening on live presets
-              // because `getMetricsRangeUrl` floors start and ceils
+              // because `getMetricsChartRangeUrl` floors start and ceils
               // end to the nearest minute, producing a 2–3 min fetch
               // window for a 1 min chart. The ticks landed in the
               // middle of the expanded domain instead of spanning it.
@@ -334,7 +334,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
   const swrKey = useMemo(
     () =>
-      getMetricsRangeUrl(
+      getMetricsChartRangeUrl(
         hostKey,
         effectiveRange.start,
         effectiveRange.end,
@@ -355,7 +355,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     [hostKey, effectiveRange, isLivePreset]
   );
 
-  const { data: rows = [], isValidating } = useSWR<MetricsRow[]>(swrKey, fetcher, {
+  const { data: rows = [], isValidating } = useSWR<ChartMetricsRow[]>(swrKey, fetcher, {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     refreshInterval: 0,
@@ -468,7 +468,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       }
 
       // Disk usage + I/O
-      const disks = r.disks as unknown as DiskInfo[] | null;
+      const disks = r.disks as unknown as ChartDiskInfo[] | null;
       if (disks && disks.length > 0) {
         const uPoint: Record<string, number> = { ts: tsMs };
         let totalRead = 0;
@@ -485,7 +485,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       }
 
       // Docker container stats (CPU% + Memory MB)
-      const dStats = r.docker_stats as unknown as DockerContainerStats[] | null;
+      const dStats = r.docker_stats as unknown as ChartDockerStats[] | null;
       if (dStats && dStats.length > 0) {
         const cpuPt: Record<string, number> = { ts: tsMs };
         const memPt: Record<string, number> = { ts: tsMs };

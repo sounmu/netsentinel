@@ -1,4 +1,4 @@
-import type { HostMetricsPayload, MetricsRow } from "@/app/types/metrics";
+import type { ChartMetricsRow, HostMetricsPayload } from "@/app/types/metrics";
 
 export const LIVE_METRICS_BUFFER_MS = 6 * 60 * 1000;
 export const LIVE_METRICS_MAX_POINTS = 64;
@@ -10,7 +10,7 @@ function timestampMs(timestamp: string): number {
   return new Date(timestamp).getTime();
 }
 
-function rowTimestampMs(row: Pick<MetricsRow, "timestamp">): number {
+function rowTimestampMs(row: Pick<ChartMetricsRow, "timestamp">): number {
   return timestampMs(row.timestamp);
 }
 
@@ -39,7 +39,7 @@ function hasNearbyTimestamp(index: Map<number, number[]>, tsMs: number): boolean
   return false;
 }
 
-export function liveMetricsToRow(liveMetrics: HostMetricsPayload): MetricsRow {
+export function liveMetricsToRow(liveMetrics: HostMetricsPayload): ChartMetricsRow {
   return {
     id: 0,
     host_key: liveMetrics.host_key,
@@ -56,23 +56,27 @@ export function liveMetricsToRow(liveMetrics: HostMetricsPayload): MetricsRow {
       rx_bytes_per_sec: liveMetrics.network_rate.rx_bytes_per_sec,
       tx_bytes_per_sec: liveMetrics.network_rate.tx_bytes_per_sec,
     },
-    docker_containers: null,
-    ports: null,
-    disks: liveMetrics.disks ?? null,
-    processes: null,
-    temperatures: liveMetrics.temperatures ?? null,
-    gpus: null,
-    cpu_cores: null,
-    network_interfaces: null,
-    docker_stats: liveMetrics.docker_stats ?? null,
+    disks: (liveMetrics.disks ?? []).map((d) => ({
+      name: d.name,
+      mount_point: d.mount_point,
+      usage_percent: d.usage_percent,
+      read_bytes_per_sec: d.read_bytes_per_sec,
+      write_bytes_per_sec: d.write_bytes_per_sec,
+    })),
+    temperatures: liveMetrics.temperatures ?? [],
+    docker_stats: (liveMetrics.docker_stats ?? []).map((s) => ({
+      container_name: s.container_name,
+      cpu_percent: s.cpu_percent,
+      memory_usage_mb: s.memory_usage_mb,
+    })),
     timestamp: liveMetrics.timestamp,
   };
 }
 
 export function appendLiveMetricRow(
-  previousRows: readonly MetricsRow[],
+  previousRows: readonly ChartMetricsRow[],
   liveMetrics: HostMetricsPayload,
-): readonly MetricsRow[] {
+): readonly ChartMetricsRow[] {
   const row = liveMetricsToRow(liveMetrics);
   const rowTs = rowTimestampMs(row);
   // Invalid timestamp (NaN / Infinity from a corrupted SSE payload) means
@@ -83,7 +87,7 @@ export function appendLiveMetricRow(
   if (!Number.isFinite(rowTs)) return previousRows;
 
   const cutoffTs = rowTs - LIVE_METRICS_BUFFER_MS;
-  const nextRows: MetricsRow[] = [];
+  const nextRows: ChartMetricsRow[] = [];
 
   for (const previous of previousRows) {
     const previousTs = rowTimestampMs(previous);
@@ -103,11 +107,11 @@ export function appendLiveMetricRow(
 }
 
 export function mergeMetricsRows(
-  restRows: readonly MetricsRow[],
-  liveRows: readonly MetricsRow[],
+  restRows: readonly ChartMetricsRow[],
+  liveRows: readonly ChartMetricsRow[],
   rangeStartMs: number,
   rangeEndMs: number,
-): readonly MetricsRow[] {
+): readonly ChartMetricsRow[] {
   if (liveRows.length === 0) return restRows;
 
   const secondIndex = new Map<number, number[]>();
@@ -118,7 +122,7 @@ export function mergeMetricsRows(
     }
   }
 
-  const visibleLiveRows: MetricsRow[] = [];
+  const visibleLiveRows: ChartMetricsRow[] = [];
   for (const row of liveRows) {
     const ts = rowTimestampMs(row);
     if (!Number.isFinite(ts)) continue;

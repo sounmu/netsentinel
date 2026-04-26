@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { HostMetricsPayload, MetricsRow } from "@/app/types/metrics";
+import type { ChartMetricsRow, HostMetricsPayload } from "@/app/types/metrics";
 import {
   LIVE_METRICS_MAX_POINTS,
   appendLiveMetricRow,
@@ -38,7 +38,7 @@ function payload(timestamp: string, cpu = 10): HostMetricsPayload {
   };
 }
 
-function restRow(timestamp: string, id = 1): MetricsRow {
+function restRow(timestamp: string, id = 1): ChartMetricsRow {
   return {
     id,
     host_key: "box:9101",
@@ -50,22 +50,16 @@ function restRow(timestamp: string, id = 1): MetricsRow {
     load_5min: 0.2,
     load_15min: 0.3,
     networks: null,
-    docker_containers: null,
-    ports: null,
-    disks: null,
-    processes: null,
-    temperatures: null,
-    gpus: null,
-    cpu_cores: null,
-    network_interfaces: null,
-    docker_stats: null,
+    disks: [],
+    temperatures: [],
+    docker_stats: [],
     timestamp,
   };
 }
 
 describe("appendLiveMetricRow", () => {
   it("keeps intermediate SSE samples until REST catches up", () => {
-    let rows: readonly MetricsRow[] = [];
+    let rows: readonly ChartMetricsRow[] = [];
     rows = appendLiveMetricRow(rows, payload("2026-04-25T00:00:02.000Z", 2));
     rows = appendLiveMetricRow(rows, payload("2026-04-25T00:00:12.000Z", 12));
     rows = appendLiveMetricRow(rows, payload("2026-04-25T00:00:22.000Z", 22));
@@ -78,7 +72,7 @@ describe("appendLiveMetricRow", () => {
   });
 
   it("caps the live buffer", () => {
-    let rows: readonly MetricsRow[] = [];
+    let rows: readonly ChartMetricsRow[] = [];
     for (let i = 0; i < LIVE_METRICS_MAX_POINTS + 10; i++) {
       rows = appendLiveMetricRow(
         rows,
@@ -155,7 +149,7 @@ describe("mergeMetricsRows", () => {
 
 describe("appendLiveMetricRow edge cases", () => {
   it("returns the same reference when timestamp is unparseable", () => {
-    const previous: readonly MetricsRow[] = [];
+    const previous: readonly ChartMetricsRow[] = [];
     const next = appendLiveMetricRow(previous, payload("not-a-real-date"));
     // Same identity → caller can detect "no change" via `===` and skip
     // notifying subscribers.
@@ -163,7 +157,7 @@ describe("appendLiveMetricRow edge cases", () => {
   });
 
   it("preserves timestamp ordering across out-of-order arrivals", () => {
-    let rows: readonly MetricsRow[] = [];
+    let rows: readonly ChartMetricsRow[] = [];
     rows = appendLiveMetricRow(rows, payload("2026-04-25T00:00:30.000Z", 30));
     // Earlier timestamp lands AFTER a later one — still slots into the
     // correct position via the internal sort.
@@ -179,16 +173,14 @@ describe("appendLiveMetricRow edge cases", () => {
 });
 
 describe("live-metrics-store cleanup", () => {
-  it("releases per-host buffer when the last subscriber unmounts", () => {
+  it("does not allocate a per-host buffer without an active chart subscriber", () => {
     const hostKey = "cleanup-test:9101";
     pushLiveMetricPayload({
       ...payload("2026-04-25T00:00:00.000Z"),
       host_key: hostKey,
     });
-    expect(__hasLiveMetricEntry(hostKey)).toBe(true);
+    expect(__hasLiveMetricEntry(hostKey)).toBe(false);
 
-    // Drop the buffer explicitly (the path SSEContext takes on host
-    // removal). After this the store should hold no traces.
     clearLiveMetricRows(hostKey);
     expect(__hasLiveMetricEntry(hostKey)).toBe(false);
   });

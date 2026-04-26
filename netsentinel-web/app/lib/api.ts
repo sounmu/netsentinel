@@ -234,6 +234,23 @@ export const getMetricsRangeUrl = (
   return `${API_BASE}/api/metrics/${encodeURIComponent(hostKey)}?${params.toString()}`;
 };
 
+/** GET /api/metrics/:host_key/chart?start=...&end=... — lightweight chart rows. */
+export const getMetricsChartRangeUrl = (
+  hostKey: string,
+  start: Date,
+  end: Date,
+  roundToSecs: number = 60,
+) => {
+  const unit = roundToSecs * 1000;
+  const startRounded = new Date(Math.floor(start.getTime() / unit) * unit);
+  const endRounded = new Date(Math.ceil(end.getTime() / unit) * unit);
+  const params = new URLSearchParams({
+    start: startRounded.toISOString(),
+    end: endRounded.toISOString(),
+  });
+  return `${API_BASE}/api/metrics/${encodeURIComponent(hostKey)}/chart?${params.toString()}`;
+};
+
 /** GET /api/hosts — all hosts list (includes is_online) */
 export const getHostsUrl = () => `${API_BASE}/api/hosts`;
 

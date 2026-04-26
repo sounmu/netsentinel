@@ -61,6 +61,37 @@ export interface DockerContainerStats {
   net_tx_bytes: number;
 }
 
+export interface ChartDiskInfo {
+  name: string;
+  mount_point: string;
+  usage_percent: number;
+  read_bytes_per_sec: number;
+  write_bytes_per_sec: number;
+}
+
+export interface ChartDockerStats {
+  container_name: string;
+  cpu_percent: number;
+  memory_usage_mb: number;
+}
+
+export interface ChartMetricsRow {
+  id: number;
+  host_key: string;
+  display_name: string;
+  is_online: boolean;
+  cpu_usage_percent: number;
+  memory_usage_percent: number;
+  load_1min: number;
+  load_5min: number;
+  load_15min: number;
+  networks: NetworkTotal | null;
+  disks: ChartDiskInfo[];
+  temperatures: TemperatureInfo[];
+  docker_stats: ChartDockerStats[];
+  timestamp: string;
+}
+
 // Each row in the GET /api/metrics/:host_key response
 // 1:1 mapping with the Rust MetricsRow struct
 export interface MetricsRow {
