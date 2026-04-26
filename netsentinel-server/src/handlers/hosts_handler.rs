@@ -205,6 +205,8 @@ pub async fn delete_host(
     if let Ok(mut store) = state.store.write() {
         store.hosts.remove(&host_key);
     }
+    state.metrics_query_cache.remove_host(&host_key);
+    state.chart_metrics_query_cache.remove_host(&host_key);
     hosts_snapshot::refresh(&state.db_pool, &state.hosts_snapshot).await;
 
     // `?host_key` (Debug) escapes control chars so a path param containing

@@ -9,10 +9,50 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::errors::AppError;
-use crate::models::app_state::{AppState, MetricsQueryCache};
-use crate::repositories::metrics_repo::{self, MetricsRow, UptimeSummary};
+use crate::models::app_state::{
+    AppState, CacheWeight, MetricsQueryCache, metrics_cache_key_with_raw_boundary,
+    should_cache_metrics_range_after,
+};
+use crate::repositories::metrics_repo::{self, ChartMetricsRow, MetricsRow, UptimeSummary};
 use crate::repositories::{http_monitors_repo, ping_monitors_repo};
 use crate::services::auth::UserGuard;
+
+/// Default raw boundary used by the full-metrics endpoints (≤ 6 h is never
+/// cached). The lightweight chart endpoint passes its own 1 h boundary via
+/// `metrics_repo::CHART_RAW_BOUNDARY_SECS`.
+const FULL_METRICS_RAW_BOUNDARY_SECS: i64 = 6 * 3600;
+
+/// Resolve a single (host_key, time-range) query against a metrics cache,
+/// falling back to a one-shot fetch when the range is outside the cacheable
+/// window. The `raw_boundary_secs` argument lets the chart and full-metrics
+/// callers share this helper while keeping their own raw thresholds.
+async fn cached_or_fetch<T, F, Fut>(
+    cache: &MetricsQueryCache<T>,
+    raw_boundary_secs: i64,
+    host_key: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    fetch: F,
+) -> Result<Arc<Vec<T>>, AppError>
+where
+    T: CacheWeight,
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<T>, sqlx::Error>>,
+{
+    let start_ts = start.timestamp();
+    let end_ts = end.timestamp();
+    if !should_cache_metrics_range_after(start_ts, end_ts, raw_boundary_secs) {
+        let rows = fetch().await?;
+        return Ok(Arc::new(rows));
+    }
+
+    let key = metrics_cache_key_with_raw_boundary(host_key, start_ts, end_ts, raw_boundary_secs);
+    if let Some(cached) = cache.get(&key) {
+        return Ok(cached);
+    }
+    let rows = fetch().await?;
+    Ok(cache.insert(key, rows))
+}
 
 /// Optional shared-secret bearer guard for `/metrics`.
 ///
@@ -125,16 +165,15 @@ pub async fn get_metrics_by_host_key(
                 ));
             }
 
-            let cache_key =
-                MetricsQueryCache::make_key(&host_key, start.timestamp(), end.timestamp());
-            if let Some(cached) = state.metrics_query_cache.get(&cache_key) {
-                cached
-            } else {
-                let result =
-                    metrics_repo::fetch_metrics_range(&state.db_pool, &host_key, start, end)
-                        .await?;
-                state.metrics_query_cache.insert(cache_key, result)
-            }
+            cached_or_fetch(
+                &state.metrics_query_cache,
+                FULL_METRICS_RAW_BOUNDARY_SECS,
+                &host_key,
+                start,
+                end,
+                || metrics_repo::fetch_metrics_range(&state.db_pool, &host_key, start, end),
+            )
+            .await?
         }
         (Some(_), None) | (None, Some(_)) => {
             return Err(AppError::BadRequest(
@@ -143,6 +182,42 @@ pub async fn get_metrics_by_host_key(
         }
         _ => Arc::new(metrics_repo::fetch_recent_metrics(&state.db_pool, &host_key).await?),
     };
+
+    Ok(Json(rows))
+}
+
+/// GET /api/metrics/:host_key/chart — chart-only metrics for a specific host.
+///
+/// Returns a narrower row shape than `/api/metrics/:host_key`, omitting large
+/// detail snapshots that the host charts never render. Windows up to 1h use raw
+/// 10s rows; longer chart windows use 5-minute rollups and the bounded chart
+/// cache.
+pub async fn get_chart_metrics_by_host_key(
+    _auth: UserGuard,
+    State(state): State<Arc<AppState>>,
+    Path(host_key): Path<String>,
+    Query(range): Query<TimeRangeQuery>,
+) -> Result<Json<Arc<Vec<ChartMetricsRow>>>, AppError> {
+    let (Some(start), Some(end)) = (range.start, range.end) else {
+        return Err(AppError::BadRequest(
+            "start and end must both be provided".to_string(),
+        ));
+    };
+    if start > end {
+        return Err(AppError::BadRequest(
+            "start must not be later than end".to_string(),
+        ));
+    }
+
+    let rows = cached_or_fetch(
+        &state.chart_metrics_query_cache,
+        metrics_repo::CHART_RAW_BOUNDARY_SECS,
+        &host_key,
+        start,
+        end,
+        || metrics_repo::fetch_chart_metrics_range(&state.db_pool, &host_key, start, end),
+    )
+    .await?;
 
     Ok(Json(rows))
 }
@@ -214,13 +289,15 @@ pub async fn batch_metrics(
         let pool = pool.clone();
         let cache = cache.clone();
         async move {
-            let cache_key = MetricsQueryCache::make_key(&hk, start.timestamp(), end.timestamp());
-            let rows = if let Some(cached) = cache.get(&cache_key) {
-                cached
-            } else {
-                let result = metrics_repo::fetch_metrics_range(&pool, &hk, start, end).await?;
-                cache.insert(cache_key, result)
-            };
+            let rows = cached_or_fetch(
+                &cache,
+                FULL_METRICS_RAW_BOUNDARY_SECS,
+                &hk,
+                start,
+                end,
+                || metrics_repo::fetch_metrics_range(&pool, &hk, start, end),
+            )
+            .await?;
             Ok::<_, AppError>((hk, rows))
         }
     }))

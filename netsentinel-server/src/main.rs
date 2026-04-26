@@ -141,19 +141,28 @@ async fn main() -> anyhow::Result<()> {
     let (sse_tx, _) = tokio::sync::broadcast::channel(sse_buffer);
 
     // ── Shared application state ──
-    // Cap the query cache size. v0.3.0 multiplied per-sample payload size by
-    // adding per-core CPU, per-interface network, and per-container docker_stats
-    // JSONB — an unbounded cache here was the primary driver of the v0.3.x
-    // RSS regression observed in production. 20 entries covers a handful of
-    // concurrent dashboard widget range presets; raise via env for heavy
-    // multi-user setups.
+    // Cap query caches by both entry count and estimated payload bytes. v0.3.0
+    // multiplied per-sample payload size by adding per-core CPU, per-interface
+    // network, and per-container docker_stats JSON — count-only caps still let
+    // a few long-range entries pin hundreds of MB. The byte budget is shared
+    // by policy but enforced separately for full and lightweight chart caches.
     let metrics_cache_max_entries: usize = std::env::var("METRICS_CACHE_MAX_ENTRIES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(20);
+    let metrics_cache_max_bytes: usize = std::env::var("METRICS_CACHE_MAX_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(32 * 1024 * 1024);
     let metrics_query_cache = Arc::new(models::app_state::MetricsQueryCache::new(
         std::time::Duration::from_secs(120),
         metrics_cache_max_entries,
+        metrics_cache_max_bytes,
+    ));
+    let chart_metrics_query_cache = Arc::new(models::app_state::MetricsQueryCache::new(
+        std::time::Duration::from_secs(120),
+        metrics_cache_max_entries,
+        metrics_cache_max_bytes,
     ));
 
     let trusted_proxy_count: usize = std::env::var("TRUSTED_PROXY_COUNT")
@@ -186,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
         sse_tx,
         last_known_status: Arc::new(RwLock::new(HashMap::new())),
         metrics_query_cache: metrics_query_cache.clone(),
+        chart_metrics_query_cache: chart_metrics_query_cache.clone(),
         // Per-IP bucket — default raised from 10 → 30 when the per-username
         // bucket was introduced. A NAT office with several concurrent
         // dashboards needs headroom for the occasional typo'd password from
@@ -261,6 +271,7 @@ async fn main() -> anyhow::Result<()> {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             metrics_query_cache.evict_expired();
+            chart_metrics_query_cache.evict_expired();
         }
     });
 

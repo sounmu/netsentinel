@@ -6,7 +6,9 @@ use chrono_tz::Asia::Seoul;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::models::agent_metrics::AgentMetrics;
+use crate::models::agent_metrics::{AgentMetrics, DiskInfo, DockerContainerStats, TemperatureInfo};
+
+pub const CHART_RAW_BOUNDARY_SECS: i64 = 60 * 60;
 
 pub mod kst_date_format {
     use super::*;
@@ -65,6 +67,49 @@ pub struct MetricsRow {
     pub cpu_cores: Option<Value>,
     pub network_interfaces: Option<Value>,
     pub docker_stats: Option<Value>,
+    #[serde(with = "kst_date_format")]
+    pub timestamp: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize, Clone, sqlx::FromRow)]
+pub struct ChartNetwork {
+    pub total_rx_bytes: u64,
+    pub total_tx_bytes: u64,
+    pub rx_bytes_per_sec: f64,
+    pub tx_bytes_per_sec: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChartDiskInfo {
+    pub name: String,
+    pub mount_point: String,
+    pub usage_percent: f32,
+    pub read_bytes_per_sec: f64,
+    pub write_bytes_per_sec: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChartDockerStats {
+    pub container_name: String,
+    pub cpu_percent: f32,
+    pub memory_usage_mb: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ChartMetricsRow {
+    pub id: i64,
+    pub host_key: String,
+    pub display_name: String,
+    pub is_online: bool,
+    pub cpu_usage_percent: f32,
+    pub memory_usage_percent: f32,
+    pub load_1min: f32,
+    pub load_5min: f32,
+    pub load_15min: f32,
+    pub networks: Option<ChartNetwork>,
+    pub disks: Vec<ChartDiskInfo>,
+    pub temperatures: Vec<TemperatureInfo>,
+    pub docker_stats: Vec<ChartDockerStats>,
     #[serde(with = "kst_date_format")]
     pub timestamp: DateTime<Utc>,
 }
@@ -248,6 +293,89 @@ impl TryFrom<MetricsRowRaw> for MetricsRow {
             cpu_cores: parse_opt_json(raw.cpu_cores)?,
             network_interfaces: parse_opt_json(raw.network_interfaces)?,
             docker_stats: parse_opt_json(raw.docker_stats)?,
+            timestamp: raw.timestamp,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ChartMetricsRowRaw {
+    id: i64,
+    host_key: String,
+    display_name: String,
+    is_online: Option<bool>,
+    cpu_usage_percent: f32,
+    memory_usage_percent: f32,
+    load_1min: f32,
+    load_5min: f32,
+    load_15min: f32,
+    total_rx_bytes: Option<i64>,
+    total_tx_bytes: Option<i64>,
+    rx_bytes_per_sec: Option<f64>,
+    tx_bytes_per_sec: Option<f64>,
+    disks: Option<String>,
+    temperatures: Option<String>,
+    docker_stats: Option<String>,
+    timestamp: DateTime<Utc>,
+}
+
+fn parse_json_vec<T>(s: Option<String>) -> Result<Vec<T>, sqlx::Error>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    match s {
+        Some(text) => serde_json::from_str(&text).map_err(|e| sqlx::Error::Decode(Box::new(e))),
+        None => Ok(Vec::new()),
+    }
+}
+
+impl TryFrom<ChartMetricsRowRaw> for ChartMetricsRow {
+    type Error = sqlx::Error;
+
+    fn try_from(raw: ChartMetricsRowRaw) -> Result<Self, Self::Error> {
+        let networks = match (raw.total_rx_bytes, raw.total_tx_bytes) {
+            (Some(rx_total), Some(tx_total)) => Some(ChartNetwork {
+                total_rx_bytes: rx_total.max(0) as u64,
+                total_tx_bytes: tx_total.max(0) as u64,
+                rx_bytes_per_sec: raw.rx_bytes_per_sec.unwrap_or(0.0),
+                tx_bytes_per_sec: raw.tx_bytes_per_sec.unwrap_or(0.0),
+            }),
+            _ => None,
+        };
+
+        let disks: Vec<DiskInfo> = parse_json_vec(raw.disks)?;
+        let docker_stats: Vec<DockerContainerStats> = parse_json_vec(raw.docker_stats)?;
+
+        Ok(Self {
+            id: raw.id,
+            host_key: raw.host_key,
+            display_name: raw.display_name,
+            is_online: raw.is_online.unwrap_or(false),
+            cpu_usage_percent: raw.cpu_usage_percent,
+            memory_usage_percent: raw.memory_usage_percent,
+            load_1min: raw.load_1min,
+            load_5min: raw.load_5min,
+            load_15min: raw.load_15min,
+            networks,
+            disks: disks
+                .into_iter()
+                .map(|d| ChartDiskInfo {
+                    name: d.name,
+                    mount_point: d.mount_point,
+                    usage_percent: d.usage_percent,
+                    read_bytes_per_sec: d.read_bytes_per_sec,
+                    write_bytes_per_sec: d.write_bytes_per_sec,
+                })
+                .collect(),
+            temperatures: parse_json_vec(raw.temperatures)?,
+            docker_stats: docker_stats
+                .into_iter()
+                .map(|s| ChartDockerStats {
+                    container_name: s.container_name,
+                    cpu_percent: s.cpu_percent,
+                    memory_usage_mb: s.memory_usage_mb,
+                })
+                .collect(),
             timestamp: raw.timestamp,
         })
     }
@@ -545,6 +673,138 @@ pub async fn fetch_metrics_range(
     raws.into_iter().map(MetricsRow::try_from).collect()
 }
 
+/// Fetch chart-ready metrics for a host within a time range.
+///
+/// This is intentionally narrower than `fetch_metrics_range`: it keeps the
+/// scalar time series and the small chart-only projections for disk,
+/// temperature, and Docker graphs, while omitting large snapshot fields that
+/// belong to status/detail panels.
+pub async fn fetch_chart_metrics_range(
+    pool: &DbPool,
+    host_key: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<ChartMetricsRow>, sqlx::Error> {
+    let duration = end - start;
+    let seconds = duration.num_seconds();
+
+    if seconds <= CHART_RAW_BOUNDARY_SECS {
+        let raws = sqlx::query_as::<_, ChartMetricsRowRaw>(
+            r#"
+            SELECT id, host_key, display_name, is_online,
+                   cpu_usage_percent, memory_usage_percent,
+                   load_1min, load_5min, load_15min,
+                   CAST(json_extract(networks, '$.total_rx_bytes') AS INTEGER) AS total_rx_bytes,
+                   CAST(json_extract(networks, '$.total_tx_bytes') AS INTEGER) AS total_tx_bytes,
+                   rx_bytes_per_sec,
+                   tx_bytes_per_sec,
+                   disks,
+                   temperatures,
+                   docker_stats,
+                   timestamp
+            FROM metrics
+            WHERE host_key = ?1
+              AND timestamp >= ?2
+              AND timestamp <= ?3
+            ORDER BY timestamp ASC, id ASC
+            "#,
+        )
+        .bind(host_key)
+        .bind(start.timestamp())
+        .bind(end.timestamp())
+        .fetch_all(pool)
+        .await?;
+        return raws.into_iter().map(ChartMetricsRow::try_from).collect();
+    }
+
+    if seconds <= 14 * 24 * 3600 {
+        let raws = sqlx::query_as::<_, ChartMetricsRowRaw>(
+            r#"
+            SELECT
+                0 AS id,
+                host_key,
+                '' AS display_name,
+                CAST(is_online AS INTEGER) AS is_online,
+                cpu_usage_percent,
+                memory_usage_percent,
+                load_1min, load_5min, load_15min,
+                total_rx_bytes,
+                total_tx_bytes,
+                avg_rx_bytes_per_sec AS rx_bytes_per_sec,
+                avg_tx_bytes_per_sec AS tx_bytes_per_sec,
+                disks,
+                temperatures,
+                docker_stats,
+                bucket AS timestamp
+            FROM metrics_5min
+            WHERE host_key = ?1
+              AND bucket >= ?2
+              AND bucket <= ?3
+            ORDER BY bucket ASC
+            "#,
+        )
+        .bind(host_key)
+        .bind(start.timestamp())
+        .bind(end.timestamp())
+        .fetch_all(pool)
+        .await?;
+        return raws.into_iter().map(ChartMetricsRow::try_from).collect();
+    }
+
+    let raws = sqlx::query_as::<_, ChartMetricsRowRaw>(
+        r#"
+        WITH tagged AS (
+            SELECT
+                host_key,
+                (bucket / 900) * 900 AS bucket_15m,
+                bucket,
+                is_online,
+                cpu_usage_percent,
+                memory_usage_percent,
+                load_1min, load_5min, load_15min,
+                total_rx_bytes, total_tx_bytes,
+                avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
+                disks, temperatures, docker_stats,
+                ROW_NUMBER() OVER (
+                    PARTITION BY host_key, (bucket / 900) * 900
+                    ORDER BY bucket DESC
+                ) AS rn
+            FROM metrics_5min
+            WHERE host_key = ?1
+              AND bucket >= ?2
+              AND bucket <= ?3
+        )
+        SELECT
+            0 AS id,
+            host_key,
+            '' AS display_name,
+            CAST(MIN(is_online) AS INTEGER) AS is_online,
+            CAST(AVG(cpu_usage_percent) AS REAL) AS cpu_usage_percent,
+            CAST(AVG(memory_usage_percent) AS REAL) AS memory_usage_percent,
+            CAST(AVG(load_1min) AS REAL) AS load_1min,
+            CAST(AVG(load_5min) AS REAL) AS load_5min,
+            CAST(AVG(load_15min) AS REAL) AS load_15min,
+            MAX(total_rx_bytes) AS total_rx_bytes,
+            MAX(total_tx_bytes) AS total_tx_bytes,
+            CAST(AVG(avg_rx_bytes_per_sec) AS REAL) AS rx_bytes_per_sec,
+            CAST(AVG(avg_tx_bytes_per_sec) AS REAL) AS tx_bytes_per_sec,
+            MAX(CASE WHEN rn = 1 THEN disks END) AS disks,
+            MAX(CASE WHEN rn = 1 THEN temperatures END) AS temperatures,
+            MAX(CASE WHEN rn = 1 THEN docker_stats END) AS docker_stats,
+            bucket_15m AS timestamp
+        FROM tagged
+        GROUP BY host_key, bucket_15m
+        ORDER BY timestamp ASC
+        "#,
+    )
+    .bind(host_key)
+    .bind(start.timestamp())
+    .bind(end.timestamp())
+    .fetch_all(pool)
+    .await?;
+    raws.into_iter().map(ChartMetricsRow::try_from).collect()
+}
+
 /// Fetch all monitored hosts with their latest online status.
 ///
 /// A host is online iff its most recent metric landed in the past 60 s.
@@ -661,7 +921,8 @@ pub async fn fetch_uptime(
 mod sqlite_tests {
     use super::*;
     use crate::models::agent_metrics::{
-        AgentMetrics, DockerContainer, LoadAverage, NetworkTotal, PortStatus, SystemMetrics,
+        AgentMetrics, DiskInfo, DockerContainer, DockerContainerStats, LoadAverage, NetworkTotal,
+        PortStatus, SystemMetrics, TemperatureInfo,
     };
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
     use std::str::FromStr;
@@ -815,8 +1076,8 @@ mod sqlite_tests {
         let rows = fetch_metrics_range(
             &pool,
             "h1:9101",
-            now - chrono::Duration::hours(1),
-            now + chrono::Duration::hours(1),
+            now - chrono::Duration::minutes(30),
+            now + chrono::Duration::minutes(30),
         )
         .await
         .unwrap();
@@ -827,6 +1088,216 @@ mod sqlite_tests {
         assert!(rows[0].ports.is_none());
         // Full-detail columns survive.
         assert!(rows[0].networks.is_some());
+    }
+
+    #[tokio::test]
+    async fn chart_metrics_range_returns_lightweight_projection() {
+        let pool = fresh_pool().await;
+        let mut m = synthetic_metrics();
+        m.system.disks = vec![DiskInfo {
+            name: "disk0".into(),
+            mount_point: "/".into(),
+            total_gb: 100.0,
+            available_gb: 40.0,
+            usage_percent: 60.0,
+            read_bytes_per_sec: 123.0,
+            write_bytes_per_sec: 456.0,
+        }];
+        m.system.temperatures = vec![TemperatureInfo {
+            label: "CPU".into(),
+            temperature_c: 55.0,
+        }];
+        m.docker_stats = vec![DockerContainerStats {
+            container_name: "app".into(),
+            cpu_percent: 7.5,
+            memory_usage_mb: 128,
+            memory_limit_mb: 1024,
+            net_rx_bytes: 99,
+            net_tx_bytes: 100,
+        }];
+        m.network.rx_bytes_per_sec = 11.0;
+        m.network.tx_bytes_per_sec = 22.0;
+
+        insert_metrics_batch(&pool, &[("h1:9101", &m)])
+            .await
+            .unwrap();
+
+        let now = Utc::now();
+        let rows = fetch_chart_metrics_range(
+            &pool,
+            "h1:9101",
+            now - chrono::Duration::minutes(30),
+            now + chrono::Duration::minutes(30),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row.disks[0].mount_point, "/");
+        assert!((row.disks[0].usage_percent - 60.0).abs() < 0.01);
+        assert_eq!(row.temperatures[0].label, "CPU");
+        assert_eq!(row.docker_stats[0].container_name, "app");
+        assert!((row.docker_stats[0].cpu_percent - 7.5).abs() < 0.01);
+        assert_eq!(row.networks.as_ref().unwrap().total_rx_bytes, 1_000_000);
+        assert_eq!(row.networks.as_ref().unwrap().rx_bytes_per_sec, 11.0);
+    }
+
+    #[tokio::test]
+    async fn chart_metrics_range_uses_rollup_after_one_hour() {
+        let pool = fresh_pool().await;
+        let now = Utc::now();
+        let bucket = (now.timestamp() / 300) * 300;
+
+        sqlx::query(
+            r#"
+            INSERT INTO metrics_5min (
+                host_key, bucket, cpu_usage_percent, memory_usage_percent,
+                load_1min, load_5min, load_15min, is_online, sample_count,
+                total_rx_bytes, total_tx_bytes, disks, temperatures, docker_stats,
+                avg_rx_bytes_per_sec, avg_tx_bytes_per_sec
+            )
+            VALUES (
+                'h1:9101', ?1, 12.5, 34.5,
+                0.1, 0.2, 0.3, 1, 30,
+                12345, 67890,
+                '[{"name":"disk0","mount_point":"/","total_gb":100,"available_gb":50,"usage_percent":50,"read_bytes_per_sec":1,"write_bytes_per_sec":2}]',
+                '[{"label":"CPU","temperature_c":44}]',
+                '[{"container_name":"app","cpu_percent":3.5,"memory_usage_mb":64,"memory_limit_mb":1024,"net_rx_bytes":1,"net_tx_bytes":2}]',
+                111.0, 222.0
+            )
+            "#,
+        )
+        .bind(bucket)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let rows = fetch_chart_metrics_range(
+            &pool,
+            "h1:9101",
+            now - chrono::Duration::hours(2),
+            now + chrono::Duration::hours(2),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, 0, "rollup rows are synthetic chart rows");
+        assert!((rows[0].cpu_usage_percent - 12.5).abs() < 0.01);
+        assert_eq!(rows[0].networks.as_ref().unwrap().rx_bytes_per_sec, 111.0);
+        assert_eq!(rows[0].disks[0].mount_point, "/");
+    }
+
+    #[tokio::test]
+    async fn chart_metrics_range_wide_re_aggregates_into_15min_buckets() {
+        // > 14 d windows route through the window-function CTE and pick the
+        // last-in-bucket JSON snapshot via `MAX(CASE WHEN rn = 1 ...)`. This
+        // path is the easiest to break (CTE column shape, alias drift,
+        // SQLite window-function support) and the cheapest to regression-pin.
+        let pool = fresh_pool().await;
+
+        // Pin "now" to a 15-min boundary so both inserted rows fall inside
+        // the same 15-min re-aggregation bucket and the `rn = 1` selector
+        // has a deterministic winner.
+        let bucket_anchor = (Utc::now().timestamp() / 900) * 900;
+        let bucket_first = bucket_anchor; // older 5-min bucket
+        let bucket_last = bucket_anchor + 300; // newer 5-min bucket within the same 15-min window
+
+        // Older 5-min bucket: lower CPU, alternative disk JSON.
+        sqlx::query(
+            r#"
+            INSERT INTO metrics_5min (
+                host_key, bucket, cpu_usage_percent, memory_usage_percent,
+                load_1min, load_5min, load_15min, is_online, sample_count,
+                total_rx_bytes, total_tx_bytes, disks, temperatures, docker_stats,
+                avg_rx_bytes_per_sec, avg_tx_bytes_per_sec
+            )
+            VALUES (
+                'h1:9101', ?1, 10.0, 20.0,
+                0.1, 0.2, 0.3, 1, 30,
+                100, 200,
+                '[{"name":"older","mount_point":"/older","total_gb":50,"available_gb":25,"usage_percent":50,"read_bytes_per_sec":1,"write_bytes_per_sec":2}]',
+                '[{"label":"OLD","temperature_c":30}]',
+                '[{"container_name":"old","cpu_percent":1.0,"memory_usage_mb":10,"memory_limit_mb":256,"net_rx_bytes":1,"net_tx_bytes":2}]',
+                100.0, 200.0
+            )
+            "#,
+        )
+        .bind(bucket_first)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Newer 5-min bucket inside the same 15-min window: higher CPU,
+        // distinct disk/temperature/docker JSON.  The wide branch must
+        // surface *this* row's JSON snapshots (rn = 1).
+        sqlx::query(
+            r#"
+            INSERT INTO metrics_5min (
+                host_key, bucket, cpu_usage_percent, memory_usage_percent,
+                load_1min, load_5min, load_15min, is_online, sample_count,
+                total_rx_bytes, total_tx_bytes, disks, temperatures, docker_stats,
+                avg_rx_bytes_per_sec, avg_tx_bytes_per_sec
+            )
+            VALUES (
+                'h1:9101', ?1, 30.0, 60.0,
+                0.4, 0.5, 0.6, 1, 30,
+                500, 700,
+                '[{"name":"newer","mount_point":"/newer","total_gb":100,"available_gb":40,"usage_percent":60,"read_bytes_per_sec":3,"write_bytes_per_sec":4}]',
+                '[{"label":"NEW","temperature_c":55}]',
+                '[{"container_name":"new","cpu_percent":7.5,"memory_usage_mb":128,"memory_limit_mb":1024,"net_rx_bytes":9,"net_tx_bytes":10}]',
+                300.0, 400.0
+            )
+            "#,
+        )
+        .bind(bucket_last)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // 30-day window forces the wide branch (>14 d).
+        let now = Utc::now();
+        let rows = fetch_chart_metrics_range(
+            &pool,
+            "h1:9101",
+            now - chrono::Duration::days(30),
+            now + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+
+        // Both 5-min rows fall in the same 15-min bucket → exactly one
+        // output row.
+        assert_eq!(
+            rows.len(),
+            1,
+            "two 5-min rows collapse into one 15-min bucket"
+        );
+        let row = &rows[0];
+
+        // Scalars are AVG over both rows.
+        assert!(
+            (row.cpu_usage_percent - 20.0).abs() < 0.01,
+            "CPU should be the average of 10 and 30, got {}",
+            row.cpu_usage_percent
+        );
+        assert!(
+            (row.memory_usage_percent - 40.0).abs() < 0.01,
+            "memory should be the average of 20 and 60, got {}",
+            row.memory_usage_percent
+        );
+
+        // Cumulative counters are MAX (latest absolute value).
+        let net = row.networks.as_ref().expect("network rates synthesized");
+        assert_eq!(net.total_rx_bytes, 500);
+        assert_eq!(net.total_tx_bytes, 700);
+
+        // JSON snapshots come from the rn=1 row (the *newer* bucket).
+        assert_eq!(row.disks.len(), 1);
+        assert_eq!(row.disks[0].mount_point, "/newer");
+        assert_eq!(row.temperatures[0].label, "NEW");
+        assert_eq!(row.docker_stats[0].container_name, "new");
     }
 
     #[tokio::test]

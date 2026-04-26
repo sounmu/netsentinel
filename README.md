@@ -207,7 +207,8 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | `MAX_DB_CONNECTIONS` | No | `10` | sqlx connection pool size. SQLite serialises writes via a single writer lock, so values beyond ~10 provide no throughput gain and only grow idle pool memory. |
 | `SSE_BUFFER_SIZE` | No | `128` | SSE broadcast channel buffer; floor is 128, so env can raise but not lower it |
 | `TRUSTED_PROXY_COUNT` | No | `0` | Reverse proxy count for X-Forwarded-For (0 = use peer IP directly) |
-| `METRICS_CACHE_MAX_ENTRIES` | No | `20` | Max in-memory query-cache entries (oldest-inserted evicted when full; TTL 120 s) |
+| `METRICS_CACHE_MAX_ENTRIES` | No | `20` | Max in-memory query-cache entries per cache (raw ≤6h ranges are not server-cached; TTL 120 s) |
+| `METRICS_CACHE_MAX_BYTES` | No | `33554432` | Estimated byte budget per metrics query cache (default 32 MiB). Oldest entries are evicted when either the entry cap or byte cap is exceeded |
 | `SQLITE_MMAP_SIZE` | No | `67108864` | SQLite mmap size in bytes (default 64 MiB) |
 | `SQLITE_CACHE_SIZE_KB` | No | `8192` | SQLite page cache size in KiB (default 8 MiB; applied as negative `cache_size`) |
 | `SQLITE_TEMP_STORE` | No | `MEMORY` | SQLite temp storage mode: `DEFAULT`, `FILE`, or `MEMORY` |
@@ -246,6 +247,7 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 | `DELETE` | `/api/hosts/{host_key}` | Delete a host |
 | `GET` | `/api/metrics/{host_key}` | Recent 50 metric rows |
 | `GET` | `/api/metrics/{host_key}?start=&end=` | Metrics in a time range (ISO 8601) |
+| `GET` | `/api/metrics/{host_key}/chart?start=&end=` | Lightweight chart rows for host detail graphs (≤1h raw, >1h 5-min rollup, >14d 15-min re-aggregation) |
 | `POST` | `/api/metrics/batch` | Batch metrics for multiple hosts (max 50) |
 | `GET` | `/api/uptime/{host_key}?days=` | Daily uptime breakdown |
 | `GET` | `/api/alert-configs` | Global alert defaults |

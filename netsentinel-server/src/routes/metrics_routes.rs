@@ -18,6 +18,10 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         // Metrics query (batch must be registered before {host_key} to avoid capture)
         .route("/api/metrics/batch", post(metrics_handler::batch_metrics))
         .route(
+            "/api/metrics/{host_key}/chart",
+            get(metrics_handler::get_chart_metrics_by_host_key),
+        )
+        .route(
             "/api/metrics/{host_key}",
             get(metrics_handler::get_metrics_by_host_key),
         )

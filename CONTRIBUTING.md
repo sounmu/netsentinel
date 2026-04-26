@@ -167,7 +167,7 @@ touch netsentinel-server/migrations/006_your_change.sql
 # 4. Migrations are embedded at compile time via sqlx::migrate!()
 ```
 
-For new time-series metrics, keep raw and rollup storage in sync: add nullable raw columns for write-time scalar projections when they avoid repeated JSON parsing, update the batch insert path, update `metrics_5min` aggregation, and update every branch of `fetch_metrics_range`.
+For new time-series metrics, keep raw and rollup storage in sync: add nullable raw columns for write-time scalar projections when they avoid repeated JSON parsing, update the batch insert path, update `metrics_5min` aggregation, and update every branch of `fetch_metrics_range`. If the metric is rendered on `/host?key=`, also update the lightweight `/api/metrics/{host_key}/chart` projection (`fetch_chart_metrics_range`) so chart pages do not fall back to caching full snapshot rows.
 
 ### Web unit tests
 
