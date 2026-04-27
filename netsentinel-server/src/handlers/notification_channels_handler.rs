@@ -198,7 +198,12 @@ fn validate_channel(channel_type: ChannelType, config: &serde_json::Value) -> Re
             }
         }
         ChannelType::Email => {
-            for field in ["smtp_host", "from", "to"] {
+            // SMTP credentials (`smtp_user` / `smtp_pass`) are mandatory.
+            // Allowing them to be empty made `send_email` attempt an
+            // unauthenticated connect to an arbitrary external SMTP host —
+            // an open-relay-misuse / IP-reputation hazard for the operator.
+            // CLAUDE.md > Input Validation > Email enumerates all six.
+            for field in ["smtp_host", "smtp_user", "smtp_pass", "from", "to"] {
                 let val = config.get(field).and_then(|v| v.as_str()).unwrap_or("");
                 if val.is_empty() {
                     return Err(AppError::BadRequest(format!(
@@ -232,6 +237,8 @@ mod tests {
     fn test_valid_email_channel() {
         let config = json!({
             "smtp_host": "smtp.example.com",
+            "smtp_user": "noreply@example.com",
+            "smtp_pass": "secret",
             "from": "noreply@example.com",
             "to": "admin@example.com"
         });
@@ -240,6 +247,7 @@ mod tests {
 
     #[test]
     fn test_email_missing_fields() {
+        // smtp_host / from / to (legacy required set) — all still rejected.
         assert!(
             validate_channel(
                 ChannelType::Email,
@@ -251,5 +259,31 @@ mod tests {
             validate_channel(ChannelType::Email, &json!({ "smtp_host": "x", "to": "x" })).is_err()
         );
         assert!(validate_channel(ChannelType::Email, &json!({ "from": "x", "to": "x" })).is_err());
+
+        // New required fields: smtp_user, smtp_pass. A config that satisfies
+        // every legacy field but omits the credentials must now be rejected.
+        assert!(
+            validate_channel(
+                ChannelType::Email,
+                &json!({
+                    "smtp_host": "x",
+                    "from": "x",
+                    "to": "x",
+                })
+            )
+            .is_err()
+        );
+        assert!(
+            validate_channel(
+                ChannelType::Email,
+                &json!({
+                    "smtp_host": "x",
+                    "smtp_user": "x",
+                    "from": "x",
+                    "to": "x",
+                })
+            )
+            .is_err()
+        );
     }
 }
