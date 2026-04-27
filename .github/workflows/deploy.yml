@@ -120,22 +120,21 @@ jobs:
               (cd ~/network-monitor && docker compose down --remove-orphans) || true
             fi
 
-            # 2) One-time pgdata migration: if the legacy bind-mount still holds
-            #    TimescaleDB data and the new directory is empty, move it over
-            #    atomically. PostgreSQL must already be stopped by step (1) —
-            #    moving a live data dir would corrupt WAL. The `! -d` guard
-            #    makes the whole step idempotent across re-runs.
+            # 2) One-time legacy pgdata migration for old v0.3 installs:
+            #    if the old bind-mount still exists and the new directory is
+            #    empty, move it over atomically after step (1) stopped the old
+            #    stack. The `! -d` guard keeps this idempotent across re-runs.
             mkdir -p ~/netsentinel
             if [ -d ~/network-monitor/pgdata ] && [ ! -d ~/netsentinel/pgdata ]; then
               echo "📦 Migrating pgdata from legacy path → ~/netsentinel/pgdata"
               mv -v ~/network-monitor/pgdata ~/netsentinel/pgdata
             fi
 
-            # 3) Bring up the new stack. --remove-orphans cleans up any
-            #    stale services (incl. the legacy `web` container which
-            #    was folded into `server` in v0.3.6).
+            # 3) Bring up the published image. --remove-orphans cleans
+            #    up stale services (incl. the legacy `web` container).
             cd ~/netsentinel
-            docker compose up -d --build --remove-orphans server
+            docker compose pull server
+            docker compose up -d --remove-orphans server
 
             # 4) Prune dangling layers AND tagged legacy images. Without
             #    the explicit rmi, the old `network-monitor-server`,
