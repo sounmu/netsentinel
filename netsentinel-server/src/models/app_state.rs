@@ -6,6 +6,7 @@ use crate::models::sse_payloads::{HostStatusPayload, SseBroadcast};
 use crate::repositories::hosts_repo::HostRow;
 use crate::repositories::metrics_repo::{ChartMetricsRow, MetricsRow};
 use crate::services::hosts_snapshot::SharedHostsSnapshot;
+use crate::services::monitors_snapshot::SharedMonitorsSnapshot;
 use crate::services::sse_ticket::SseTicketStore;
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -100,6 +101,12 @@ pub struct AppState {
     /// This replaced per-scrape `SELECT * FROM hosts` + `SELECT * FROM alert_configs`
     /// round-trips (Top-10 review finding #10).
     pub hosts_snapshot: SharedHostsSnapshot,
+    /// Cached view of the enabled HTTP / Ping monitor sets used by
+    /// `monitor_scraper`. Replaces the per-sweep
+    /// `SELECT … FROM http_monitors WHERE enabled = 1` + ping equivalent
+    /// (Top-10 review #9). Refreshed synchronously on monitor mutation
+    /// handlers and every 60 s as a backstop.
+    pub monitors_snapshot: SharedMonitorsSnapshot,
 }
 
 impl AppState {

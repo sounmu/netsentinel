@@ -8,6 +8,7 @@ use tokio::time::Instant;
 use crate::models::app_state::AppState;
 use crate::repositories::{alert_history_repo, http_monitors_repo, ping_monitors_repo};
 use crate::services::alert_service;
+use crate::services::monitors_snapshot;
 
 /// Minimum scrape interval to prevent excessive polling
 const MIN_INTERVAL_SECS: u64 = 10;
@@ -24,6 +25,17 @@ struct MonitorAlertState {
 
 /// Start the HTTP and Ping monitor scraper as a background task.
 /// Runs every 10 seconds — each monitor tracks its own interval via last_checked timestamps.
+///
+/// Uses `tokio::time::interval` (not `sleep`) with `MissedTickBehavior::Delay`
+/// so a slow sweep does not push the next sweep further out — a sweep that
+/// exceeds the period is just absorbed and the loop catches up on the next
+/// tick. Matches the pattern used by `scraper`, `rollup_worker`, and
+/// `retention_worker`.
+///
+/// Reads enabled monitors from `monitors_snapshot` (Top-10 review #9) instead
+/// of issuing two `SELECT … WHERE enabled = 1` queries per sweep. Mutation
+/// handlers refresh the snapshot synchronously, and a 60 s background tick
+/// catches any races.
 pub fn spawn_monitor_scraper(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // Track last check time per monitor
@@ -32,115 +44,114 @@ pub fn spawn_monitor_scraper(state: Arc<AppState>) -> tokio::task::JoinHandle<()
         // Track alert state per monitor (keyed by "http:{id}" or "ping:{id}")
         let mut alert_state: HashMap<String, MonitorAlertState> = HashMap::new();
 
+        let mut ticker = tokio::time::interval(Duration::from_secs(MIN_INTERVAL_SECS));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // First tick fires immediately; skip it so callers that already
+        // seeded snapshots / state at startup do not see a redundant sweep
+        // before the snapshot's synchronous DB load completes.
+        ticker.tick().await;
+
         loop {
-            tokio::time::sleep(Duration::from_secs(MIN_INTERVAL_SECS)).await;
+            ticker.tick().await;
+
+            let snapshot = monitors_snapshot::load(&state.db_pool, &state.monitors_snapshot);
 
             // HTTP monitors
-            match http_monitors_repo::get_enabled(&state.db_pool).await {
-                Ok(monitors) => {
-                    let live_ids: std::collections::HashSet<i32> =
-                        monitors.iter().map(|monitor| monitor.id).collect();
-                    http_last_checked.retain(|id, _| live_ids.contains(id));
-                    alert_state.retain(|key, _| {
-                        key.strip_prefix("http:")
-                            .and_then(|id| id.parse::<i32>().ok())
-                            .is_none_or(|id| live_ids.contains(&id))
-                    });
+            {
+                let monitors = snapshot.http.clone();
+                let live_ids: std::collections::HashSet<i32> =
+                    monitors.iter().map(|monitor| monitor.id).collect();
+                http_last_checked.retain(|id, _| live_ids.contains(id));
+                alert_state.retain(|key, _| {
+                    key.strip_prefix("http:")
+                        .and_then(|id| id.parse::<i32>().ok())
+                        .is_none_or(|id| live_ids.contains(&id))
+                });
 
-                    let due_monitors: Vec<_> = monitors
-                        .into_iter()
-                        .filter(|monitor| {
-                            let interval =
-                                Duration::from_secs(monitor.interval_secs.max(10) as u64);
-                            http_last_checked
-                                .get(&monitor.id)
-                                .is_none_or(|t| t.elapsed() >= interval)
-                        })
-                        .collect();
+                let due_monitors: Vec<_> = monitors
+                    .into_iter()
+                    .filter(|monitor| {
+                        let interval = Duration::from_secs(monitor.interval_secs.max(10) as u64);
+                        http_last_checked
+                            .get(&monitor.id)
+                            .is_none_or(|t| t.elapsed() >= interval)
+                    })
+                    .collect();
 
-                    for monitor in &due_monitors {
-                        http_last_checked.insert(monitor.id, Instant::now());
-                    }
-
-                    let results: Vec<_> = stream::iter(due_monitors.into_iter().map(|monitor| {
-                        let pool = state.db_pool.clone();
-                        let client = state.http_client.clone();
-                        async move {
-                            let error = check_http_endpoint(&pool, &client, &monitor).await;
-                            (monitor, error)
-                        }
-                    }))
-                    .buffer_unordered(MONITOR_CONCURRENCY)
-                    .collect()
-                    .await;
-
-                    for (monitor, error) in results {
-                        handle_monitor_alert(
-                            &state,
-                            &mut alert_state,
-                            &format!("http:{}", monitor.id),
-                            &monitor.name,
-                            error,
-                        )
-                        .await;
-                    }
+                for monitor in &due_monitors {
+                    http_last_checked.insert(monitor.id, Instant::now());
                 }
-                Err(e) => {
-                    tracing::error!(err = ?e, "❌ [Monitor] Failed to load enabled HTTP monitors");
+
+                let results: Vec<_> = stream::iter(due_monitors.into_iter().map(|monitor| {
+                    let pool = state.db_pool.clone();
+                    let client = state.http_client.clone();
+                    async move {
+                        let error = check_http_endpoint(&pool, &client, &monitor).await;
+                        (monitor, error)
+                    }
+                }))
+                .buffer_unordered(MONITOR_CONCURRENCY)
+                .collect()
+                .await;
+
+                for (monitor, error) in results {
+                    handle_monitor_alert(
+                        &state,
+                        &mut alert_state,
+                        &format!("http:{}", monitor.id),
+                        &monitor.name,
+                        error,
+                    )
+                    .await;
                 }
             }
 
             // Ping monitors
-            match ping_monitors_repo::get_enabled(&state.db_pool).await {
-                Ok(monitors) => {
-                    let live_ids: std::collections::HashSet<i32> =
-                        monitors.iter().map(|monitor| monitor.id).collect();
-                    ping_last_checked.retain(|id, _| live_ids.contains(id));
-                    alert_state.retain(|key, _| {
-                        key.strip_prefix("ping:")
-                            .and_then(|id| id.parse::<i32>().ok())
-                            .is_none_or(|id| live_ids.contains(&id))
-                    });
+            {
+                let monitors = snapshot.ping.clone();
+                let live_ids: std::collections::HashSet<i32> =
+                    monitors.iter().map(|monitor| monitor.id).collect();
+                ping_last_checked.retain(|id, _| live_ids.contains(id));
+                alert_state.retain(|key, _| {
+                    key.strip_prefix("ping:")
+                        .and_then(|id| id.parse::<i32>().ok())
+                        .is_none_or(|id| live_ids.contains(&id))
+                });
 
-                    let due_monitors: Vec<_> = monitors
-                        .into_iter()
-                        .filter(|monitor| {
-                            let interval =
-                                Duration::from_secs(monitor.interval_secs.max(10) as u64);
-                            ping_last_checked
-                                .get(&monitor.id)
-                                .is_none_or(|t| t.elapsed() >= interval)
-                        })
-                        .collect();
+                let due_monitors: Vec<_> = monitors
+                    .into_iter()
+                    .filter(|monitor| {
+                        let interval = Duration::from_secs(monitor.interval_secs.max(10) as u64);
+                        ping_last_checked
+                            .get(&monitor.id)
+                            .is_none_or(|t| t.elapsed() >= interval)
+                    })
+                    .collect();
 
-                    for monitor in &due_monitors {
-                        ping_last_checked.insert(monitor.id, Instant::now());
-                    }
-
-                    let results: Vec<_> = stream::iter(due_monitors.into_iter().map(|monitor| {
-                        let pool = state.db_pool.clone();
-                        async move {
-                            let error = check_ping_host(&pool, &monitor).await;
-                            (monitor, error)
-                        }
-                    }))
-                    .buffer_unordered(MONITOR_CONCURRENCY)
-                    .collect()
-                    .await;
-
-                    for (monitor, error) in results {
-                        handle_monitor_alert(
-                            &state,
-                            &mut alert_state,
-                            &format!("ping:{}", monitor.id),
-                            &monitor.name,
-                            error,
-                        )
-                        .await;
-                    }
+                for monitor in &due_monitors {
+                    ping_last_checked.insert(monitor.id, Instant::now());
                 }
-                Err(e) => {
-                    tracing::error!(err = ?e, "❌ [Monitor] Failed to load enabled ping monitors");
+
+                let results: Vec<_> = stream::iter(due_monitors.into_iter().map(|monitor| {
+                    let pool = state.db_pool.clone();
+                    async move {
+                        let error = check_ping_host(&pool, &monitor).await;
+                        (monitor, error)
+                    }
+                }))
+                .buffer_unordered(MONITOR_CONCURRENCY)
+                .collect()
+                .await;
+
+                for (monitor, error) in results {
+                    handle_monitor_alert(
+                        &state,
+                        &mut alert_state,
+                        &format!("ping:{}", monitor.id),
+                        &monitor.name,
+                        error,
+                    )
+                    .await;
                 }
             }
         }

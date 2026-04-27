@@ -185,6 +185,7 @@ async fn main() -> anyhow::Result<()> {
     // the placeholder the cell starts with; the real content arrives from
     // `refresh` below.
     let hosts_snapshot = services::hosts_snapshot::empty();
+    let monitors_snapshot = services::monitors_snapshot::empty();
 
     let state = Arc::new(AppState {
         store: Arc::new(RwLock::new(MetricsStore::new())),
@@ -259,12 +260,21 @@ async fn main() -> anyhow::Result<()> {
             .filter(|&n: &usize| n > 0)
             .unwrap_or(32),
         hosts_snapshot: hosts_snapshot.clone(),
+        monitors_snapshot: monitors_snapshot.clone(),
     });
 
     // Synchronous seed — blocks router startup only as long as two SELECTs
     // take. Avoids a window where the scraper reads an empty snapshot.
     services::hosts_snapshot::refresh(&state.db_pool, &hosts_snapshot).await;
     services::hosts_snapshot::spawn_background_refresher(state.db_pool.clone(), hosts_snapshot);
+
+    // Same pattern for the monitors snapshot — synchronous seed + 60 s
+    // background refresher.
+    services::monitors_snapshot::refresh(&state.db_pool, &monitors_snapshot).await;
+    services::monitors_snapshot::spawn_background_refresher(
+        state.db_pool.clone(),
+        monitors_snapshot,
+    );
 
     // Background task: evict expired cache entries every 60 seconds
     tokio::spawn(async move {

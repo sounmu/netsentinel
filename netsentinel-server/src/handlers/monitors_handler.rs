@@ -8,6 +8,7 @@ use crate::errors::AppError;
 use crate::models::app_state::AppState;
 use crate::repositories::{http_monitors_repo, ping_monitors_repo};
 use crate::services::auth::{AdminGuard, UserGuard};
+use crate::services::monitors_snapshot;
 
 // ──────────────────────────────────────────────
 // HTTP Monitors
@@ -36,6 +37,7 @@ pub async fn create_http_monitor(
     )?;
     validate_monitor_url_ssrf(&body.url).await?;
     let monitor = http_monitors_repo::create(&state.db_pool, &body).await?;
+    monitors_snapshot::refresh(&state.db_pool, &state.monitors_snapshot).await;
     tracing::info!(id = monitor.id, url = %monitor.url, "🌐 [HTTP Monitor] Created");
     Ok(Json(monitor))
 }
@@ -59,6 +61,7 @@ pub async fn update_http_monitor(
     let monitor = http_monitors_repo::update(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("HTTP monitor {} not found", id)))?;
+    monitors_snapshot::refresh(&state.db_pool, &state.monitors_snapshot).await;
     Ok(Json(monitor))
 }
 
@@ -72,6 +75,7 @@ pub async fn delete_http_monitor(
     if !deleted {
         return Err(AppError::NotFound(format!("HTTP monitor {} not found", id)));
     }
+    monitors_snapshot::refresh(&state.db_pool, &state.monitors_snapshot).await;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
@@ -123,6 +127,7 @@ pub async fn create_ping_monitor(
     validate_ping_monitor_request(&body.host, body.interval_secs, body.timeout_ms)?;
     validate_monitor_host_ssrf(&body.host).await?;
     let monitor = ping_monitors_repo::create(&state.db_pool, &body).await?;
+    monitors_snapshot::refresh(&state.db_pool, &state.monitors_snapshot).await;
     tracing::info!(id = monitor.id, host = %monitor.host, "🏓 [Ping Monitor] Created");
     Ok(Json(monitor))
 }
@@ -145,6 +150,7 @@ pub async fn update_ping_monitor(
     let monitor = ping_monitors_repo::update(&state.db_pool, id, &body)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Ping monitor {} not found", id)))?;
+    monitors_snapshot::refresh(&state.db_pool, &state.monitors_snapshot).await;
     Ok(Json(monitor))
 }
 
@@ -158,6 +164,7 @@ pub async fn delete_ping_monitor(
     if !deleted {
         return Err(AppError::NotFound(format!("Ping monitor {} not found", id)));
     }
+    monitors_snapshot::refresh(&state.db_pool, &state.monitors_snapshot).await;
     Ok(Json(serde_json::json!({ "deleted": id })))
 }
 
