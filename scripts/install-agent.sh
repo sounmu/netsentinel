@@ -309,7 +309,7 @@ EOM
     git -C "$tmpdir/repo" checkout "$REF" >/dev/null
   fi
 
-  if ! cargo install --locked --path "$tmpdir/repo/netsentinel-agent" --root "$PREFIX"; then
+  if ! cargo install --locked --path "$tmpdir/repo/agent" --root "$PREFIX"; then
     cat >&2 <<'EOM'
 ❌ `cargo install` failed.
 

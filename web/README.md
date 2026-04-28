@@ -1,4 +1,4 @@
-# netsentinel-web
+# web
 
 Next.js frontend dashboard for **NetSentinel**. Displays real-time CPU, memory, load, port, and Docker container metrics with interactive time-series charts.
 

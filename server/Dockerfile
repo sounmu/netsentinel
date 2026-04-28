@@ -9,7 +9,7 @@
 FROM node:20-alpine AS web-builder
 
 WORKDIR /web
-COPY netsentinel-web/package.json netsentinel-web/package-lock.json* ./
+COPY web/package.json web/package-lock.json* ./
 RUN npm ci
 
 # NEXT_PUBLIC_API_URL is baked into the bundle at build time. Same
@@ -20,7 +20,7 @@ ARG NEXT_PUBLIC_API_URL=""
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
-COPY netsentinel-web/ ./
+COPY web/ ./
 RUN npm run build
 # Next.js with `output: 'export'` writes its static bundle to /web/out/
 
@@ -28,7 +28,7 @@ RUN npm run build
 FROM rust:1.94.1 AS server-builder
 
 WORKDIR /build
-COPY netsentinel-server/Cargo.toml netsentinel-server/Cargo.lock ./
+COPY server/Cargo.toml server/Cargo.lock ./
 
 # Warm the dependency cache with an empty src/main.rs so subsequent
 # source edits only recompile the binary, not every crate.
@@ -37,9 +37,9 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs \
     && rm -rf src
 
 # Migrations are embedded at compile time via `sqlx::migrate!()`.
-COPY netsentinel-server/migrations/ ./migrations/
+COPY server/migrations/ ./migrations/
 
-COPY netsentinel-server/src/ ./src/
+COPY server/src/ ./src/
 RUN touch src/main.rs && cargo build --release && strip target/release/netsentinel-server
 
 # ── Stage 3 — runtime: minimal debian + binary + static bundle ────────

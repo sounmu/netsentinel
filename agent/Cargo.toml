@@ -1,10 +1,17 @@
 [package]
-name = "netsentinel-agent"
+name = "agent"
 version = "0.4.3-beta.1"
 edition = "2024"
 description = "Lightweight monitoring agent — collects CPU, memory, disk, GPU, Docker, and port metrics"
 license = "Apache-2.0"
 repository = "https://github.com/sounmu/netsentinel"
+
+# Preserve the produced binary name. Public install-agent.sh, the
+# systemd unit, the launchd plist, GitHub Release tarballs, and
+# /var/log/netsentinel-agent all reference this name.
+[[bin]]
+name = "netsentinel-agent"
+path = "src/main.rs"
 
 [features]
 default = []
@@ -20,7 +27,7 @@ anyhow = "1.0"
 dotenvy = "0.15"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 # Pin bincode to 1.3.3 — the wire format must match the server byte-for-byte
-# (`netsentinel-server/Cargo.toml`). bincode 2.x changed the on-wire layout
+# (`server/Cargo.toml`). bincode 2.x changed the on-wire layout
 # in incompatible ways and would silently corrupt every scrape if cargo's
 # resolver picked a newer 1.x patch with format-affecting changes. Bumping
 # is a deliberate cross-repo decision, not a `cargo update` side effect.

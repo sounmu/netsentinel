@@ -1,5 +1,5 @@
 {
-  "name": "netsentinel-web",
+  "name": "web",
   "version": "0.4.3-beta.1",
   "description": "Real-time server monitoring dashboard — Next.js frontend with SSE, charts, and i18n",
   "license": "Apache-2.0",

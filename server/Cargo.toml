@@ -1,15 +1,22 @@
 [package]
-name = "netsentinel-server"
+name = "server"
 version = "0.4.3-beta.1"
 edition = "2024"
 description = "Pull-based server monitoring backend — metrics aggregation, alerts, and REST API"
 license = "Apache-2.0"
 repository = "https://github.com/sounmu/netsentinel"
 
+# Preserve the produced binary name. The Dockerfile copies
+# target/release/netsentinel-server to /app/server, and DEPLOYMENT.md
+# `--vacuum-into` examples assume `/app/server` as the entrypoint.
+[[bin]]
+name = "netsentinel-server"
+path = "src/main.rs"
+
 [dependencies]
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1.0", features = ["full"] }
-# Pin bincode to 1.3.3 — must match the agent (`netsentinel-agent/Cargo.toml`)
+# Pin bincode to 1.3.3 — must match the agent (`agent/Cargo.toml`)
 # exactly so the scrape payload deserializes cleanly. bincode 2.x changed
 # the on-wire layout incompatibly; pinning prevents `cargo update` from
 # silently picking a newer patch with format-affecting changes.

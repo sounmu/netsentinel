@@ -1524,35 +1524,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "netsentinel-server"
-version = "0.4.3-beta.1"
-dependencies = [
- "anyhow",
- "argon2",
- "axum",
- "base64",
- "bincode",
- "chrono",
- "chrono-tz",
- "dotenvy",
- "futures",
- "jsonwebtoken",
- "lettre",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "tokio",
- "tokio-stream",
- "tower-http",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
 name = "nom"
 version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2247,6 +2218,35 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "server"
+version = "0.4.3-beta.1"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "axum",
+ "base64",
+ "bincode",
+ "chrono",
+ "chrono-tz",
+ "dotenvy",
+ "futures",
+ "jsonwebtoken",
+ "lettre",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tokio",
+ "tokio-stream",
+ "tower-http",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

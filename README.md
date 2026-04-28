@@ -78,11 +78,11 @@ The production hub is a **single container**: Axum serves both `/api/*` and the 
 
 ```
 netsentinel/
-├── netsentinel-server/   # Rust/Axum backend — metrics API, scraper, alerts,
-│                         # and (in prod) the embedded web static bundle
-├── netsentinel-web/      # Next.js dashboard — compiled to `output: 'export'`
-│                         # and baked into the server image at build time
-└── netsentinel-agent/    # Rust agent daemon
+├── server/   # Rust/Axum backend — metrics API, scraper, alerts,
+│             # and (in prod) the embedded web static bundle
+├── web/      # Next.js dashboard — compiled to `output: 'export'`
+│             # and baked into the server image at build time
+└── agent/    # Rust agent daemon
 ```
 
 ---
@@ -203,7 +203,7 @@ Use this path when you are actively changing code. For production homelab instal
 ### Server (port 3000)
 
 ```bash
-cd netsentinel-server
+cd server
 cp .env.example .env   # set JWT_SECRET; DATABASE_URL defaults to sqlite://./data/netsentinel.db
 mkdir -p data          # SQLite needs the parent directory to exist
 cargo run
@@ -212,7 +212,7 @@ cargo run
 ### Web dashboard (port 3001, HMR)
 
 ```bash
-cd netsentinel-web
+cd web
 cp .env.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:3000
 npm install
 npm run dev
@@ -223,7 +223,7 @@ npm run dev
 ### Agent (port 9101)
 
 ```bash
-cd netsentinel-agent
+cd agent
 cp .env.example .env   # JWT_SECRET must match the server
 cargo run
 ```
@@ -245,7 +245,7 @@ cargo run
 
 ### Server — all keys below
 
-Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `docker-compose.yml`). `netsentinel-server/.env` is only consulted by a local `cargo run`. So add these keys to `./env` for a Docker install, or to `netsentinel-server/.env` for a local dev install — never both.
+Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `docker-compose.yml`). `server/.env` is only consulted by a local `cargo run`. So add these keys to `./env` for a Docker install, or to `server/.env` for a local dev install — never both.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -266,7 +266,7 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | `METRICS_TOKEN` | No | — | Bearer token for `/metrics` (Prometheus). When set, every scrape must send `Authorization: Bearer <token>`. |
 | `ALLOW_UNAUTHENTICATED_METRICS` | No | `false` | Explicit opt-in to leave `/metrics` open when `METRICS_TOKEN` is unset. |
 
-### Agent `netsentinel-agent/.env`
+### Agent `agent/.env`
 
 | Variable | Required | Default | Description |
 |---|---|---|---|

@@ -28,7 +28,7 @@ The custom-build path uses a `docker-compose.override.yml` next to the base comp
        image: netsentinel-server:custom
        build:
          context: .
-         dockerfile: netsentinel-server/Dockerfile
+         dockerfile: server/Dockerfile
          args:
            - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
    ```

@@ -55,9 +55,9 @@ The dashboard **and** the API share **http://localhost:3000**. Open `/setup` for
 
 ```
 netsentinel/
-├── netsentinel-server/   # Rust/Axum backend — REST API, scraper, SSE
-├── netsentinel-agent/    # Rust daemon — collects host metrics
-├── netsentinel-web/      # Next.js dashboard
+├── server/   # Rust/Axum backend — REST API, scraper, SSE
+├── agent/    # Rust daemon — collects host metrics
+├── web/      # Next.js dashboard
 ├── docker-compose.yml        # Pull-only homelab stack
 ├── .env.example              # Environment variable template
 └── .github/workflows/        # GitHub Actions CI
@@ -78,7 +78,7 @@ services:
     image: netsentinel-server:dev
     build:
       context: .
-      dockerfile: netsentinel-server/Dockerfile
+      dockerfile: server/Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-}
 ```
@@ -90,7 +90,7 @@ docker compose up -d --build server
 ### Server (Rust/Axum)
 
 ```bash
-cd netsentinel-server
+cd server
 cp .env.example .env          # edit DATABASE_URL etc.
 cargo run                     # starts on 0.0.0.0:3000 by default
 ```
@@ -104,12 +104,12 @@ cargo fmt                     # auto-format
 cargo test                    # run unit tests
 ```
 
-When testing auth locally over plain HTTP, set `COOKIE_SECURE=false` in `netsentinel-server/.env`; production should keep the default secure cookie. Prometheus scraping is auth-required by default, so set `METRICS_TOKEN` (recommended) or explicitly opt in to anonymous scraping with `ALLOW_UNAUTHENTICATED_METRICS=true`.
+When testing auth locally over plain HTTP, set `COOKIE_SECURE=false` in `server/.env`; production should keep the default secure cookie. Prometheus scraping is auth-required by default, so set `METRICS_TOKEN` (recommended) or explicitly opt in to anonymous scraping with `ALLOW_UNAUTHENTICATED_METRICS=true`.
 
 ### Agent (Rust)
 
 ```bash
-cd netsentinel-agent
+cd agent
 cp .env.example .env          # edit JWT_SECRET, AGENT_PORT, AGENT_BIND
 cargo run
 ```
@@ -117,7 +117,7 @@ cargo run
 ### Web (Next.js)
 
 ```bash
-cd netsentinel-web
+cd web
 npm install
 cp .env.example .env.local    # set NEXT_PUBLIC_API_URL=http://localhost:3000
 npm run dev                   # starts on http://localhost:3001 with HMR
@@ -167,7 +167,7 @@ npm run build    # production static export → emits out/
 ### Server unit tests
 
 ```bash
-cd netsentinel-server
+cd server
 cargo test
 ```
 
@@ -180,7 +180,7 @@ Schema changes use [sqlx migrations](https://docs.rs/sqlx/latest/sqlx/macro.migr
 ```bash
 # To add a new migration:
 # 1. Create a new numbered SQL file:
-touch netsentinel-server/migrations/006_your_change.sql
+touch server/migrations/006_your_change.sql
 # 2. Write idempotent SQL (use IF NOT EXISTS, IF EXISTS, etc.)
 # 3. Never modify existing migration files — always create new ones
 # 4. Migrations are embedded at compile time via sqlx::migrate!()
@@ -191,7 +191,7 @@ For new time-series metrics, keep raw and rollup storage in sync: add nullable r
 ### Web unit tests
 
 ```bash
-cd netsentinel-web
+cd web
 npm test
 ```
 
