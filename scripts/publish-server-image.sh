@@ -5,6 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_NAME="${IMAGE_NAME:-ghcr.io/sounmu/netsentinel-server}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64}"
 NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-}"
+BUILDER_NAME="${BUILDER_NAME:-netsentinel-release-builder}"
 
 usage() {
   cat <<'EOF'
@@ -21,12 +22,36 @@ Environment:
   IMAGE_NAME            image repository [ghcr.io/sounmu/netsentinel-server]
   PLATFORMS            buildx platforms [linux/amd64,linux/arm64]
   NEXT_PUBLIC_API_URL  baked web API URL [same-origin]
+  BUILDER_NAME          buildx builder name [netsentinel-release-builder]
 
 Notes:
   - Login first with: gh auth token | docker login ghcr.io -u USERNAME --password-stdin
   - Prerelease tags should not use --latest.
 EOF
 }
+
+ensure_builder() {
+  local driver
+
+  if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+    driver="$(docker buildx inspect "$BUILDER_NAME" | awk '/^Driver:/ {print $2; exit}')"
+    if [[ "$driver" != "docker-container" ]]; then
+      echo "Builder '$BUILDER_NAME' uses driver '$driver'; expected docker-container." >&2
+      echo "Remove it or set BUILDER_NAME to another name." >&2
+      exit 1
+    fi
+  else
+    echo "Creating buildx builder '$BUILDER_NAME' with docker-container driver"
+    docker buildx create --name "$BUILDER_NAME" --driver docker-container >/dev/null
+  fi
+
+  docker buildx inspect "$BUILDER_NAME" --bootstrap >/dev/null
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
 
 if [[ $# -lt 1 ]]; then
   usage >&2
@@ -70,6 +95,8 @@ if ! docker buildx version >/dev/null 2>&1; then
   exit 1
 fi
 
+ensure_builder
+
 tags=(-t "${IMAGE_NAME}:${tag}")
 if [[ "$publish_latest" == true ]]; then
   tags+=(-t "${IMAGE_NAME}:latest")
@@ -81,6 +108,7 @@ if [[ "$publish_latest" == true ]]; then
 fi
 
 docker buildx build \
+  --builder "$BUILDER_NAME" \
   --platform "$PLATFORMS" \
   --push \
   --build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}" \
