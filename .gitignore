@@ -58,6 +58,7 @@ scripts/*
 !scripts/update-agent.sh
 !scripts/remove-hub.sh
 !scripts/remove-agent.sh
+!scripts/publish-server-image.sh
 
 # netsentinel-web has its own scripts/ folder used by npm start
 # (export-start.mjs is the production static preview server).
