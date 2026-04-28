@@ -23,7 +23,7 @@ set -euo pipefail
 
 CONFIG_FILE="${NS_CONFIG_FILE:-/etc/netsentinel/agent.env}"
 REF="${NS_REF:-latest}"
-INSTALLER_URL="${NS_INSTALLER_URL:-https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh}"
+INSTALLER_URL="${NS_INSTALLER_URL:-}"
 EXTRA_ARGS=()
 
 print_help() {
@@ -43,7 +43,7 @@ Options:
   --build-from-source     rebuild via cargo from --ref
                           (requires git + Rust toolchain)
   --installer-url URL     override the install-agent.sh URL  env: NS_INSTALLER_URL
-                          (default: main branch on github)
+                          (default: main for latest, otherwise --ref tag)
   --config-file PATH      agent.env to read credentials from env: NS_CONFIG_FILE
                           (default: /etc/netsentinel/agent.env)
   -h, --help
@@ -73,6 +73,14 @@ while [[ $# -gt 0 ]]; do
     *) echo "❌ Unknown argument: $1" >&2; echo "    Try --help" >&2; exit 2 ;;
   esac
 done
+
+if [[ -z "$INSTALLER_URL" ]]; then
+  if [[ "$REF" == "latest" ]]; then
+    INSTALLER_URL="https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh"
+  else
+    INSTALLER_URL="https://raw.githubusercontent.com/sounmu/netsentinel/${REF}/scripts/install-agent.sh"
+  fi
+fi
 
 if [[ $EUID -ne 0 ]]; then
   echo "❌ Must run as root (use sudo)." >&2
@@ -108,7 +116,9 @@ fi
 cmd=(--jwt-secret "$JWT_SECRET" --ref "$REF")
 [[ -n "${AGENT_PORT}" ]] && cmd+=(--port "$AGENT_PORT")
 [[ -n "${AGENT_BIND}" ]] && cmd+=(--bind "$AGENT_BIND")
-cmd+=("${EXTRA_ARGS[@]}")
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  cmd+=("${EXTRA_ARGS[@]}")
+fi
 
 # Prefer a local install-agent.sh next to this script (offline-friendly,
 # also picks up local edits when developing). Otherwise fetch from the
