@@ -54,10 +54,10 @@ jobs:
         include:
           - platform: linux-amd64
             os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
           - platform: linux-arm64
             os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
           - platform: darwin-amd64
             os: macos-15-intel
             target: x86_64-apple-darwin
@@ -75,8 +75,15 @@ jobs:
         with:
           workspaces: netsentinel-agent
 
+      - name: Install musl toolchain
+        if: startsWith(matrix.platform, 'linux-')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
       - name: Build agent
         working-directory: netsentinel-agent
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: cargo build --locked --release --target "${{ matrix.target }}"
 
       - name: Package agent

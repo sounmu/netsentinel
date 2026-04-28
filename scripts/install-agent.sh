@@ -38,6 +38,7 @@ REPO_URL="https://github.com/sounmu/netsentinel.git"
 REF="latest"
 SERVICE_NAME="netsentinel-agent"
 BIN_NAME="netsentinel-agent"
+WRAPPER_NAME="netsentinel-agent-wrapper"
 CONFIG_DIR="/etc/netsentinel"
 CONFIG_FILE="${CONFIG_DIR}/agent.env"
 LOG_DIR="/var/log/netsentinel-agent"
@@ -138,6 +139,7 @@ if [[ $UNINSTALL -eq 1 ]]; then
       ;;
   esac
   rm -f "${PREFIX}/bin/${BIN_NAME}"
+  rm -f "${PREFIX}/bin/${WRAPPER_NAME}"
   rm -rf "${CONFIG_DIR}"
   rm -rf "/usr/local/etc/netsentinel"
   echo "✅ Uninstalled."
@@ -385,10 +387,19 @@ EOF
     ;;
   Darwin)
     plist="/Library/LaunchDaemons/dev.netsentinel.agent.plist"
+    wrapper="${PREFIX}/bin/${WRAPPER_NAME}"
     # Retire the legacy manual macOS installer artifacts if this unified
     # installer is used on a machine that previously ran deploy/macos.
     launchctl unload "/Library/LaunchDaemons/com.sounmu.netsentinel.plist" 2>/dev/null || true
     rm -f "/Library/LaunchDaemons/com.sounmu.netsentinel.plist"
+    cat > "$wrapper" <<EOF
+#!/bin/sh
+set -a
+. "${CONFIG_FILE}"
+set +a
+exec "${PREFIX}/bin/${BIN_NAME}"
+EOF
+    chmod 755 "$wrapper"
     cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -397,14 +408,8 @@ EOF
   <key>Label</key><string>dev.netsentinel.agent</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${PREFIX}/bin/${BIN_NAME}</string>
+    <string>${wrapper}</string>
   </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>JWT_SECRET</key><string>${JWT_SECRET}</string>
-    <key>AGENT_PORT</key><string>${AGENT_PORT}</string>
-    <key>AGENT_BIND</key><string>${BIND_ADDR}</string>
-  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>/var/log/netsentinel-agent.log</string>
