@@ -242,6 +242,7 @@ cargo run
 | `GOOGLE_OAUTH_REDIRECT_URI` | **Yes** | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. |
 | `OAUTH_ADMIN_EMAILS` | After bootstrap | empty | Comma-separated Google email allowlist. Emails are lowercased before comparison. |
 | `OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN` | No | `true` | When `users` is empty, the first verified Google login creates the initial admin. |
+| `COOKIE_SECURE` | No | inferred | Refresh cookie `Secure` flag. Unset infers from `GOOGLE_OAUTH_REDIRECT_URI`: `https` uses Secure, `http` omits it for local/LAN testing. |
 | `NETSENTINEL_VERSION` | No | `latest` | Docker image tag for `ghcr.io/sounmu/netsentinel-server`. Pin a release tag such as `v0.4.2` for reproducible installs. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | No | — | Cloudflare Tunnel token. Only read when you activate the `tunnel` service via a compose override — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). |
 | `NEXT_PUBLIC_API_URL` | No | empty (same-origin) | Build-time web setting for custom local images. The published image is built for same-origin deployments, which is the recommended homelab path. Split-origin deployments should either build a custom image via a `docker-compose.override.yml` (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)) or put dashboard/API behind one reverse-proxy hostname. |

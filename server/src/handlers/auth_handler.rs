@@ -21,8 +21,9 @@ const REFRESH_COOKIE_NAME: &str = "nm_refresh";
 
 /// Whether the refresh cookie should carry the `Secure` flag.
 /// Evaluated once on first call and cached for the process lifetime via
-/// `OnceLock`. Secure-by-default: operators must explicitly opt out with
-/// `COOKIE_SECURE=false` for local plain-HTTP development.
+/// `OnceLock`. `COOKIE_SECURE` wins when set; otherwise we infer from the
+/// OAuth redirect URI because the OAuth callback is a redirect-only flow and
+/// cannot hand the access token to JavaScript if the browser drops the cookie.
 fn is_secure_cookie() -> bool {
     use std::sync::OnceLock;
     static SECURE: OnceLock<bool> = OnceLock::new();
@@ -31,7 +32,9 @@ fn is_secure_cookie() -> bool {
             value.trim().to_ascii_lowercase().as_str(),
             "0" | "false" | "no" | "off"
         ),
-        Err(_) => true,
+        Err(_) => std::env::var("GOOGLE_OAUTH_REDIRECT_URI")
+            .map(|uri| !uri.trim().starts_with("http://"))
+            .unwrap_or(true),
     })
 }
 
