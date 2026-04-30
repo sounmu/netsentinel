@@ -215,6 +215,18 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or(300),
             ),
         )),
+        login_user_rate_limiter: Arc::new(LoginRateLimiter::new(
+            std::env::var("LOGIN_USER_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10),
+            std::time::Duration::from_secs(
+                std::env::var("LOGIN_RATE_LIMIT_WINDOW_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(300),
+            ),
+        )),
         trusted_proxy_count,
         token_revocation_cutoffs: Arc::clone(&token_revocation_cache),
         sse_ticket_store: Arc::clone(&sse_ticket_store),
@@ -304,12 +316,14 @@ async fn main() -> anyhow::Result<()> {
     // Prevents unbounded HashMap growth from unique IPs that never return.
     {
         let login_limiter = Arc::clone(&state.login_rate_limiter);
+        let login_user_limiter = Arc::clone(&state.login_user_rate_limiter);
         let api_limiter = Arc::clone(&state.api_rate_limiter);
         let public_api_limiter = Arc::clone(&state.public_api_rate_limiter);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 login_limiter.evict_stale();
+                login_user_limiter.evict_stale();
                 api_limiter.evict_stale();
                 public_api_limiter.evict_stale();
             }
@@ -340,8 +354,9 @@ async fn main() -> anyhow::Result<()> {
     // to configure here.
 
     // ── Pre-populate caches from DB (parallel) ──
-    let (hosts_result, revoked_result) = tokio::join!(
+    let (hosts_result, password_result, revoked_result) = tokio::join!(
         repositories::hosts_repo::list_hosts(&state.db_pool),
+        repositories::users_repo::load_password_changed_at(&state.db_pool),
         repositories::users_repo::load_tokens_revoked_at(&state.db_pool),
     );
 
@@ -353,17 +368,36 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!(err = ?e, "⚠️ [Hosts] Failed to load initial hosts"),
     }
 
-    // Load persisted token revocations into the unified cutoff cache.
+    // Load persisted password-change and token-revocation cutoffs.
     {
         let mut cutoffs = match state.token_revocation_cutoffs.write() {
             Ok(c) => c,
             Err(poisoned) => poisoned.into_inner(),
         };
+        match password_result {
+            Ok(map) => {
+                for (uid, ts) in map {
+                    cutoffs.insert(uid, ts);
+                }
+                tracing::info!("🔐 [Auth] password_changed_at timestamps loaded");
+            }
+            Err(e) => tracing::warn!(
+                err = ?e,
+                "⚠️ [Auth] Failed to load password_changed_at"
+            ),
+        }
         match revoked_result {
             Ok(map) => {
                 let count = map.len();
                 for (uid, ts) in map {
-                    cutoffs.insert(uid, ts);
+                    cutoffs
+                        .entry(uid)
+                        .and_modify(|existing| {
+                            if ts > *existing {
+                                *existing = ts;
+                            }
+                        })
+                        .or_insert(ts);
                 }
                 tracing::info!(
                     revoked_user_count = count,

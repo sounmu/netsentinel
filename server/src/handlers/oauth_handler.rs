@@ -33,6 +33,11 @@ pub async fn google_start(
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Json<OAuthStartResponse>, AppError> {
+    if !state.google_oauth.enabled {
+        return Err(AppError::BadRequest(
+            "Google OAuth is not configured".into(),
+        ));
+    }
     let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
     if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
         tracing::warn!(ip = %ip_str, "🔒 [OAuth] Start rate limited");
@@ -62,6 +67,9 @@ pub async fn google_callback(
     headers: HeaderMap,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> Result<Response, AppError> {
+    if !state.google_oauth.enabled {
+        return redirect("/login?error=oauth");
+    }
     if query.error.is_some() {
         return redirect("/login?error=oauth");
     }
@@ -101,8 +109,34 @@ pub async fn google_callback(
             }
         };
 
+    let existing_oauth =
+        users_repo::find_by_oauth_subject(&state.db_pool, identity.provider, &identity.subject)
+            .await?;
     let allowed_admin = state.google_oauth.is_admin_email(&identity.email);
-    let user = if allowed_admin {
+    let user = if let Some(existing) = existing_oauth {
+        existing
+    } else if let Some(existing_email_user) =
+        users_repo::find_by_email(&state.db_pool, &identity.email).await?
+    {
+        let role = if allowed_admin {
+            "admin"
+        } else {
+            existing_email_user.role.as_str()
+        };
+        users_repo::link_google_user(
+            &state.db_pool,
+            existing_email_user.id,
+            users_repo::GoogleLink {
+                provider: identity.provider,
+                subject: &identity.subject,
+                email: &identity.email,
+                display_name: identity.display_name.as_deref(),
+                picture_url: identity.picture_url.as_deref(),
+                role,
+            },
+        )
+        .await?
+    } else if allowed_admin {
         users_repo::upsert_oauth_user(
             &state.db_pool,
             identity.provider,

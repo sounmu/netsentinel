@@ -83,7 +83,9 @@ pub async fn request_id(request: axum::extract::Request, next: axum::middleware:
 fn is_public_path(path: &str) -> bool {
     matches!(
         path,
-        "/api/auth/oauth/google/start"
+        "/api/auth/login"
+            | "/api/auth/setup"
+            | "/api/auth/oauth/google/start"
             | "/api/auth/oauth/google/callback"
             | "/api/auth/status"
             | "/api/public/status"

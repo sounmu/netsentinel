@@ -18,6 +18,7 @@ const GOOGLE_PROVIDER: &str = "google";
 
 #[derive(Debug, Clone)]
 pub struct GoogleOAuthConfig {
+    pub enabled: bool,
     pub client_id: String,
     client_secret: String,
     redirect_uri: String,
@@ -42,25 +43,20 @@ pub struct GoogleIdentity {
 
 impl GoogleOAuthConfig {
     pub fn from_env() -> anyhow::Result<Self> {
-        let client_id = std::env::var("GOOGLE_OAUTH_CLIENT_ID").map_err(|_| {
-            anyhow::anyhow!(
-                "GOOGLE_OAUTH_CLIENT_ID is not set.\n\n\
-                 Create a Google OAuth web client and set its client id here."
-            )
-        })?;
-        let client_secret = std::env::var("GOOGLE_OAUTH_CLIENT_SECRET").map_err(|_| {
-            anyhow::anyhow!(
-                "GOOGLE_OAUTH_CLIENT_SECRET is not set.\n\n\
-                 This secret must stay server-side; never bake it into the web bundle."
-            )
-        })?;
-        let redirect_uri = std::env::var("GOOGLE_OAUTH_REDIRECT_URI").map_err(|_| {
-            anyhow::anyhow!(
-                "GOOGLE_OAUTH_REDIRECT_URI is not set.\n\n\
-                 Set it to the exact callback URL registered in Google Cloud, \
-                 for example https://dashboard.example.com/api/auth/oauth/google/callback."
-            )
-        })?;
+        let client_id = std::env::var("GOOGLE_OAUTH_CLIENT_ID").unwrap_or_default();
+        let client_secret = std::env::var("GOOGLE_OAUTH_CLIENT_SECRET").unwrap_or_default();
+        let redirect_uri = std::env::var("GOOGLE_OAUTH_REDIRECT_URI").unwrap_or_default();
+        let any_configured =
+            !client_id.is_empty() || !client_secret.is_empty() || !redirect_uri.is_empty();
+        if any_configured
+            && (client_id.is_empty() || client_secret.is_empty() || redirect_uri.is_empty())
+        {
+            anyhow::bail!(
+                "Google OAuth is partially configured. Set GOOGLE_OAUTH_CLIENT_ID, \
+                 GOOGLE_OAUTH_CLIENT_SECRET, and GOOGLE_OAUTH_REDIRECT_URI together, \
+                 or unset all three to use local login only."
+            );
+        }
         let admin_emails = std::env::var("OAUTH_ADMIN_EMAILS")
             .unwrap_or_default()
             .split(',')
@@ -87,6 +83,7 @@ impl GoogleOAuthConfig {
             .unwrap_or(true);
 
         Ok(Self {
+            enabled: any_configured,
             client_id,
             client_secret,
             redirect_uri,
@@ -301,6 +298,7 @@ mod tests {
     #[test]
     fn authorize_url_contains_pkce_and_nonce() {
         let config = GoogleOAuthConfig {
+            enabled: true,
             client_id: "client-id".to_string(),
             client_secret: "secret".to_string(),
             redirect_uri: "https://example.com/api/auth/oauth/google/callback".to_string(),

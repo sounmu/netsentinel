@@ -27,9 +27,9 @@ pub(crate) static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
 
 /// Per-user "tokens issued before this instant are invalid" cutoff cache.
 ///
-/// Written by explicit revocations (logout / admin kill). The stored timestamp
-/// is the earliest `iat` that is still allowed to pass. A new write is kept
-/// only if it is strictly later than the existing entry.
+/// Written by password changes and explicit revocations (logout / admin kill).
+/// The stored timestamp is the earliest `iat` that is still allowed to pass.
+/// A new write is kept only if it is strictly later than the existing entry.
 static TOKEN_REVOCATION_CACHE: OnceLock<Arc<RwLock<HashMap<i32, i64>>>> = OnceLock::new();
 
 pub fn init_encoding_key(secret: &str) {
@@ -40,7 +40,7 @@ pub fn init_encoding_key(secret: &str) {
 }
 
 /// Initialize the token revocation cache reference (called from main.rs).
-/// The cache is pre-seeded with `tokens_revoked_at` for each user.
+/// The cache is pre-seeded with password/revocation cutoffs for each user.
 pub fn init_token_revocation_cache(cache: Arc<RwLock<HashMap<i32, i64>>>) {
     let _ = TOKEN_REVOCATION_CACHE.set(cache);
 }
@@ -59,6 +59,11 @@ fn raise_revocation_cutoff(user_id: i32, timestamp: i64) {
             })
             .or_insert(timestamp);
     }
+}
+
+/// Update the cutoff after a password change.
+pub fn update_password_changed_at(user_id: i32, timestamp: i64) {
+    raise_revocation_cutoff(user_id, timestamp);
 }
 
 /// Update the cutoff after an explicit token revocation (logout / admin kill).

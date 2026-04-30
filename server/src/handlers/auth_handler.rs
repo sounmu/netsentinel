@@ -6,6 +6,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::header::{HeaderValue, SET_COOKIE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use serde::Deserialize;
 
 use crate::errors::AppError;
 use crate::models::app_state::AppState;
@@ -146,6 +147,56 @@ pub(crate) fn extract_client_ip(
     peer_addr.ip().to_string()
 }
 
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// POST /api/auth/login — local username/password login.
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(body): Json<LoginRequest>,
+) -> Result<Response, AppError> {
+    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    let user_key = body.username.trim().to_lowercase();
+    if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
+        tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited (IP bucket)");
+        return Err(AppError::TooManyRequests(format!(
+            "Too many login attempts. Try again in {retry_after} seconds."
+        )));
+    }
+    if !user_key.is_empty()
+        && let Err(retry_after) = state.login_user_rate_limiter.check(&user_key)
+    {
+        tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited (user bucket)");
+        return Err(AppError::TooManyRequests(format!(
+            "Too many login attempts for this account. Try again in {retry_after} seconds."
+        )));
+    }
+
+    let user = users_repo::find_by_username(&state.db_pool, body.username.trim())
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("Invalid username or password".to_string()))?;
+    let hash = user
+        .password_hash
+        .clone()
+        .ok_or_else(|| AppError::Unauthorized("Invalid username or password".to_string()))?;
+    let password = body.password.clone();
+    let valid = tokio::task::spawn_blocking(move || user_auth::verify_password(&password, &hash))
+        .await
+        .map_err(|e| AppError::Internal(format!("Password verify task failed: {e:#}")))?;
+    if !valid {
+        return Err(AppError::Unauthorized(
+            "Invalid username or password".to_string(),
+        ));
+    }
+
+    issue_session_response(&state, user, &headers, &ip_str).await
+}
+
 /// Install a fresh refresh cookie and return a short-lived access token.
 ///
 /// Used by the OAuth callback and refresh path. The two tokens live
@@ -157,7 +208,7 @@ pub(crate) async fn issue_session_response(
     headers: &HeaderMap,
     ip_str: &str,
 ) -> Result<Response, AppError> {
-    let access_token = user_auth::generate_user_jwt(user.id, &user.email, &user.role)?;
+    let access_token = user_auth::generate_user_jwt(user.id, &user.username, &user.role)?;
     let user_agent = extract_user_agent(headers);
     let refresh = refresh_token::issue_new_family(
         &state.db_pool,
@@ -167,7 +218,7 @@ pub(crate) async fn issue_session_response(
     )
     .await?;
 
-    tracing::info!(user_id = user.id, email = %user.email, "🔐 [Auth] User session issued");
+    tracing::info!(user_id = user.id, username = %user.username, "🔐 [Auth] User session issued");
 
     let body = LoginResponse {
         token: access_token,
@@ -206,7 +257,7 @@ pub async fn refresh(
             let user = users_repo::find_by_id(&state.db_pool, new.user_id)
                 .await?
                 .ok_or_else(|| AppError::Unauthorized("User no longer exists".to_string()))?;
-            let access_token = user_auth::generate_user_jwt(user.id, &user.email, &user.role)?;
+            let access_token = user_auth::generate_user_jwt(user.id, &user.username, &user.role)?;
             let body = LoginResponse {
                 token: access_token,
                 user: user.into(),
@@ -244,11 +295,115 @@ pub async fn me(
     Ok(Json(user.into()))
 }
 
-/// GET /api/auth/status — return public auth entry points.
-pub async fn auth_status() -> Result<Json<serde_json::Value>, AppError> {
+#[derive(Deserialize)]
+pub struct SetupRequest {
+    pub username: String,
+    pub password: String,
+}
+
+/// POST /api/auth/setup — create initial local admin account.
+pub async fn setup(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<SetupRequest>,
+) -> Result<Response, AppError> {
+    if body.username.trim().is_empty() {
+        return Err(AppError::BadRequest("Username is required".to_string()));
+    }
+    validate_password(&body.password)?;
+
+    let password = body.password.clone();
+    let password_hash = tokio::task::spawn_blocking(move || user_auth::hash_password(&password))
+        .await
+        .map_err(|e| AppError::Internal(format!("Hash task failed: {e:#}")))?
+        .map_err(|e| AppError::Internal(format!("Failed to hash password: {e:#}")))?;
+
+    let mut tx = state
+        .db_pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to begin transaction: {e:#}")))?;
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM users")
+        .fetch_one(&mut *tx)
+        .await?;
+    if count > 0 {
+        tx.rollback().await.ok();
+        return Err(AppError::BadRequest(
+            "Setup already completed. Use login instead.".to_string(),
+        ));
+    }
+
+    let user =
+        users_repo::create_user(&mut *tx, body.username.trim(), &password_hash, "admin").await?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to commit transaction: {e:#}")))?;
+
+    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    issue_session_response(&state, user, &headers, &ip_str).await
+}
+
+/// GET /api/auth/status — return auth entry points and setup state.
+pub async fn auth_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let count = users_repo::count_users(&state.db_pool).await?;
     Ok(Json(serde_json::json!({
-        "login_url": "/api/auth/oauth/google/start",
+        "setup_required": count == 0,
+        "oauth_enabled": state.google_oauth.enabled,
+        "oauth_login_url": "/api/auth/oauth/google/start",
     })))
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: Option<String>,
+    pub new_password: String,
+}
+
+/// PUT /api/auth/password — change or set current user's local password.
+pub async fn change_password(
+    auth: UserGuard,
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<ChangePasswordRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    validate_password(&body.new_password)?;
+
+    let user = users_repo::find_by_id(&state.db_pool, auth.claims.sub)
+        .await?
+        .ok_or_else(|| AppError::Unauthorized("User not found".to_string()))?;
+    if let Some(stored_hash) = user.password_hash.clone() {
+        let current_password = body
+            .current_password
+            .clone()
+            .ok_or_else(|| AppError::BadRequest("Current password is required".to_string()))?;
+        let valid = tokio::task::spawn_blocking(move || {
+            user_auth::verify_password(&current_password, &stored_hash)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("Password verify task failed: {e:#}")))?;
+        if !valid {
+            return Err(AppError::Unauthorized(
+                "Current password is incorrect".to_string(),
+            ));
+        }
+    }
+
+    let new_password = body.new_password.clone();
+    let new_hash = tokio::task::spawn_blocking(move || user_auth::hash_password(&new_password))
+        .await
+        .map_err(|e| AppError::Internal(format!("Hash task failed: {e:#}")))?
+        .map_err(|e| AppError::Internal(format!("Failed to hash password: {e:#}")))?;
+    users_repo::update_password(&state.db_pool, user.id, &new_hash).await?;
+
+    let now = chrono::Utc::now().timestamp();
+    crate::services::auth::update_password_changed_at(user.id, now);
+    if let Err(e) = refresh_token::revoke_all_for_user(&state.db_pool, user.id).await {
+        tracing::warn!(err = ?e, user_id = user.id, "⚠️ [Auth] Failed to revoke refresh rows on password change");
+    }
+
+    Ok(Json(serde_json::json!({ "success": true })))
 }
 
 /// POST /api/auth/logout — revoke every token for the caller and clear the cookie.
@@ -373,9 +528,63 @@ pub async fn issue_sse_ticket(
     }
 }
 
+/// Validate password strength: min 8 chars, uppercase, lowercase, digit, special char.
+fn validate_password(password: &str) -> Result<(), AppError> {
+    if password.len() < 8 {
+        return Err(AppError::BadRequest(
+            "Password must be at least 8 characters".to_string(),
+        ));
+    }
+    if password.len() > 128 {
+        return Err(AppError::BadRequest(
+            "Password must not exceed 128 characters".to_string(),
+        ));
+    }
+    let has_upper = password.chars().any(|c| c.is_uppercase());
+    let has_lower = password.chars().any(|c| c.is_lowercase());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    let has_special = password.chars().any(|c| !c.is_alphanumeric());
+    if !has_upper || !has_lower || !has_digit || !has_special {
+        return Err(AppError::BadRequest(
+            "Password must contain uppercase, lowercase, digit, and special character".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_password_rejects_short() {
+        assert!(validate_password("Aa1!xyz").is_err());
+    }
+
+    #[test]
+    fn validate_password_rejects_no_uppercase() {
+        assert!(validate_password("abcdefg1!").is_err());
+    }
+
+    #[test]
+    fn validate_password_rejects_no_lowercase() {
+        assert!(validate_password("ABCDEFG1!").is_err());
+    }
+
+    #[test]
+    fn validate_password_rejects_no_digit() {
+        assert!(validate_password("Abcdefgh!").is_err());
+    }
+
+    #[test]
+    fn validate_password_rejects_no_special() {
+        assert!(validate_password("Abcdefg1").is_err());
+    }
+
+    #[test]
+    fn validate_password_accepts_valid() {
+        assert!(validate_password("StrongP@ss1").is_ok());
+    }
 
     // ── build_refresh_cookie ──
 

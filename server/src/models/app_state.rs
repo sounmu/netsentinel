@@ -64,14 +64,17 @@ pub struct AppState {
     /// deployment with several concurrent dashboards does not lock itself out
     /// during normal Google redirect retries.
     pub login_rate_limiter: Arc<LoginRateLimiter>,
+    /// Per-username local login limiter. Keeps password guessing against one
+    /// account bounded even when the attacker rotates source IPs.
+    pub login_user_rate_limiter: Arc<LoginRateLimiter>,
     /// Number of trusted reverse proxies in front of the server.
     /// When 0, X-Forwarded-For is ignored and the peer socket IP is used.
     /// When >0, the Nth IP from the right of X-Forwarded-For is used.
     pub trusted_proxy_count: usize,
     /// Unified "tokens before this instant are invalid" cache keyed by
-    /// `user_id`. Fed by explicit user/admin revocations
-    /// (`users.tokens_revoked_at`) — see `services::auth` for the
-    /// verification path.
+    /// `user_id`. Fed by password changes and explicit user/admin revocations
+    /// (`users.password_changed_at`, `users.tokens_revoked_at`) — see
+    /// `services::auth` for the verification path.
     pub token_revocation_cutoffs: Arc<RwLock<HashMap<i32, i64>>>,
     /// Single-use opaque ticket store for the SSE handshake.
     /// See `services::sse_ticket` for rationale.
