@@ -72,11 +72,12 @@ async fn main() -> anyhow::Result<()> {
     }
     services::auth::init_encoding_key(&jwt_secret);
 
+    let google_oauth = Arc::new(services::oauth::GoogleOAuthConfig::from_env()?);
+    let oauth_state_store = Arc::new(services::oauth_state_store::OAuthStateStore::new());
+
     // ── Unified token revocation cache ──
-    // Two mechanisms feed into this cache, both meaning "JWTs with `iat`
-    // older than the stored value are rejected":
-    //   (a) password changes         — `users.password_changed_at`
-    //   (b) explicit logouts / admin — `users.tokens_revoked_at`
+    // Explicit logouts / admin revocations feed into this cache, meaning
+    // "JWTs with `iat` older than the stored value are rejected".
     // The cache is empty at first and populated below, once the DB pool and
     // migrations are both ready.
     let token_revocation_cache: Arc<RwLock<HashMap<i32, i64>>> =
@@ -190,6 +191,9 @@ async fn main() -> anyhow::Result<()> {
     let state = Arc::new(AppState {
         store: Arc::new(RwLock::new(MetricsStore::new())),
         http_client: reqwest::Client::new(),
+        google_oauth: Arc::clone(&google_oauth),
+        oauth_state_store: Arc::clone(&oauth_state_store),
+        oauth_bootstrap_lock: Arc::new(tokio::sync::Mutex::new(())),
         db_pool,
         scrape_interval_secs,
         max_db_connections,
@@ -197,28 +201,13 @@ async fn main() -> anyhow::Result<()> {
         last_known_status: Arc::new(RwLock::new(HashMap::new())),
         metrics_query_cache: metrics_query_cache.clone(),
         chart_metrics_query_cache: chart_metrics_query_cache.clone(),
-        // Per-IP bucket — default raised from 10 → 30 when the per-username
-        // bucket was introduced. A NAT office with several concurrent
-        // dashboards needs headroom for the occasional typo'd password from
-        // one user without locking out the rest; the per-username bucket
-        // (below) keeps targeted brute force at the original tight cap.
+        // Per-IP OAuth bucket. Google owns credential verification; this
+        // limits state issuance/callback churn against our local server.
         login_rate_limiter: Arc::new(LoginRateLimiter::new(
             std::env::var("LOGIN_RATE_LIMIT_MAX")
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(30),
-            std::time::Duration::from_secs(
-                std::env::var("LOGIN_RATE_LIMIT_WINDOW_SECS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(300),
-            ),
-        )),
-        login_user_rate_limiter: Arc::new(LoginRateLimiter::new(
-            std::env::var("LOGIN_USER_RATE_LIMIT_MAX")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(10),
             std::time::Duration::from_secs(
                 std::env::var("LOGIN_RATE_LIMIT_WINDOW_SECS")
                     .ok()
@@ -298,6 +287,19 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background task: evict expired OAuth state entries every 30 seconds.
+    // Callback consumption is one-use and TTL-checked; this sweep only bounds
+    // memory if a browser starts OAuth and never returns from Google.
+    {
+        let store = Arc::clone(&oauth_state_store);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                store.evict_expired();
+            }
+        });
+    }
+
     // Background task: evict stale rate limiter entries every 5 minutes.
     // Prevents unbounded HashMap growth from unique IPs that never return.
     {
@@ -338,9 +340,8 @@ async fn main() -> anyhow::Result<()> {
     // to configure here.
 
     // ── Pre-populate caches from DB (parallel) ──
-    let (hosts_result, password_result, revoked_result) = tokio::join!(
+    let (hosts_result, revoked_result) = tokio::join!(
         repositories::hosts_repo::list_hosts(&state.db_pool),
-        repositories::users_repo::load_password_changed_at(&state.db_pool),
         repositories::users_repo::load_tokens_revoked_at(&state.db_pool),
     );
 
@@ -352,42 +353,21 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!(err = ?e, "⚠️ [Hosts] Failed to load initial hosts"),
     }
 
-    // Merge password_changed_at and tokens_revoked_at into the unified cutoff
-    // cache. For each user we keep the **later** of the two timestamps, since
-    // the semantic is "tokens with iat older than this are rejected".
+    // Load persisted token revocations into the unified cutoff cache.
     {
         let mut cutoffs = match state.token_revocation_cutoffs.write() {
             Ok(c) => c,
             Err(poisoned) => poisoned.into_inner(),
         };
-        match password_result {
-            Ok(map) => {
-                for (uid, ts) in map {
-                    cutoffs.insert(uid, ts);
-                }
-                tracing::info!("🔐 [Auth] password_changed_at timestamps loaded");
-            }
-            Err(e) => tracing::warn!(
-                err = ?e,
-                "⚠️ [Auth] Failed to load password_changed_at (column may be missing pre-migration)"
-            ),
-        }
         match revoked_result {
             Ok(map) => {
                 let count = map.len();
                 for (uid, ts) in map {
-                    cutoffs
-                        .entry(uid)
-                        .and_modify(|existing| {
-                            if ts > *existing {
-                                *existing = ts;
-                            }
-                        })
-                        .or_insert(ts);
+                    cutoffs.insert(uid, ts);
                 }
                 tracing::info!(
                     revoked_user_count = count,
-                    "🔐 [Auth] tokens_revoked_at timestamps merged"
+                    "🔐 [Auth] tokens_revoked_at timestamps loaded"
                 );
             }
             Err(e) => tracing::warn!(

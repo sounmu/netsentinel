@@ -29,7 +29,7 @@ use tower_http::services::{ServeDir, ServeFile};
 /// fall through to the HTML `404.html` — they receive a JSON 404 so that
 /// programmatic clients (the SPA, Prometheus, etc.) can parse the response
 /// without choking on `<!DOCTYPE html>`. Axum's routing prefers the more
-/// specific existing handlers (`/api/auth/login`, `/metrics`, …), so the
+/// specific existing handlers (`/api/auth/oauth/google/start`, `/metrics`, …), so the
 /// catch-all below only fires when no concrete handler matched.
 pub fn mount(router: Router, dir: &Path) -> Router {
     let not_found = ServeFile::new(dir.join("404.html"));

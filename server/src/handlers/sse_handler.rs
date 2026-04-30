@@ -58,7 +58,7 @@ struct StreamState {
 /// 2. Reserve a slot against `MAX_SSE_CONNECTIONS` — refuse with 429 on overflow.
 /// 3. Immediately send the current status payload for all known hosts (initial state sync).
 /// 4. Subscribe to the broadcast channel and stream subsequent metrics/status events in real time.
-/// 5. Re-check session revocation periodically so logout/admin revoke/password change
+/// 5. Re-check session revocation periodically so logout/admin revoke
 ///    terminates long-lived streams rather than only blocking new handshakes.
 /// 6. On `Lagged`, re-snapshot `last_known_status` so the client catches up
 ///    instead of silently drifting.

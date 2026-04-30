@@ -27,15 +27,9 @@ pub(crate) static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
 
 /// Per-user "tokens issued before this instant are invalid" cutoff cache.
 ///
-/// Shared across two mechanisms:
-///   * password change        — `update_password_changed_at`
-///   * explicit revoke (logout / admin kill) — `update_tokens_revoked_at`
-///
-/// Both write into the same map because they mean the same thing to the
-/// verification path: the stored timestamp is the earliest `iat` that is
-/// still allowed to pass. A new write is kept only if it is strictly
-/// *later* than the existing entry, so password change + logout cannot
-/// accidentally undo each other.
+/// Written by explicit revocations (logout / admin kill). The stored timestamp
+/// is the earliest `iat` that is still allowed to pass. A new write is kept
+/// only if it is strictly later than the existing entry.
 static TOKEN_REVOCATION_CACHE: OnceLock<Arc<RwLock<HashMap<i32, i64>>>> = OnceLock::new();
 
 pub fn init_encoding_key(secret: &str) {
@@ -46,14 +40,13 @@ pub fn init_encoding_key(secret: &str) {
 }
 
 /// Initialize the token revocation cache reference (called from main.rs).
-/// The cache is pre-seeded with the latest of `password_changed_at` and
-/// `tokens_revoked_at` for each user.
+/// The cache is pre-seeded with `tokens_revoked_at` for each user.
 pub fn init_token_revocation_cache(cache: Arc<RwLock<HashMap<i32, i64>>>) {
     let _ = TOKEN_REVOCATION_CACHE.set(cache);
 }
 
 /// Internal helper: raise the cutoff for `user_id` to `timestamp`, but never
-/// lower it. Both password-change and logout paths feed through here.
+/// lower it.
 fn raise_revocation_cutoff(user_id: i32, timestamp: i64) {
     if let Some(cache) = TOKEN_REVOCATION_CACHE.get()
         && let Ok(mut map) = cache.write()
@@ -68,20 +61,15 @@ fn raise_revocation_cutoff(user_id: i32, timestamp: i64) {
     }
 }
 
-/// Update the cutoff after a password change.
-pub fn update_password_changed_at(user_id: i32, timestamp: i64) {
-    raise_revocation_cutoff(user_id, timestamp);
-}
-
 /// Update the cutoff after an explicit token revocation (logout / admin kill).
 pub fn update_tokens_revoked_at(user_id: i32, timestamp: i64) {
     raise_revocation_cutoff(user_id, timestamp);
 }
 
 /// Check if a user JWT's `iat` is after the latest revocation event for that
-/// user (password change OR explicit logout). Returns true if the token is
-/// still valid. A missing cache entry means the user has never revoked and
-/// every signed token with a valid `iat` is accepted.
+/// user. Returns true if the token is still valid. A missing cache entry means
+/// the user has never revoked and every signed token with a valid `iat` is
+/// accepted.
 ///
 /// **Fail-secure policy**: this function sits on the security-critical path
 /// for every authenticated request. If the cache is not initialized or the
