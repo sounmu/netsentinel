@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{ConnectInfo, Query, State};
-use axum::http::header::{HeaderValue, LOCATION};
+use axum::http::header::{HeaderValue, LOCATION, ORIGIN};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -41,8 +41,13 @@ pub async fn google_start(
         )));
     }
 
-    let authorize =
-        oauth::build_google_authorize_url(&state.google_oauth, &state.oauth_state_store)?;
+    let origin = headers.get(ORIGIN).and_then(|value| value.to_str().ok());
+    let post_login_redirect = state.google_oauth.post_login_redirect_for_origin(origin);
+    let authorize = oauth::build_google_authorize_url(
+        &state.google_oauth,
+        &state.oauth_state_store,
+        post_login_redirect,
+    )?;
     Ok(Json(OAuthStartResponse {
         authorize_url: authorize.authorize_url,
     }))
@@ -83,6 +88,7 @@ pub async fn google_callback(
         tracing::warn!("🔐 [OAuth] Missing or expired OAuth state");
         return redirect("/login?error=oauth");
     };
+    let post_login_redirect = pending.post_login_redirect.clone();
 
     let identity =
         match oauth::exchange_google_code(&state.http_client, &state.google_oauth, pending, code)
@@ -91,7 +97,7 @@ pub async fn google_callback(
             Ok(identity) => identity,
             Err(err) => {
                 tracing::warn!(err = ?err, "🔐 [OAuth] Google identity verification failed");
-                return redirect("/login?error=oauth");
+                return redirect_owned(login_redirect(&post_login_redirect, "oauth"));
             }
         };
 
@@ -117,7 +123,7 @@ pub async fn google_callback(
                 email = %identity.email,
                 "🔐 [OAuth] Rejected Google login: email is not an allowed admin"
             );
-            return redirect("/login?error=not_allowed");
+            return redirect_owned(login_redirect(&post_login_redirect, "not_allowed"));
         }
 
         users_repo::upsert_oauth_user(
@@ -134,12 +140,32 @@ pub async fn google_callback(
 
     let mut response = issue_session_response(&state, user, &headers, &ip_str).await?;
     *response.status_mut() = StatusCode::FOUND;
-    response
-        .headers_mut()
-        .insert(LOCATION, HeaderValue::from_static("/"));
+    response.headers_mut().insert(
+        LOCATION,
+        HeaderValue::from_str(&post_login_redirect)
+            .map_err(|e| AppError::Internal(format!("Invalid redirect header: {e}")))?,
+    );
     Ok(response)
 }
 
 fn redirect(location: &'static str) -> Result<Response, AppError> {
     Ok((StatusCode::FOUND, [(LOCATION, location)]).into_response())
+}
+
+fn redirect_owned(location: String) -> Result<Response, AppError> {
+    let mut response = StatusCode::FOUND.into_response();
+    response.headers_mut().insert(
+        LOCATION,
+        HeaderValue::from_str(&location)
+            .map_err(|e| AppError::Internal(format!("Invalid redirect header: {e}")))?,
+    );
+    Ok(response)
+}
+
+fn login_redirect(base: &str, error: &str) -> String {
+    if base == "/" {
+        return format!("/login?error={error}");
+    }
+    let base = base.trim_end_matches('/');
+    format!("{base}/login?error={error}")
 }

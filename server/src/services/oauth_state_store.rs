@@ -13,6 +13,7 @@ const TOKEN_BYTES: usize = 32;
 pub struct PendingOAuthState {
     pub code_verifier: String,
     pub nonce: String,
+    pub post_login_redirect: String,
     created_at: Instant,
 }
 
@@ -29,11 +30,17 @@ impl OAuthStateStore {
         }
     }
 
-    pub fn issue(&self, code_verifier: String, nonce: String) -> String {
+    pub fn issue(
+        &self,
+        code_verifier: String,
+        nonce: String,
+        post_login_redirect: String,
+    ) -> String {
         let state = random_url_token();
         let pending = PendingOAuthState {
             code_verifier,
             nonce,
+            post_login_redirect,
             created_at: Instant::now(),
         };
         let mut guard = self.pending.write().unwrap_or_else(|e| e.into_inner());
@@ -70,7 +77,7 @@ mod tests {
     #[test]
     fn consume_is_single_use() {
         let store = OAuthStateStore::new();
-        let state = store.issue("verifier".to_string(), "nonce".to_string());
+        let state = store.issue("verifier".to_string(), "nonce".to_string(), "/".to_string());
 
         assert!(store.consume(&state).is_some());
         assert!(store.consume(&state).is_none());

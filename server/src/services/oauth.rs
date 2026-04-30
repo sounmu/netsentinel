@@ -22,6 +22,7 @@ pub struct GoogleOAuthConfig {
     client_secret: String,
     redirect_uri: String,
     admin_emails: HashSet<String>,
+    allowed_post_login_origins: HashSet<String>,
     pub bootstrap_first_login_as_admin: bool,
 }
 
@@ -66,6 +67,15 @@ impl GoogleOAuthConfig {
             .map(|email| email.trim().to_ascii_lowercase())
             .filter(|email| !email.is_empty())
             .collect();
+        let mut allowed_post_login_origins: HashSet<String> = std::env::var("ALLOWED_ORIGINS")
+            .unwrap_or_else(|_| "http://localhost:3001".to_string())
+            .split(',')
+            .map(|origin| origin.trim().trim_end_matches('/').to_string())
+            .filter(|origin| !origin.is_empty())
+            .collect();
+        if let Some(origin) = origin_from_url(&redirect_uri) {
+            allowed_post_login_origins.insert(origin);
+        }
         let bootstrap_first_login_as_admin = std::env::var("OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN")
             .ok()
             .map(|value| {
@@ -81,6 +91,7 @@ impl GoogleOAuthConfig {
             client_secret,
             redirect_uri,
             admin_emails,
+            allowed_post_login_origins,
             bootstrap_first_login_as_admin,
         })
     }
@@ -88,16 +99,31 @@ impl GoogleOAuthConfig {
     pub fn is_admin_email(&self, email: &str) -> bool {
         self.admin_emails.contains(&email.to_ascii_lowercase())
     }
+
+    pub fn post_login_redirect_for_origin(&self, origin: Option<&str>) -> String {
+        let Some(origin) = origin.map(|value| value.trim().trim_end_matches('/')) else {
+            return "/".to_string();
+        };
+        if self.allowed_post_login_origins.contains(origin) {
+            return format!("{origin}/");
+        }
+        tracing::warn!(
+            origin,
+            "🔐 [OAuth] Ignoring untrusted post-login redirect origin"
+        );
+        "/".to_string()
+    }
 }
 
 pub fn build_google_authorize_url(
     config: &GoogleOAuthConfig,
     state_store: &OAuthStateStore,
+    post_login_redirect: String,
 ) -> Result<OAuthAuthorize, AppError> {
     let code_verifier = random_url_token();
     let code_challenge = pkce_s256(&code_verifier);
     let nonce = random_url_token();
-    let state = state_store.issue(code_verifier, nonce.clone());
+    let state = state_store.issue(code_verifier, nonce.clone(), post_login_redirect);
 
     let mut url = Url::parse(GOOGLE_AUTH_URL)
         .map_err(|e| AppError::Internal(format!("Invalid Google auth URL: {e}")))?;
@@ -115,6 +141,17 @@ pub fn build_google_authorize_url(
     Ok(OAuthAuthorize {
         authorize_url: url.into(),
     })
+}
+
+fn origin_from_url(value: &str) -> Option<String> {
+    let url = Url::parse(value).ok()?;
+    let host = url.host_str()?;
+    let mut origin = format!("{}://{}", url.scheme(), host);
+    if let Some(port) = url.port() {
+        origin.push(':');
+        origin.push_str(&port.to_string());
+    }
+    Some(origin)
 }
 
 pub async fn exchange_google_code(
@@ -268,11 +305,12 @@ mod tests {
             client_secret: "secret".to_string(),
             redirect_uri: "https://example.com/api/auth/oauth/google/callback".to_string(),
             admin_emails: HashSet::new(),
+            allowed_post_login_origins: HashSet::new(),
             bootstrap_first_login_as_admin: true,
         };
         let store = OAuthStateStore::new();
 
-        let auth = build_google_authorize_url(&config, &store).unwrap();
+        let auth = build_google_authorize_url(&config, &store, "/".to_string()).unwrap();
         let url = Url::parse(&auth.authorize_url).unwrap();
         let query: HashSet<(String, String)> = url.query_pairs().into_owned().collect();
 

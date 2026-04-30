@@ -30,6 +30,17 @@ const nextConfig: NextConfig = isExportBuild
       trailingSlash: true,
       images: { unoptimized: true },
     }
-  : {};
+  : {
+      async rewrites() {
+        const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+        if (!apiBase) return [];
+        return [
+          {
+            source: "/api/auth/oauth/google/callback",
+            destination: `${apiBase}/api/auth/oauth/google/callback`,
+          },
+        ];
+      },
+    };
 
 export default nextConfig;

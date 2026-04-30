@@ -249,6 +249,8 @@ cargo run
 
 > Upgrading from v0.3.x? The old `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` variables are no longer read — remove them from `.env`. There is nothing to migrate if this is a greenfield install. See the v0.4.0 section of [`CHANGELOG.md`](./CHANGELOG.md) for how to move data from an existing Postgres deployment.
 
+Local web development uses the Next dev server on `http://localhost:3001` and the Rust API on `http://localhost:3000`. If you register `http://localhost:3001/api/auth/oauth/google/callback` in Google Cloud, `next dev` proxies that callback to the Rust API through `NEXT_PUBLIC_API_URL=http://localhost:3000`; the backend then redirects back to the allowed frontend origin after setting the refresh cookie.
+
 ### Server — all keys below
 
 Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `docker-compose.yml`). `server/.env` is only consulted by a local `cargo run`. So add these keys to `./env` for a Docker install, or to `server/.env` for a local dev install — never both.
