@@ -63,6 +63,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearLegacyStorage();
 
     const init = async () => {
+      const isPublic = PUBLIC_PATHS.some(
+        (p) => pathname === p || pathname.startsWith(p + "/"),
+      );
+
       // Path 1: memory token exists — validate server-side.
       if (getAccessToken()) {
         try {
@@ -71,6 +75,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           setAccessToken(null);
         }
+        if (!cancelled) setIsLoading(false);
+        return;
+      }
+
+      if (isPublic) {
         if (!cancelled) setIsLoading(false);
         return;
       }
@@ -87,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     void init();
     return () => { cancelled = true; };
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     if (!isLoading && !user) {
