@@ -31,7 +31,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const PUBLIC_PATHS = ["/login", "/setup", "/status"];
+const PUBLIC_PATHS = ["/login", "/status"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -139,7 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [user, isLoading, login, logout],
   );
 
-  // Public paths (/login, /setup, /status) must render immediately — they
+  // Public paths (/login, /status) must render immediately — they
   // are the surfaces that *handle* the "no session" case. Blanking them
   // while the initial refresh attempt resolves defeats the point (users
   // staring at an empty page during the 4 s refresh timeout on a broken

@@ -123,7 +123,7 @@ function authHeaders(): HeadersInit {
 /**
  * Plain fetcher for endpoints that must NOT trigger the refresh-then-logout
  * flow on a 401 — namely the unauthenticated `/api/auth/status`, `/api/public/*`,
- * and `/api/health` routes. Used by login/setup/status pages. Returns typed
+ * and `/api/health` routes. Used by login/status pages. Returns typed
  * JSON, throws `ApiError` on any non-2xx.
  */
 export const publicFetcher = async <T>(url: string): Promise<T> => {
@@ -541,6 +541,9 @@ export const saveDashboard = (widgets: DashboardWidget[]) =>
 export interface UserInfo {
   id: number;
   username: string;
+  email: string;
+  display_name?: string | null;
+  picture_url?: string | null;
   role: string;
 }
 
@@ -550,7 +553,7 @@ export interface LoginResponse {
 }
 
 export interface AuthStatus {
-  setup_required: boolean;
+  login_url: string;
 }
 
 export const getAuthStatusUrl = () => `${API_BASE}/api/auth/status`;
@@ -562,26 +565,14 @@ export class ApiError extends Error {
   }
 }
 
-export const login = async (username: string, password: string): Promise<LoginResponse> => {
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ username, password }),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new ApiError(res.status, text || `${res.status} ${res.statusText}`);
-  }
-  return res.json();
-};
+export interface OAuthStartResponse {
+  authorize_url: string;
+}
 
-export const setupAdmin = async (username: string, password: string): Promise<LoginResponse> => {
-  const res = await fetch(`${API_BASE}/api/auth/setup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+export const startGoogleOAuth = async (): Promise<OAuthStartResponse> => {
+  const res = await fetch(`${API_BASE}/api/auth/oauth/google/start`, {
+    method: "GET",
     credentials: "include",
-    body: JSON.stringify({ username, password }),
   });
   if (!res.ok) {
     const text = await res.text();
