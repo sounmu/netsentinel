@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 
 use crate::handlers::{
     alert_configs_handler, alert_history_handler, auth_handler, dashboard_handler, hosts_handler,
-    metrics_handler, monitors_handler, notification_channels_handler, sse_handler,
+    metrics_handler, monitors_handler, notification_channels_handler, oauth_handler, sse_handler,
 };
 use crate::models::app_state::AppState;
 
@@ -25,15 +25,17 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             "/api/metrics/{host_key}",
             get(metrics_handler::get_metrics_by_host_key),
         )
-        // Auth (login/setup are unauthenticated)
-        .route("/api/auth/login", post(auth_handler::login))
-        .route("/api/auth/setup", post(auth_handler::setup))
+        // Auth (OAuth start/callback are unauthenticated)
+        .route(
+            "/api/auth/oauth/google/start",
+            get(oauth_handler::google_start),
+        )
+        .route(
+            "/api/auth/oauth/google/callback",
+            get(oauth_handler::google_callback),
+        )
         .route("/api/auth/status", get(auth_handler::auth_status))
         .route("/api/auth/me", get(auth_handler::me))
-        .route(
-            "/api/auth/password",
-            axum::routing::put(auth_handler::change_password),
-        )
         // SSE ticket — mint a single-use ticket for the /api/stream handshake.
         // Requires a valid user JWT; the ticket replaces exposing the long-lived
         // JWT on a query string. See services::sse_ticket for details.

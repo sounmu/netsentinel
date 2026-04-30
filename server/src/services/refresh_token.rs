@@ -82,7 +82,7 @@ fn encode_plaintext(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-/// Issue a brand-new refresh token for a successful password login. Starts
+/// Issue a brand-new refresh token for a successful OAuth login. Starts
 /// a fresh family — the result is not linked to any prior session.
 pub async fn issue_new_family(
     pool: &DbPool,

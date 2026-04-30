@@ -7,6 +7,8 @@ use crate::repositories::hosts_repo::HostRow;
 use crate::repositories::metrics_repo::{ChartMetricsRow, MetricsRow};
 use crate::services::hosts_snapshot::SharedHostsSnapshot;
 use crate::services::monitors_snapshot::SharedMonitorsSnapshot;
+use crate::services::oauth::GoogleOAuthConfig;
+use crate::services::oauth_state_store::OAuthStateStore;
 use crate::services::sse_ticket::SseTicketStore;
 use serde_json::Value;
 use tokio::sync::broadcast;
@@ -21,8 +23,15 @@ use tokio::sync::broadcast;
 pub struct AppState {
     /// In-memory store for per-host metric history and alert state
     pub store: SharedStore,
-    /// Shared HTTP client reused for alert notifications and any future external API calls
+    /// Shared HTTP client reused for alert notifications and external OAuth calls.
     pub http_client: reqwest::Client,
+    /// Google OAuth client configuration loaded from environment at startup.
+    pub google_oauth: Arc<GoogleOAuthConfig>,
+    /// Short-lived one-use OAuth state + PKCE verifier store.
+    pub oauth_state_store: Arc<OAuthStateStore>,
+    /// Serializes the first-login admin bootstrap path so two concurrent
+    /// Google callbacks cannot both observe an empty users table.
+    pub oauth_bootstrap_lock: Arc<tokio::sync::Mutex<()>>,
     /// Database connection pool. NetSentinel is SQLite-only; the alias
     /// keeps downstream modules from importing sqlx internals directly.
     pub db_pool: crate::db::DbPool,
@@ -50,38 +59,29 @@ pub struct AppState {
     pub metrics_query_cache: Arc<MetricsQueryCache<MetricsRow>>,
     /// TTL cache for lightweight chart long-range queries.
     pub chart_metrics_query_cache: Arc<MetricsQueryCache<ChartMetricsRow>>,
-    /// Per-IP login attempt rate limiter. Broad bucket that catches
-    /// scatter-gun brute force attempts varying the username. Default 30 per
-    /// 5 min — sized so a small NAT / Cloudflare-tunnel deployment with
-    /// several concurrent dashboards does not lock itself out when one user
-    /// mistypes a password. See the companion `login_user_rate_limiter`
-    /// below for the per-username bucket that catches targeted attempts.
+    /// Per-IP OAuth login rate limiter for start/callback traffic.
+    /// Default 30 per 5 min — sized so a small NAT / Cloudflare-tunnel
+    /// deployment with several concurrent dashboards does not lock itself out
+    /// during normal Google redirect retries.
     pub login_rate_limiter: Arc<LoginRateLimiter>,
-    /// Per-username login attempt rate limiter. Tighter bucket (default
-    /// 10 / 5 min) that catches focused brute force against a single
-    /// account. Keyed by the **supplied username**, so an attacker cannot
-    /// evade the per-account limit by rotating IPs. Both limiters must
-    /// admit the request; either tripping returns 429.
-    pub login_user_rate_limiter: Arc<LoginRateLimiter>,
     /// Number of trusted reverse proxies in front of the server.
     /// When 0, X-Forwarded-For is ignored and the peer socket IP is used.
     /// When >0, the Nth IP from the right of X-Forwarded-For is used.
     pub trusted_proxy_count: usize,
     /// Unified "tokens before this instant are invalid" cache keyed by
-    /// `user_id`. Fed by both password changes (`users.password_changed_at`)
-    /// and explicit revocations (`users.tokens_revoked_at`). The stored
-    /// value is the **later** of the two — see `services::auth` for the
+    /// `user_id`. Fed by explicit user/admin revocations
+    /// (`users.tokens_revoked_at`) — see `services::auth` for the
     /// verification path.
     pub token_revocation_cutoffs: Arc<RwLock<HashMap<i32, i64>>>,
     /// Single-use opaque ticket store for the SSE handshake.
     /// See `services::sse_ticket` for rationale.
     pub sse_ticket_store: Arc<SseTicketStore>,
     /// Per-IP rate limiter for all API endpoints. More generous than the
-    /// login limiter (which protects against brute-force). Prevents any
-    /// single IP from overwhelming the server with rapid-fire requests.
+    /// OAuth limiter. Prevents any single IP from overwhelming the server
+    /// with rapid-fire requests.
     pub api_rate_limiter: Arc<LoginRateLimiter>,
     /// Tighter per-IP limiter for **unauthenticated** endpoints
-    /// (`/api/auth/login|setup|status`, `/api/public/status`, `/api/health`).
+    /// (`/api/auth/oauth/google/*|status`, `/api/public/status`, `/api/health`).
     /// Without a separate bucket, abusive unauthenticated traffic would eat
     /// into the same budget the authenticated SPA uses for SWR polling +
     /// SSE retry, forcing the authenticated shell to return 429 while the
