@@ -1,7 +1,14 @@
--- Restore local username/password auth while keeping Google OAuth linkage.
+-- Hybrid auth: local username/password + optional Google OAuth linkage.
 --
--- Existing OAuth-only rows are preserved with username=email. Local accounts
--- store password_hash and may later be linked to Google by verified email.
+-- Rebuilds the 0001 `users` table to:
+--   * make password_hash nullable (OAuth-only accounts have no local password),
+--   * add oauth_provider / oauth_subject / email / display_name / picture_url,
+--   * enforce UNIQUE (oauth_provider, oauth_subject) for OAuth identity,
+--   * keep username UNIQUE so existing local accounts log in unchanged.
+--
+-- Existing rows from 0001 keep their password_hash and get email := username
+-- as a placeholder; operators backfill real emails afterwards. Refresh tokens
+-- carry over via the FK rebind below.
 
 PRAGMA foreign_keys=OFF;
 
@@ -40,15 +47,15 @@ INSERT INTO users_new (
 )
 SELECT
     id,
-    email,
+    username,
+    password_hash,
     NULL,
-    oauth_provider,
-    oauth_subject,
-    email,
-    display_name,
-    picture_url,
+    NULL,
+    username,
+    NULL,
+    NULL,
     role,
-    NULL,
+    password_changed_at,
     tokens_revoked_at,
     created_at,
     updated_at
