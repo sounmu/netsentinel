@@ -11,19 +11,28 @@ use crate::repositories::notification_channels_repo::{
 use crate::services::auth::AdminGuard;
 
 /// GET /api/notification-channels — list all notification channels
-/// Requires AdminGuard to prevent agent JWTs from reading SMTP credentials.
+/// Requires AdminGuard to prevent agent JWTs from reading channel secrets.
 pub async fn list_channels(
     _admin: AdminGuard,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<NotificationChannelRow>>, AppError> {
     let mut channels = notification_channels_repo::get_all(&state.db_pool).await?;
-    // Redact SMTP password from email channels before returning
+    // Redact channel secrets before returning
     for channel in &mut channels {
-        if channel.channel_type == ChannelType::Email
-            && let Some(obj) = channel.config.as_object_mut()
-            && obj.contains_key("smtp_pass")
-        {
-            obj.insert("smtp_pass".into(), serde_json::json!("********"));
+        let redacted_fields: &[&str] = match channel.channel_type {
+            ChannelType::Email => &["smtp_pass"],
+            ChannelType::Telegram => &["bot_token"],
+            ChannelType::Discord
+            | ChannelType::Slack
+            | ChannelType::Teams
+            | ChannelType::Webhook => &[],
+        };
+        if let Some(obj) = channel.config.as_object_mut() {
+            for field in redacted_fields {
+                if obj.contains_key(*field) {
+                    obj.insert((*field).into(), serde_json::json!(REDACTED_PLACEHOLDER));
+                }
+            }
         }
     }
     Ok(Json(channels))
@@ -51,9 +60,9 @@ pub async fn update_channel(
 ) -> Result<Json<NotificationChannelRow>, AppError> {
     // If config is being updated, validate it against existing channel type.
     // Also merge redacted placeholders back to the stored value — the GET
-    // handler masks `smtp_pass` as "********"; without this merge, a naive
+    // handler masks secrets as "********"; without this merge, a naive
     // "edit channel name" round-trip (load → submit) would overwrite the
-    // real SMTP password with the literal mask and break all future mails.
+    // real secret with the literal mask and break future deliveries.
     if let Some(config) = &mut body.config {
         let existing = notification_channels_repo::get_by_id(&state.db_pool, id)
             .await?
@@ -70,13 +79,10 @@ pub async fn update_channel(
 }
 
 /// Placeholder value the GET handler substitutes for sensitive fields.
-/// Keep in sync with `notification_channels_repo::redact_secrets`.
 const REDACTED_PLACEHOLDER: &str = "********";
 
 /// Replace the redacted placeholder with the stored secret for fields that the
-/// server masks on read. Currently only `smtp_pass` on Email channels, but the
-/// loop shape tolerates future additions (e.g. Discord bot tokens) without
-/// touching the call site.
+/// server masks on read.
 fn preserve_redacted_secrets(
     channel_type: ChannelType,
     stored: &serde_json::Value,
@@ -84,7 +90,10 @@ fn preserve_redacted_secrets(
 ) {
     let redacted_fields: &[&str] = match channel_type {
         ChannelType::Email => &["smtp_pass"],
-        ChannelType::Discord | ChannelType::Slack => &[],
+        ChannelType::Telegram => &["bot_token"],
+        ChannelType::Discord | ChannelType::Slack | ChannelType::Teams | ChannelType::Webhook => {
+            &[]
+        }
     };
     let Some(incoming_obj) = incoming.as_object_mut() else {
         return;
@@ -149,7 +158,7 @@ async fn validate_webhook_ssrf(
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
     match channel_type {
-        ChannelType::Discord | ChannelType::Slack => {
+        ChannelType::Discord | ChannelType::Slack | ChannelType::Teams | ChannelType::Webhook => {
             if let Some(url) = config.get("webhook_url").and_then(|v| v.as_str()) {
                 crate::services::url_validator::validate_url(url, &["https"])
                     .await
@@ -177,16 +186,17 @@ async fn validate_webhook_ssrf(
                 .await
                 .map_err(|e| AppError::BadRequest(format!("SMTP host rejected: {e}")))?;
         }
+        ChannelType::Telegram => {}
     }
     Ok(())
 }
 
 /// Validate channel config based on channel type.
 /// With `ChannelType` as an enum, the type-level check replaces the old
-/// `matches!(channel_type, "discord" | "slack" | "email")` guard.
+/// string guard.
 fn validate_channel(channel_type: ChannelType, config: &serde_json::Value) -> Result<(), AppError> {
     match channel_type {
-        ChannelType::Discord | ChannelType::Slack => {
+        ChannelType::Discord | ChannelType::Slack | ChannelType::Teams | ChannelType::Webhook => {
             let webhook_url = config
                 .get("webhook_url")
                 .and_then(|v| v.as_str())
@@ -212,6 +222,16 @@ fn validate_channel(channel_type: ChannelType, config: &serde_json::Value) -> Re
                 }
             }
         }
+        ChannelType::Telegram => {
+            for field in ["bot_token", "chat_id"] {
+                let val = config.get(field).and_then(|v| v.as_str()).unwrap_or("");
+                if val.is_empty() {
+                    return Err(AppError::BadRequest(format!(
+                        "Telegram channel requires a non-empty '{field}' in config"
+                    )));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -231,6 +251,25 @@ mod tests {
     fn test_discord_missing_webhook() {
         assert!(validate_channel(ChannelType::Discord, &json!({})).is_err());
         assert!(validate_channel(ChannelType::Discord, &json!({ "webhook_url": "" })).is_err());
+    }
+
+    #[test]
+    fn test_new_webhook_style_channels_require_webhook_url() {
+        let config = json!({ "webhook_url": "https://hooks.example.com/netsentinel" });
+        assert!(validate_channel(ChannelType::Teams, &config).is_ok());
+        assert!(validate_channel(ChannelType::Webhook, &config).is_ok());
+        assert!(validate_channel(ChannelType::Teams, &json!({})).is_err());
+        assert!(validate_channel(ChannelType::Webhook, &json!({})).is_err());
+    }
+
+    #[test]
+    fn test_telegram_requires_bot_token_and_chat_id() {
+        let config = json!({ "bot_token": "123:abc", "chat_id": "-100123" });
+        assert!(validate_channel(ChannelType::Telegram, &config).is_ok());
+        assert!(
+            validate_channel(ChannelType::Telegram, &json!({ "bot_token": "123:abc" })).is_err()
+        );
+        assert!(validate_channel(ChannelType::Telegram, &json!({ "chat_id": "-100123" })).is_err());
     }
 
     #[test]

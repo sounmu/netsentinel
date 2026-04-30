@@ -28,6 +28,19 @@ pub async fn send_alert(client: &Client, pool: &DbPool, message: &str) {
             ChannelType::Email => {
                 send_email(&channel.config, message).await;
             }
+            ChannelType::Teams => {
+                if let Some(url) = channel.config.get("webhook_url").and_then(|v| v.as_str()) {
+                    send_teams(client, url, message).await;
+                }
+            }
+            ChannelType::Telegram => {
+                send_telegram(client, &channel.config, message).await;
+            }
+            ChannelType::Webhook => {
+                if let Some(url) = channel.config.get("webhook_url").and_then(|v| v.as_str()) {
+                    send_generic_webhook(client, url, message).await;
+                }
+            }
         }
     }
 }
@@ -67,6 +80,37 @@ pub async fn test_channel(client: &Client, channel: &NotificationChannelRow) -> 
         ChannelType::Email => {
             send_email(&channel.config, &test_msg).await;
             Ok(())
+        }
+        ChannelType::Teams => {
+            let url = channel
+                .config
+                .get("webhook_url")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing webhook_url in config")?;
+            if send_teams(client, url, &test_msg).await {
+                Ok(())
+            } else {
+                Err("Teams webhook request failed".to_string())
+            }
+        }
+        ChannelType::Telegram => {
+            if send_telegram(client, &channel.config, &test_msg).await {
+                Ok(())
+            } else {
+                Err("Telegram request failed".to_string())
+            }
+        }
+        ChannelType::Webhook => {
+            let url = channel
+                .config
+                .get("webhook_url")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing webhook_url in config")?;
+            if send_generic_webhook(client, url, &test_msg).await {
+                Ok(())
+            } else {
+                Err("Generic webhook request failed".to_string())
+            }
         }
     }
 }
@@ -128,6 +172,97 @@ async fn send_slack(client: &Client, webhook_url: &str, message: &str) -> bool {
         }
         Err(e) => {
             tracing::error!(channel = "slack", err = ?e, "⚠️ [Alert Error]");
+            false
+        }
+    }
+}
+
+async fn send_teams(client: &Client, webhook_url: &str, message: &str) -> bool {
+    if let Err(e) = url_validator::validate_url(webhook_url, &["https"]).await {
+        tracing::error!(channel = "teams", err = %e, "⚠️ [Alert] Webhook URL failed SSRF validation");
+        return false;
+    }
+
+    let body = serde_json::json!({ "text": message.replace("**", "") });
+
+    match client.post(webhook_url).json(&body).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                tracing::info!(channel = "teams", "🔔 [Alert Sent]");
+                true
+            } else {
+                tracing::error!(channel = "teams", status = %response.status(), "⚠️ [Alert Failed]");
+                false
+            }
+        }
+        Err(e) => {
+            tracing::error!(channel = "teams", err = ?e, "⚠️ [Alert Error]");
+            false
+        }
+    }
+}
+
+async fn send_telegram(client: &Client, config: &serde_json::Value, message: &str) -> bool {
+    let bot_token = config
+        .get("bot_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let chat_id = config.get("chat_id").and_then(|v| v.as_str()).unwrap_or("");
+    if bot_token.is_empty() || chat_id.is_empty() {
+        tracing::warn!(
+            channel = "telegram",
+            "⚠️ [Telegram] Missing bot_token or chat_id"
+        );
+        return false;
+    }
+
+    let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+    let body = serde_json::json!({
+        "chat_id": chat_id,
+        "text": message.replace("**", "").replace('`', ""),
+        "disable_web_page_preview": true,
+    });
+
+    match client.post(url).json(&body).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                tracing::info!(channel = "telegram", "🔔 [Alert Sent]");
+                true
+            } else {
+                tracing::error!(channel = "telegram", status = %response.status(), "⚠️ [Alert Failed]");
+                false
+            }
+        }
+        Err(e) => {
+            tracing::error!(channel = "telegram", err = ?e, "⚠️ [Alert Error]");
+            false
+        }
+    }
+}
+
+async fn send_generic_webhook(client: &Client, webhook_url: &str, message: &str) -> bool {
+    if let Err(e) = url_validator::validate_url(webhook_url, &["https"]).await {
+        tracing::error!(channel = "webhook", err = %e, "⚠️ [Alert] Webhook URL failed SSRF validation");
+        return false;
+    }
+
+    let body = serde_json::json!({
+        "source": "netsentinel",
+        "text": message,
+    });
+
+    match client.post(webhook_url).json(&body).send().await {
+        Ok(response) => {
+            if response.status().is_success() {
+                tracing::info!(channel = "webhook", "🔔 [Alert Sent]");
+                true
+            } else {
+                tracing::error!(channel = "webhook", status = %response.status(), "⚠️ [Alert Failed]");
+                false
+            }
+        }
+        Err(e) => {
+            tracing::error!(channel = "webhook", err = ?e, "⚠️ [Alert Error]");
             false
         }
     }

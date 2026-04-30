@@ -347,7 +347,7 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 | **`metrics_5min`** | 5-minute rollup table (`STRICT, WITHOUT ROWID`, PK `(host_key, bucket)`). Populated by `services::rollup_worker` on a 60-second tick via an idempotent UPSERT from `metrics`; includes cumulative network counters and bucket-averaged bandwidth scalar columns. 90-day retention. |
 | **`hosts`** | Agent registry (scrape interval, thresholds, monitored ports/containers, system info: OS/CPU/RAM/IP). `ports` / `containers` stored as JSON arrays in TEXT columns. |
 | **`alert_configs`** | Alert rules; `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
-| **`notification_channels`** | Alert delivery targets (Discord webhook, Slack webhook, Email SMTP). Config stored as JSON text. |
+| **`notification_channels`** | Alert delivery targets (Discord, Slack, Microsoft Teams, Telegram, generic webhook, Email SMTP). Config stored as JSON text. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSON text). |
 | **`users`** | User accounts with Argon2 password hashing. Roles: admin, viewer. Tracks `password_changed_at` and `tokens_revoked_at` for unified JWT revocation. |
 | **`refresh_tokens`** | Refresh token family table (`BLOB` hash / family_id, INTEGER epoch timestamps). Supports rotation + reuse detection. |
