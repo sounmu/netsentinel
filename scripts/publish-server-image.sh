@@ -48,6 +48,13 @@ ensure_builder() {
   docker buildx inspect "$BUILDER_NAME" --bootstrap >/dev/null
 }
 
+stop_builder() {
+  if docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+    echo "Stopping buildx builder '$BUILDER_NAME'"
+    docker buildx stop "$BUILDER_NAME" >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
   exit 0
@@ -95,6 +102,7 @@ if ! docker buildx version >/dev/null 2>&1; then
   exit 1
 fi
 
+trap stop_builder EXIT
 ensure_builder
 
 tags=(-t "${IMAGE_NAME}:${tag}")
