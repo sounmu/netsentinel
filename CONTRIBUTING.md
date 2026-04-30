@@ -47,7 +47,7 @@ docker compose up -d server
 ./scripts/smoke-test.sh
 ```
 
-The dashboard **and** the API share **http://localhost:3000**. Open `/setup` for the first-admin flow — `docs/AFTER_INSTALL.md` walks through the full 10-minute path (admin → first host → first agent). Use `./scripts/doctor.sh` if anything above fails.
+The dashboard **and** the API share **http://localhost:3000**. Configure Google OAuth, then open `/login` for the first-admin flow — `docs/AFTER_INSTALL.md` walks through the full 10-minute path (admin → first host → first agent). Use `./scripts/doctor.sh` if anything above fails.
 
 ---
 
@@ -171,7 +171,7 @@ cd server
 cargo test
 ```
 
-Existing tests cover JWT generation/validation, alert-threshold logic, password validation, rate limiting, refresh-token rotation, SSE tickets, request ID generation, and input validation. There are 190 tests total across the project: server (107), agent (33), web (50).
+Existing tests cover JWT generation/validation, OAuth state generation, alert-threshold logic, rate limiting, refresh-token rotation, SSE tickets, request ID generation, and input validation.
 
 ### Database migrations
 
