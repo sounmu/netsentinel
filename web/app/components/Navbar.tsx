@@ -18,7 +18,7 @@ import { useI18n } from "@/app/i18n/I18nContext";
 import { useTheme } from "@/app/theme/ThemeContext";
 import { useAuth } from "@/app/auth/AuthContext";
 
-const HIDDEN_PATHS = ["/login"];
+const HIDDEN_PATHS = ["/login", "/setup"];
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -28,7 +28,7 @@ export default function Navbar() {
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Hide navbar on login page (after all hooks)
+  // Hide navbar on login/setup pages (after all hooks)
   if (HIDDEN_PATHS.includes(pathname)) return null;
 
   const navItems = [

@@ -553,7 +553,9 @@ export interface LoginResponse {
 }
 
 export interface AuthStatus {
-  login_url: string;
+  setup_required: boolean;
+  oauth_enabled: boolean;
+  oauth_login_url: string;
 }
 
 export const getAuthStatusUrl = () => `${API_BASE}/api/auth/status`;
@@ -568,6 +570,34 @@ export class ApiError extends Error {
 export interface OAuthStartResponse {
   authorize_url: string;
 }
+
+export const login = async (username: string, password: string): Promise<LoginResponse> => {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+};
+
+export const setupAdmin = async (username: string, password: string): Promise<LoginResponse> => {
+  const res = await fetch(`${API_BASE}/api/auth/setup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text || `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+};
 
 export const startGoogleOAuth = async (): Promise<OAuthStartResponse> => {
   const res = await fetch(`${API_BASE}/api/auth/oauth/google/start`, {

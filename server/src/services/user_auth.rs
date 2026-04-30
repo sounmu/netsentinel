@@ -1,3 +1,6 @@
+use argon2::password_hash::SaltString;
+use argon2::password_hash::rand_core::OsRng;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use jsonwebtoken::{Algorithm, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +79,25 @@ pub fn decode_user_jwt(token: &str) -> Option<UserClaims> {
 /// correction can start rejecting freshly-refreshed tokens.
 pub const JWT_CLOCK_SKEW_LEEWAY_SECS: u64 = 30;
 
+/// Hash a plaintext password with Argon2id.
+pub fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2.hash_password(password.as_bytes(), &salt)?;
+    Ok(hash.to_string())
+}
+
+/// Verify a plaintext password against a stored Argon2 hash.
+pub fn verify_password(password: &str, hash: &str) -> bool {
+    let parsed = match PasswordHash::new(hash) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,6 +107,30 @@ mod tests {
     // Must match the TEST_SECRET in services::auth::tests so the shared OnceLock
     // holds a consistent decoding key regardless of test order.
     const TEST_SECRET: &str = "test-secret-for-unit-tests";
+
+    #[test]
+    fn test_hash_password_produces_valid_argon2_hash() {
+        let hash = hash_password("TestPass123!").expect("hashing should succeed");
+        assert!(hash.starts_with("$argon2"));
+        PasswordHash::new(&hash).expect("hash should be parseable");
+    }
+
+    #[test]
+    fn test_verify_password_correct() {
+        let hash = hash_password("CorrectHorse!1").expect("hashing should succeed");
+        assert!(verify_password("CorrectHorse!1", &hash));
+    }
+
+    #[test]
+    fn test_verify_password_wrong() {
+        let hash = hash_password("CorrectHorse!1").expect("hashing should succeed");
+        assert!(!verify_password("WrongPassword!1", &hash));
+    }
+
+    #[test]
+    fn test_verify_password_invalid_hash() {
+        assert!(!verify_password("anything", "not-a-valid-hash"));
+    }
 
     #[test]
     fn test_decode_user_jwt_rejects_token_from_other_secret() {
