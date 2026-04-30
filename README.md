@@ -119,7 +119,7 @@ Use `--bind "100.x.y.z"` to listen only on the agent's Tailscale interface, or c
 
 ### Register the host in the UI
 
-1. Configure Google OAuth in `.env`, then open `http://<hub-ip>:3000/login` and sign in with Google. On a fresh database, the first verified Google login becomes admin by default.
+1. Open `http://<hub-ip>:3000/setup` → create the first local admin account. Google OAuth is optional and can be enabled later.
 2. Navigate to **Agents → + Add Agent** and paste the `host_key` the agent installer printed (for example `192.168.1.10:9101`).
 3. The host flips from `pending` → `online` within one scrape interval (default 10 s).
 
@@ -237,11 +237,11 @@ cargo run
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 chars). Every agent needs the same value. `bootstrap.sh` generates it via `openssl rand -hex 32`. |
-| `GOOGLE_OAUTH_CLIENT_ID` | **Yes** | — | Google OAuth web-client id. |
-| `GOOGLE_OAUTH_CLIENT_SECRET` | **Yes** | — | Google OAuth web-client secret. Server-side only. |
-| `GOOGLE_OAUTH_REDIRECT_URI` | **Yes** | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. |
-| `OAUTH_ADMIN_EMAILS` | After bootstrap | empty | Comma-separated Google email allowlist. Emails are lowercased before comparison. |
-| `OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN` | No | `true` | When `users` is empty, the first verified Google login creates the initial admin. |
+| `GOOGLE_OAUTH_CLIENT_ID` | No | — | Optional Google OAuth web-client id. |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | No | — | Optional Google OAuth web-client secret. Server-side only. |
+| `GOOGLE_OAUTH_REDIRECT_URI` | No | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. Required only when Google OAuth is enabled. |
+| `OAUTH_ADMIN_EMAILS` | No | empty | Comma-separated Google email allowlist. Emails are lowercased before comparison. Matching existing local users can link/sign in by verified email. |
+| `OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN` | No | `true` | When Google OAuth is enabled and `users` is empty, the first verified Google login creates the initial admin. |
 | `COOKIE_SECURE` | No | inferred | Refresh cookie `Secure` flag. Unset infers from `GOOGLE_OAUTH_REDIRECT_URI`: `https` uses Secure, `http` omits it for local/LAN testing. |
 | `NETSENTINEL_VERSION` | No | `latest` | Docker image tag for `ghcr.io/sounmu/netsentinel-server`. Pin a release tag such as `v0.4.2` for reproducible installs. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | No | — | Cloudflare Tunnel token. Only read when you activate the `tunnel` service via a compose override — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). |
@@ -249,7 +249,7 @@ cargo run
 
 > Upgrading from v0.3.x? The old `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` variables are no longer read — remove them from `.env`. There is nothing to migrate if this is a greenfield install. See the v0.4.0 section of [`CHANGELOG.md`](./CHANGELOG.md) for how to move data from an existing Postgres deployment.
 
-Local web development uses the Next dev server on `http://localhost:3001` and the Rust API on `http://localhost:3000`. Register `http://localhost:3000/api/auth/oauth/google/callback` in Google Cloud and set the same value in `GOOGLE_OAUTH_REDIRECT_URI`; the backend then redirects back to the allowed `3001` frontend origin after setting the refresh cookie.
+Local web development uses the Next dev server on `http://localhost:3001` and the Rust API on `http://localhost:3000`. Google OAuth is optional; when enabled, register `http://localhost:3000/api/auth/oauth/google/callback` in Google Cloud and set the same value in `GOOGLE_OAUTH_REDIRECT_URI`; the backend then redirects back to the allowed `3001` frontend origin after setting the refresh cookie.
 
 ### Server — all keys below
 
@@ -290,10 +290,13 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 
 | Method | Path | Description |
 |---|---|---|
+| `POST` | `/api/auth/login` | Local username/password login **(no auth)** |
+| `POST` | `/api/auth/setup` | Create initial local admin **(no auth, first run only)** |
 | `GET` | `/api/auth/oauth/google/start` | Start Google OAuth with state + PKCE **(no auth)** |
 | `GET` | `/api/auth/oauth/google/callback` | Google OAuth callback **(no auth)** |
 | `GET` | `/api/auth/me` | Current user info |
 | `GET` | `/api/auth/status` | Public auth entry points **(no auth)** |
+| `PUT` | `/api/auth/password` | Change or set current user's local password |
 | `GET` | `/api/health` | Health check — verifies DB **(no auth)** |
 | `GET` | `/api/dashboard` | Get user's dashboard layout |
 | `PUT` | `/api/dashboard` | Save user's dashboard layout |
@@ -356,7 +359,7 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 | **`alert_configs`** | Alert rules; `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
 | **`notification_channels`** | Alert delivery targets (Discord, Slack, Microsoft Teams, Telegram, generic webhook, Email SMTP). Config stored as JSON text. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSON text). |
-| **`users`** | Google OAuth users keyed by `(oauth_provider, oauth_subject)`. Stores verified email/profile fields, role, and `tokens_revoked_at` for JWT revocation. |
+| **`users`** | Local username/password users with optional Google OAuth linkage keyed by `(oauth_provider, oauth_subject)`. Stores verified email/profile fields, role, `password_changed_at`, and `tokens_revoked_at` for JWT revocation. |
 | **`refresh_tokens`** | Refresh token family table (`BLOB` hash / family_id, INTEGER epoch timestamps). Supports rotation + reuse detection. |
 | **`alert_history`** | Immutable log of all alert events with timestamps. 90-day retention. |
 | **`http_monitors`** | External HTTP endpoint monitors with check intervals. |
