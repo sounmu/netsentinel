@@ -382,18 +382,50 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     [rows, liveRows, effectiveRange],
   );
 
-  const isInitialLoading = allRows.length === 0 && isValidating;
+  // Lag the chart's rendered data + axes one settle behind the user-
+  // selected range. While SWR is in flight for a new range, the chart
+  // keeps drawing the previously committed snapshot (same data, same
+  // axes — visually frozen). When the new fetch lands (`isValidating`
+  // flips to false), `committed` swaps atomically in a single setState,
+  // so data and axes update together in one paint — no skeleton, no
+  // stale-data-in-new-canvas, no curve-type pre-flip.
+  //
+  // The setState below is the "Adjusting state during render" pattern
+  // (https://react.dev/learn/you-might-not-need-an-effect): React
+  // detects the same-component setState during render and re-renders
+  // synchronously without committing the intermediate output, so this
+  // costs no extra paint vs. an effect-based equivalent and avoids the
+  // cascading-renders lint.
+  const [committed, setCommitted] = useState<{
+    rows: readonly ChartMetricsRow[];
+    range: TimeRange;
+  }>(() => ({ rows: [], range: effectiveRange }));
+
+  if (
+    !isValidating &&
+    (committed.rows !== allRows || committed.range !== effectiveRange)
+  ) {
+    setCommitted({ rows: allRows, range: effectiveRange });
+  }
+
+  const displayedRows = committed.rows;
+  const displayedRange = committed.range;
+
+  const isInitialLoading = displayedRows.length === 0 && isValidating;
 
   const rangeHours = useMemo(
-    () => (effectiveRange.end.getTime() - effectiveRange.start.getTime()) / (1000 * 60 * 60),
-    [effectiveRange]
+    () => (displayedRange.end.getTime() - displayedRange.start.getTime()) / (1000 * 60 * 60),
+    [displayedRange]
   );
 
-  // Evenly spaced time ticks based on the *effective* (rolled) range
-  // so the rightmost tick label tracks "now" for live presets.
+  // Evenly spaced time ticks based on the *displayed* (settled) range so
+  // axes stay consistent with the rendered series during a range switch.
+  // For live presets the rightmost tick still tracks "now" because
+  // `displayedRange` re-syncs to the rolling `effectiveRange` on every
+  // settled render.
   const timeTicks = useMemo(
-    () => generateTimeTicks(effectiveRange.start, effectiveRange.end, 5),
-    [effectiveRange]
+    () => generateTimeTicks(displayedRange.start, displayedRange.end, 5),
+    [displayedRange]
   );
 
   const onPresetClick = useCallback((minutes: number, key: PresetKey) => {
@@ -411,7 +443,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
   // ─── Data extraction (single pass) ──────────────
   const chartData = useMemo(() => {
-    const s = [...allRows].sort(
+    const s = [...displayedRows].sort(
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
@@ -520,16 +552,20 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       dockerMemData, dockerMemKeys: [...dockerMemNames],
       tempData,
     };
-    // `allRows` is itself derived from `[rows, liveMetrics]`, so including
-    // `liveMetrics` in this deps array is redundant — every identity change
-    // of `liveMetrics` already flows through `allRows` and would re-fire
-    // this memo anyway. Dropping it matches the hooks-exhaustive-deps lint.
-  }, [allRows]);
+    // `displayedRows` is the lag-state snapshot of `allRows` (which itself
+    // is derived from `[rows, liveMetrics, effectiveRange]`). Depending on
+    // it directly is enough — every identity change flows through.
+  }, [displayedRows]);
 
   const cpuDomain = useMemo(() => autoYDomainMulti(chartData.cpu, ["CPU (%)"], 0), [chartData.cpu]);
   const ramDomain = useMemo(() => autoYDomainMulti(chartData.ram, ["RAM (%)"], 0), [chartData.ram]);
 
-  const curveType: "monotone" | "linear" = isLivePreset ? "linear" : "monotone";
+  // Use the *displayed* preset so the curve interpolation flips together
+  // with data + axes when a range switch settles, not the moment the user
+  // clicks.
+  const displayedIsLivePreset =
+    displayedRange.preset === "1m" || displayedRange.preset === "5m";
+  const curveType: "monotone" | "linear" = displayedIsLivePreset ? "linear" : "monotone";
 
   return (
     <div>
