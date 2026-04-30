@@ -346,16 +346,24 @@ export const bulkUpdateHostAlertConfigs = (body: BulkAlertConfigRequest) =>
 export interface NotificationChannel {
   id: number;
   name: string;
-  channel_type: "discord" | "slack" | "email";
+  channel_type: NotificationChannelType;
   enabled: boolean;
   config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
 
+export type NotificationChannelType =
+  | "discord"
+  | "slack"
+  | "email"
+  | "teams"
+  | "telegram"
+  | "webhook";
+
 export const getNotificationChannelsUrl = () => `${API_BASE}/api/notification-channels`;
 
-export const createNotificationChannel = (body: { name: string; channel_type: string; enabled?: boolean; config: Record<string, unknown> }) =>
+export const createNotificationChannel = (body: { name: string; channel_type: NotificationChannelType; enabled?: boolean; config: Record<string, unknown> }) =>
   apiCall<NotificationChannel>(`${API_BASE}/api/notification-channels`, "POST", body);
 
 export const updateNotificationChannel = (id: number, body: { name?: string; enabled?: boolean; config?: Record<string, unknown> }) =>

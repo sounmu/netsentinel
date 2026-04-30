@@ -267,6 +267,7 @@ sudo systemctl restart netsentinel-agent   # or launchctl on macOS
 
 > **Breaking changes**: If your PR modifies the SSE payload schema or REST API contracts, note it clearly in the PR description so consumers can prepare.
 > Server and frontend SSE type changes must ship in the same commit so the static web bundle never decodes a different wire shape than the server emits.
+> Notification channel additions must update the SQLite CHECK migration, Rust `ChannelType`, handler validation/redaction, delivery service, web form schema, and docs together.
 > Update `README.md`, `CONTRIBUTING.md`, and any relevant `.env.example` files whenever config defaults, auth behavior, or API/SSE contracts change.
 
 ---

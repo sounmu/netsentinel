@@ -69,7 +69,7 @@ function AlertsPageInner() {
   };
 
   return (
-    <div className="page-content fade-in">
+    <div className="page-content fade-in alerts-page">
       <PageHeader
         icon={<Bell size={18} aria-hidden="true" />}
         title={t.alerts.title}

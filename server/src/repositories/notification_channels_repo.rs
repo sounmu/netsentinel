@@ -11,6 +11,9 @@ pub enum ChannelType {
     Discord,
     Slack,
     Email,
+    Teams,
+    Telegram,
+    Webhook,
 }
 
 /// Row from the `notification_channels` table
@@ -21,7 +24,8 @@ pub struct NotificationChannelRow {
     pub channel_type: ChannelType,
     pub enabled: bool,
     /// JSON config — varies by channel type:
-    /// Discord/Slack: { "webhook_url": "https://..." }
+    /// Discord/Slack/Teams/Generic webhook: { "webhook_url": "https://..." }
+    /// Telegram: { "bot_token": "...", "chat_id": "..." }
     /// Email: { "smtp_host": "...", "smtp_port": 587, "smtp_user": "...", "smtp_pass": "...", "from": "...", "to": "..." }
     pub config: serde_json::Value,
     pub created_at: DateTime<Utc>,
