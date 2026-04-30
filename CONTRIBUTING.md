@@ -47,7 +47,7 @@ docker compose up -d server
 ./scripts/smoke-test.sh
 ```
 
-The dashboard **and** the API share **http://localhost:3000** in the production-style container. In local dev, Next runs on `http://localhost:3001` and proxies the Google OAuth callback to the Rust API via `NEXT_PUBLIC_API_URL=http://localhost:3000`. Configure Google OAuth, then open `/login` for the first-admin flow — `docs/AFTER_INSTALL.md` walks through the full 10-minute path (admin → first host → first agent). Use `./scripts/doctor.sh` if anything above fails.
+The dashboard **and** the API share **http://localhost:3000** in the production-style container. In local dev, Next runs on `http://localhost:3001` and the Google OAuth callback still points directly at the Rust API (`http://localhost:3000/api/auth/oauth/google/callback`); the API redirects back to the frontend after issuing cookies. Configure Google OAuth, then open `/login` for the first-admin flow — `docs/AFTER_INSTALL.md` walks through the full 10-minute path (admin → first host → first agent). Use `./scripts/doctor.sh` if anything above fails.
 
 ---
 

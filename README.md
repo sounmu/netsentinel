@@ -249,7 +249,7 @@ cargo run
 
 > Upgrading from v0.3.x? The old `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` variables are no longer read — remove them from `.env`. There is nothing to migrate if this is a greenfield install. See the v0.4.0 section of [`CHANGELOG.md`](./CHANGELOG.md) for how to move data from an existing Postgres deployment.
 
-Local web development uses the Next dev server on `http://localhost:3001` and the Rust API on `http://localhost:3000`. If you register `http://localhost:3001/api/auth/oauth/google/callback` in Google Cloud, `next dev` proxies that callback to the Rust API through `NEXT_PUBLIC_API_URL=http://localhost:3000`; the backend then redirects back to the allowed frontend origin after setting the refresh cookie.
+Local web development uses the Next dev server on `http://localhost:3001` and the Rust API on `http://localhost:3000`. Register `http://localhost:3000/api/auth/oauth/google/callback` in Google Cloud and set the same value in `GOOGLE_OAUTH_REDIRECT_URI`; the backend then redirects back to the allowed `3001` frontend origin after setting the refresh cookie.
 
 ### Server — all keys below
 
