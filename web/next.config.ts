@@ -32,11 +32,14 @@ const nextConfig: NextConfig = isExportBuild
     }
   : {
       async rewrites() {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
-        if (!apiBase) return [];
+        const apiBase = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000").replace(/\/$/, "");
         return [
           {
             source: "/api/auth/oauth/google/callback",
+            destination: `${apiBase}/api/auth/oauth/google/callback`,
+          },
+          {
+            source: "/api/auth/oauth/google/callback/",
             destination: `${apiBase}/api/auth/oauth/google/callback`,
           },
         ];
