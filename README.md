@@ -119,7 +119,7 @@ Use `--bind "100.x.y.z"` to listen only on the agent's Tailscale interface, or c
 
 ### Register the host in the UI
 
-1. Open `http://<hub-ip>:3000/setup` → create the first admin account.
+1. Configure Google OAuth in `.env`, then open `http://<hub-ip>:3000/login` and sign in with Google. On a fresh database, the first verified Google login becomes admin by default.
 2. Navigate to **Agents → + Add Agent** and paste the `host_key` the agent installer printed (for example `192.168.1.10:9101`).
 3. The host flips from `pending` → `online` within one scrape interval (default 10 s).
 
@@ -237,6 +237,11 @@ cargo run
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 chars). Every agent needs the same value. `bootstrap.sh` generates it via `openssl rand -hex 32`. |
+| `GOOGLE_OAUTH_CLIENT_ID` | **Yes** | — | Google OAuth web-client id. |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | **Yes** | — | Google OAuth web-client secret. Server-side only. |
+| `GOOGLE_OAUTH_REDIRECT_URI` | **Yes** | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. |
+| `OAUTH_ADMIN_EMAILS` | After bootstrap | empty | Comma-separated Google email allowlist. Emails are lowercased before comparison. |
+| `OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN` | No | `true` | When `users` is empty, the first verified Google login creates the initial admin. |
 | `NETSENTINEL_VERSION` | No | `latest` | Docker image tag for `ghcr.io/sounmu/netsentinel-server`. Pin a release tag such as `v0.4.2` for reproducible installs. |
 | `CLOUDFLARE_TUNNEL_TOKEN` | No | — | Cloudflare Tunnel token. Only read when you activate the `tunnel` service via a compose override — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). |
 | `NEXT_PUBLIC_API_URL` | No | empty (same-origin) | Build-time web setting for custom local images. The published image is built for same-origin deployments, which is the recommended homelab path. Split-origin deployments should either build a custom image via a `docker-compose.override.yml` (see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)) or put dashboard/API behind one reverse-proxy hostname. |
@@ -282,11 +287,10 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/auth/login` | Login **(no auth)** |
-| `POST` | `/api/auth/setup` | Create initial admin **(no auth, first run only)** |
+| `GET` | `/api/auth/oauth/google/start` | Start Google OAuth with state + PKCE **(no auth)** |
+| `GET` | `/api/auth/oauth/google/callback` | Google OAuth callback **(no auth)** |
 | `GET` | `/api/auth/me` | Current user info |
-| `GET` | `/api/auth/status` | Check if setup needed **(no auth)** |
-| `PUT` | `/api/auth/password` | Change current user's password |
+| `GET` | `/api/auth/status` | Public auth entry points **(no auth)** |
 | `GET` | `/api/health` | Health check — verifies DB **(no auth)** |
 | `GET` | `/api/dashboard` | Get user's dashboard layout |
 | `PUT` | `/api/dashboard` | Save user's dashboard layout |
@@ -349,7 +353,7 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 | **`alert_configs`** | Alert rules; `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
 | **`notification_channels`** | Alert delivery targets (Discord, Slack, Microsoft Teams, Telegram, generic webhook, Email SMTP). Config stored as JSON text. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSON text). |
-| **`users`** | User accounts with Argon2 password hashing. Roles: admin, viewer. Tracks `password_changed_at` and `tokens_revoked_at` for unified JWT revocation. |
+| **`users`** | Google OAuth users keyed by `(oauth_provider, oauth_subject)`. Stores verified email/profile fields, role, and `tokens_revoked_at` for JWT revocation. |
 | **`refresh_tokens`** | Refresh token family table (`BLOB` hash / family_id, INTEGER epoch timestamps). Supports rotation + reuse detection. |
 | **`alert_history`** | Immutable log of all alert events with timestamps. 90-day retention. |
 | **`http_monitors`** | External HTTP endpoint monitors with check intervals. |
