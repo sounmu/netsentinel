@@ -26,6 +26,7 @@ pub enum MetricType {
     Network,
     Temperature,
     Gpu,
+    Docker,
 }
 
 impl std::fmt::Display for MetricType {
@@ -38,6 +39,7 @@ impl std::fmt::Display for MetricType {
             MetricType::Network => write!(f, "network"),
             MetricType::Temperature => write!(f, "temperature"),
             MetricType::Gpu => write!(f, "gpu"),
+            MetricType::Docker => write!(f, "docker"),
         }
     }
 }
@@ -159,6 +161,7 @@ pub async fn load_all_as_map(pool: &DbPool) -> Result<HashMap<String, AlertConfi
     let mut global_network = default_cfg.network;
     let mut global_temperature = default_cfg.temperature;
     let mut global_gpu = default_cfg.gpu;
+    let mut global_docker = default_cfg.docker;
 
     for row in &rows {
         if row.host_key.is_none() && row.sub_key.is_none() {
@@ -170,6 +173,7 @@ pub async fn load_all_as_map(pool: &DbPool) -> Result<HashMap<String, AlertConfi
                 MetricType::Network => global_network = row_to_rule(row),
                 MetricType::Temperature => global_temperature = row_to_rule(row),
                 MetricType::Gpu => global_gpu = row_to_rule(row),
+                MetricType::Docker => global_docker = row_to_rule(row),
             }
         }
     }
@@ -216,6 +220,7 @@ pub async fn load_all_as_map(pool: &DbPool) -> Result<HashMap<String, AlertConfi
                     network: pick(MetricType::Network, global_network),
                     temperature: pick(MetricType::Temperature, global_temperature),
                     gpu: pick(MetricType::Gpu, global_gpu),
+                    docker: pick(MetricType::Docker, global_docker),
                     load_threshold: 4.0,
                     load_cooldown_secs: 60,
                 },
@@ -233,6 +238,7 @@ pub async fn load_all_as_map(pool: &DbPool) -> Result<HashMap<String, AlertConfi
             network: global_network,
             temperature: global_temperature,
             gpu: global_gpu,
+            docker: global_docker,
             load_threshold: 4.0,
             load_cooldown_secs: 60,
         },

@@ -27,7 +27,7 @@ interface Props {
 /**
  * Side-sheet editor for a single (host, metric) rule.
  * Fetches the host override, falls back to global, edits only the target
- * metric's row, and writes back all three metric overrides at once
+ * metric's row, and writes back all metric overrides at once
  * (the existing PUT /api/alert-configs/{host_key} contract is all-or-nothing).
  */
 export function RuleDrawer({ host, metric, onClose }: Props) {
@@ -98,6 +98,7 @@ export function RuleDrawer({ host, metric, onClose }: Props) {
     cpu: t.alerts.cpuAlert,
     memory: t.alerts.memoryAlert,
     disk: t.alerts.diskAlert,
+    docker: t.alerts.dockerAlert,
   }[metric];
 
   return (

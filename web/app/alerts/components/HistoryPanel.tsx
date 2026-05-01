@@ -44,6 +44,8 @@ const KNOWN_TYPES = [
   "network_recovery",
   "gpu_overload",
   "gpu_recovery",
+  "docker_down",
+  "docker_recovery",
 ];
 
 const PAGE_SIZE = 25;

@@ -23,6 +23,12 @@ export interface DockerContainer {
   image: string;
   state: string;   // "running" | "exited" | "dead" ...
   status: string;  // e.g. "Up 2 hours"
+  oom_killed: boolean;
+  exit_code?: number | null;
+  restart_count: number;
+  compose_project?: string | null;
+  compose_service?: string | null;
+  health_status?: string | null;
 }
 
 export interface PortStatus {
@@ -59,6 +65,8 @@ export interface DockerContainerStats {
   memory_limit_mb: number;
   net_rx_bytes: number;
   net_tx_bytes: number;
+  block_read_bytes: number;
+  block_write_bytes: number;
 }
 
 export interface ChartDiskInfo {

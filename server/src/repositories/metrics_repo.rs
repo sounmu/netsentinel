@@ -619,7 +619,7 @@ pub async fn fetch_metrics_range(
                 memory_usage_percent,
                 load_1min, load_5min, load_15min,
                 NULL AS networks,
-                NULL AS docker_containers,
+                docker_containers,
                 NULL AS ports,
                 disks,
                 NULL AS processes,
@@ -675,7 +675,7 @@ pub async fn fetch_metrics_range(
                 load_1min, load_5min, load_15min,
                 total_rx_bytes, total_tx_bytes,
                 avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
-                disks, temperatures, gpus, docker_stats,
+                disks, temperatures, gpus, docker_stats, docker_containers,
                 ROW_NUMBER() OVER (
                     PARTITION BY host_key, (bucket / 900) * 900
                     ORDER BY bucket DESC
@@ -696,7 +696,7 @@ pub async fn fetch_metrics_range(
             CAST(AVG(load_5min) AS REAL) AS load_5min,
             CAST(AVG(load_15min) AS REAL) AS load_15min,
             NULL AS networks,
-            NULL AS docker_containers,
+            MAX(CASE WHEN rn = 1 THEN docker_containers END) AS docker_containers,
             NULL AS ports,
             MAX(CASE WHEN rn = 1 THEN disks END) AS disks,
             NULL AS processes,
@@ -1176,6 +1176,8 @@ mod sqlite_tests {
             memory_limit_mb: 1024,
             net_rx_bytes: 99,
             net_tx_bytes: 100,
+            block_read_bytes: 0,
+            block_write_bytes: 0,
         }];
         m.network.rx_bytes_per_sec = 11.0;
         m.network.tx_bytes_per_sec = 22.0;

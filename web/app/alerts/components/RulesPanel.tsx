@@ -119,10 +119,11 @@ export function RulesPanel() {
         )}
 
         {globalForm ? (
-          <div className="alerts-metric-grid">
+          <div className="alerts-rule-stack">
             <MetricRuleCard label={t.alerts.cpuAlert} prefix="cpu" form={globalForm} setForm={setGlobalForm} />
             <MetricRuleCard label={t.alerts.memoryAlert} prefix="memory" form={globalForm} setForm={setGlobalForm} />
             <MetricRuleCard label={t.alerts.diskAlert} prefix="disk" form={globalForm} setForm={setGlobalForm} />
+            <MetricRuleCard label={t.alerts.dockerAlert} prefix="docker" form={globalForm} setForm={setGlobalForm} />
           </div>
         ) : (
           <div className="skeleton" style={{ height: 200 }} />
@@ -271,6 +272,7 @@ function HostAlertOverride({
             <MetricRuleCard label={t.alerts.cpu} prefix="cpu" form={form} setForm={setForm} />
             <MetricRuleCard label={t.alerts.memory} prefix="memory" form={form} setForm={setForm} />
             <MetricRuleCard label={t.alerts.disk} prefix="disk" form={form} setForm={setForm} />
+            <MetricRuleCard label={t.alerts.docker} prefix="docker" form={form} setForm={setForm} />
           </div>
 
           {msg && (

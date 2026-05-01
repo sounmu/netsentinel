@@ -2,7 +2,7 @@ import { ApiError } from "@/app/lib/api";
 import type { AlertConfigRow, UpsertAlertRequest } from "@/app/lib/api";
 import type { Translations } from "@/app/i18n/translations";
 
-export type MetricPrefix = "cpu" | "memory" | "disk";
+export type MetricPrefix = "cpu" | "memory" | "disk" | "docker";
 
 export interface AlertFormData {
   cpu_enabled: boolean;
@@ -17,12 +17,17 @@ export interface AlertFormData {
   disk_threshold: number;
   disk_sustained_secs: number;
   disk_cooldown_secs: number;
+  docker_enabled: boolean;
+  docker_threshold: number;
+  docker_sustained_secs: number;
+  docker_cooldown_secs: number;
 }
 
 export function configsToForm(configs: AlertConfigRow[]): AlertFormData {
   const cpu = configs.find((c) => c.metric_type === "cpu");
   const mem = configs.find((c) => c.metric_type === "memory");
   const disk = configs.find((c) => c.metric_type === "disk");
+  const docker = configs.find((c) => c.metric_type === "docker");
   return {
     cpu_enabled: cpu?.enabled ?? true,
     cpu_threshold: cpu?.threshold ?? 80,
@@ -36,6 +41,10 @@ export function configsToForm(configs: AlertConfigRow[]): AlertFormData {
     disk_threshold: disk?.threshold ?? 90,
     disk_sustained_secs: disk?.sustained_secs ?? 0,
     disk_cooldown_secs: disk?.cooldown_secs ?? 300,
+    docker_enabled: docker?.enabled ?? false,
+    docker_threshold: docker?.threshold ?? 1,
+    docker_sustained_secs: docker?.sustained_secs ?? 0,
+    docker_cooldown_secs: docker?.cooldown_secs ?? 300,
   };
 }
 
@@ -44,6 +53,7 @@ export function formToRequests(form: AlertFormData): UpsertAlertRequest[] {
     { metric_type: "cpu", enabled: form.cpu_enabled, threshold: form.cpu_threshold, sustained_secs: form.cpu_sustained_secs, cooldown_secs: form.cpu_cooldown_secs },
     { metric_type: "memory", enabled: form.memory_enabled, threshold: form.memory_threshold, sustained_secs: form.memory_sustained_secs, cooldown_secs: form.memory_cooldown_secs },
     { metric_type: "disk", enabled: form.disk_enabled, threshold: form.disk_threshold, sustained_secs: form.disk_sustained_secs, cooldown_secs: form.disk_cooldown_secs },
+    { metric_type: "docker", enabled: form.docker_enabled, threshold: 1, sustained_secs: 0, cooldown_secs: form.docker_cooldown_secs },
   ];
 }
 
@@ -64,6 +74,7 @@ export function alertTypeEmoji(alertType: string): string {
     temperature_overload: "🌡️", temperature_recovery: "✅",
     network_overload: "📡", network_recovery: "✅",
     gpu_overload: "🎮", gpu_recovery: "✅",
+    docker_down: "🐳", docker_recovery: "✅",
     monitor_down: "🔌", monitor_recovery: "✅",
   };
   return map[alertType] ?? "🔔";

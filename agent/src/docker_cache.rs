@@ -6,7 +6,7 @@
 
 use crate::models::{DockerContainer, DockerContainerStats};
 use bollard::Docker;
-use bollard::models::EventMessage;
+use bollard::models::{ContainerInspectResponse, EventMessage};
 use bollard::query_parameters::{EventsOptions, ListContainersOptions, StatsOptions};
 use futures_util::{StreamExt, stream};
 use std::collections::HashMap;
@@ -23,6 +23,8 @@ pub(crate) type DockerCache = Arc<RwLock<Vec<DockerContainer>>>;
 /// Shared container resource stats cache, keyed by container name.
 pub(crate) type DockerStatsCache = Arc<RwLock<HashMap<String, DockerContainerStats>>>;
 
+const DOCKER_INSPECT_CONCURRENCY: usize = 16;
+
 /// Performs a one-time full container list fetch at agent startup to seed the cache.
 /// Subsequent updates are incremental via the Docker Events stream — no need to call
 /// list_containers again.
@@ -36,29 +38,48 @@ pub(crate) async fn initial_docker_load(docker: &Docker) -> Vec<DockerContainer>
 
     match docker.list_containers(Some(options)).await {
         Ok(containers) => {
-            let result: Vec<DockerContainer> = containers
-                .into_iter()
-                .map(|c| {
+            let docker = docker.clone();
+            let result: Vec<DockerContainer> = stream::iter(containers.into_iter().map(|c| {
+                let docker = docker.clone();
+                async move {
                     let name = c
                         .names
-                        .unwrap_or_default()
-                        .first()
+                        .as_ref()
+                        .and_then(|names| names.first())
                         .cloned()
                         .unwrap_or_else(|| "unknown".to_string())
                         .trim_start_matches('/')
                         .to_string();
+                    let image = c.image.unwrap_or_else(|| "unknown".to_string());
+                    let state = c
+                        .state
+                        .map(|s| format!("{:?}", s).to_lowercase())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let status = c.status.unwrap_or_else(|| "unknown".to_string());
+
+                    if let Some(id) = c.id.as_deref()
+                        && let Ok(info) = docker.inspect_container(id, None).await
+                    {
+                        return docker_container_from_inspect(&name, Some(status), info);
+                    }
 
                     DockerContainer {
                         container_name: name,
-                        image: c.image.unwrap_or_else(|| "unknown".to_string()),
-                        state: c
-                            .state
-                            .map(|s| format!("{:?}", s).to_lowercase())
-                            .unwrap_or_else(|| "unknown".to_string()),
-                        status: c.status.unwrap_or_else(|| "unknown".to_string()),
+                        image,
+                        state,
+                        status,
+                        oom_killed: false,
+                        exit_code: None,
+                        restart_count: 0,
+                        compose_project: None,
+                        compose_service: None,
+                        health_status: None,
                     }
-                })
-                .collect();
+                }
+            }))
+            .buffer_unordered(DOCKER_INSPECT_CONCURRENCY)
+            .collect()
+            .await;
             tracing::info!(count = result.len(), "Docker cache initialized");
             result
         }
@@ -66,6 +87,74 @@ pub(crate) async fn initial_docker_load(docker: &Docker) -> Vec<DockerContainer>
             tracing::error!(err = ?e, "⚠️  [Docker] Initial container load failed");
             vec![]
         }
+    }
+}
+
+fn docker_container_from_inspect(
+    fallback_name: &str,
+    fallback_status: Option<String>,
+    info: ContainerInspectResponse,
+) -> DockerContainer {
+    let container_name = info
+        .name
+        .as_deref()
+        .unwrap_or(fallback_name)
+        .trim_start_matches('/')
+        .to_string();
+    let image = info
+        .config
+        .as_ref()
+        .and_then(|c| c.image.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let state_ref = info.state.as_ref();
+    let state = state_ref
+        .and_then(|s| s.status.as_ref())
+        .map(|s| format!("{:?}", s).to_lowercase())
+        .unwrap_or_else(|| "unknown".to_string());
+    let oom_killed = state_ref.and_then(|s| s.oom_killed).unwrap_or(false);
+    let exit_code = state_ref.and_then(|s| s.exit_code);
+    let health_status = state_ref
+        .and_then(|s| s.health.as_ref())
+        .and_then(|h| h.status.as_ref())
+        .map(|s| format!("{:?}", s).to_lowercase());
+
+    let labels = info.config.as_ref().and_then(|c| c.labels.as_ref());
+    let compose_project = labels
+        .and_then(|l| l.get("com.docker.compose.project"))
+        .cloned();
+    let compose_service = labels
+        .and_then(|l| l.get("com.docker.compose.service"))
+        .cloned();
+
+    DockerContainer {
+        container_name,
+        image,
+        state,
+        status: fallback_status.unwrap_or_else(|| status_from_state(state_ref)),
+        oom_killed,
+        exit_code,
+        restart_count: info.restart_count.unwrap_or(0).max(0) as u64,
+        compose_project,
+        compose_service,
+        health_status,
+    }
+}
+
+fn status_from_state(state: Option<&bollard::models::ContainerState>) -> String {
+    let Some(state) = state else {
+        return "unknown".to_string();
+    };
+    if state.running.unwrap_or(false) {
+        return "Running".to_string();
+    }
+    match state.exit_code {
+        Some(code) => format!("Exited ({code})"),
+        None => state
+            .status
+            .as_ref()
+            .map(|s| format!("{:?}", s))
+            .unwrap_or_else(|| "unknown".to_string()),
     }
 }
 
@@ -173,24 +262,11 @@ async fn handle_docker_event(docker: &Docker, cache: &DockerCache, event: EventM
         // inspect is necessary here because a newly started container may not be in the cache yet.
         "start" | "unpause" => {
             if let Ok(info) = docker.inspect_container(container_id, None).await {
-                let image = info
-                    .config
-                    .as_ref()
-                    .and_then(|c| c.image.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let state = info
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.status.as_ref())
-                    .map(|s| format!("{:?}", s).to_lowercase())
-                    .unwrap_or_else(|| "unknown".to_string());
-
-                let updated = DockerContainer {
-                    container_name: container_name.clone(),
-                    image,
-                    state,
-                    status: "Running".to_string(),
-                };
+                let updated = docker_container_from_inspect(
+                    &container_name,
+                    Some("Running".to_string()),
+                    info,
+                );
 
                 let mut containers = cache.write().await;
                 if let Some(c) = containers
@@ -203,7 +279,7 @@ async fn handle_docker_event(docker: &Docker, cache: &DockerCache, event: EventM
                 }
             }
         }
-        // Container stopped/exited: update state in-cache only, no extra API call needed.
+        // Container stopped/exited: inspect once to capture exit code / OOMKilled.
         "stop" | "die" => {
             let mut containers = cache.write().await;
             if let Some(c) = containers
@@ -212,6 +288,18 @@ async fn handle_docker_event(docker: &Docker, cache: &DockerCache, event: EventM
             {
                 c.state = "exited".to_string();
                 c.status = "Exited".to_string();
+            }
+            drop(containers);
+
+            if let Ok(info) = docker.inspect_container(container_id, None).await {
+                let updated = docker_container_from_inspect(&container_name, None, info);
+                let mut containers = cache.write().await;
+                if let Some(c) = containers
+                    .iter_mut()
+                    .find(|c| c.container_name == container_name)
+                {
+                    *c = updated;
+                }
             }
         }
         // Container paused: update state string only.
@@ -228,24 +316,11 @@ async fn handle_docker_event(docker: &Docker, cache: &DockerCache, event: EventM
         // New container created: fetch full info via inspect and add to cache.
         "create" => {
             if let Ok(info) = docker.inspect_container(container_id, None).await {
-                let image = info
-                    .config
-                    .as_ref()
-                    .and_then(|c| c.image.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let state = info
-                    .state
-                    .as_ref()
-                    .and_then(|s| s.status.as_ref())
-                    .map(|s| format!("{:?}", s).to_lowercase())
-                    .unwrap_or_else(|| "created".to_string());
-
-                let new_container = DockerContainer {
-                    container_name: container_name.clone(),
-                    image,
-                    state,
-                    status: "Created".to_string(),
-                };
+                let new_container = docker_container_from_inspect(
+                    &container_name,
+                    Some("Created".to_string()),
+                    info,
+                );
 
                 let mut containers = cache.write().await;
                 if !containers
@@ -260,6 +335,18 @@ async fn handle_docker_event(docker: &Docker, cache: &DockerCache, event: EventM
         "destroy" => {
             let mut containers = cache.write().await;
             containers.retain(|c| c.container_name != container_name);
+        }
+        health if health.starts_with("health_status") => {
+            if let Ok(info) = docker.inspect_container(container_id, None).await {
+                let updated = docker_container_from_inspect(&container_name, None, info);
+                let mut containers = cache.write().await;
+                if let Some(c) = containers
+                    .iter_mut()
+                    .find(|c| c.container_name == container_name)
+                {
+                    *c = updated;
+                }
+            }
         }
         _ => return, // Ignore other events (rename, exec, etc.)
     }
@@ -317,6 +404,12 @@ pub(crate) async fn read_docker_cache(
                         image: t.clone(),
                         state: "off".to_string(),
                         status: "Not Found".to_string(),
+                        oom_killed: false,
+                        exit_code: None,
+                        restart_count: 0,
+                        compose_project: None,
+                        compose_service: None,
+                        health_status: None,
                     });
                 }
             }
@@ -554,6 +647,31 @@ async fn poll_container_stats(
                 })
                 .unwrap_or((0, 0));
 
+            let (block_read, block_write) = stats
+                .blkio_stats
+                .as_ref()
+                .and_then(|blkio| blkio.io_service_bytes_recursive.as_ref())
+                .map(|entries| {
+                    entries.iter().fold((0u64, 0u64), |(read, write), entry| {
+                        if entry
+                            .op
+                            .as_deref()
+                            .is_some_and(|op| op.eq_ignore_ascii_case("read"))
+                        {
+                            (read.saturating_add(entry.value.unwrap_or(0)), write)
+                        } else if entry
+                            .op
+                            .as_deref()
+                            .is_some_and(|op| op.eq_ignore_ascii_case("write"))
+                        {
+                            (read, write.saturating_add(entry.value.unwrap_or(0)))
+                        } else {
+                            (read, write)
+                        }
+                    })
+                })
+                .unwrap_or((0, 0));
+
             Some(DockerContainerStats {
                 container_name: name,
                 cpu_percent,
@@ -561,6 +679,8 @@ async fn poll_container_stats(
                 memory_limit_mb: mem_limit_mb,
                 net_rx_bytes: net_rx,
                 net_tx_bytes: net_tx,
+                block_read_bytes: block_read,
+                block_write_bytes: block_write,
             })
         }
     });

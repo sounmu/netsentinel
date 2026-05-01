@@ -148,6 +148,7 @@ export const translations = {
       cpuAlert: "CPU Alert",
       memoryAlert: "Memory Alert",
       diskAlert: "Disk Alert",
+      dockerAlert: "Docker Alert",
       loadAlert: "Load Alert",
       networkAlert: "Network Alert",
       temperatureAlert: "Temperature Alert",
@@ -155,6 +156,7 @@ export const translations = {
       cpu: "CPU",
       memory: "Memory",
       disk: "Disk",
+      docker: "Docker",
       load: "Load",
       network: "Network",
       temperature: "Temperature",
@@ -194,10 +196,13 @@ export const translations = {
         using: "Using global",
         overridden: "Overridden",
         clearSelection: "Clear",
+        on: "on",
+        off: "off",
       },
       preview: {
         sentence:
           "{metric} above {threshold}{unit} sustained {sustained}s · re-alert after {cooldown}s",
+        docker: "{metric} fires when a container leaves running state · re-alert after {cooldown}s",
         sentenceDisabled: "{metric} alerts disabled",
       },
       history: {
@@ -252,6 +257,10 @@ export const translations = {
     // DockerGrid
     dockerGrid: {
       noContainers: "No running containers",
+      standalone: "Standalone",
+      total: "{count} containers",
+      running: "{count} running",
+      attention: "{count} need attention",
     },
     // CpuCoreGrid
     cpuCores: {
@@ -553,6 +562,7 @@ export const translations = {
       cpuAlert: "CPU 알람",
       memoryAlert: "메모리 알람",
       diskAlert: "디스크 알람",
+      dockerAlert: "Docker 알람",
       loadAlert: "Load 알람",
       networkAlert: "네트워크 알람",
       temperatureAlert: "온도 알람",
@@ -560,6 +570,7 @@ export const translations = {
       cpu: "CPU",
       memory: "메모리",
       disk: "디스크",
+      docker: "Docker",
       load: "Load",
       network: "네트워크",
       temperature: "온도",
@@ -600,9 +611,12 @@ export const translations = {
         using: "글로벌 사용",
         overridden: "오버라이드됨",
         clearSelection: "선택 해제",
+        on: "켜짐",
+        off: "꺼짐",
       },
       preview: {
         sentence: "{metric} > {threshold}{unit} · 지속 {sustained}초 · 재알림 {cooldown}초",
+        docker: "{metric}: 컨테이너가 running 상태를 벗어나면 발생 · 재알림 {cooldown}초",
         sentenceDisabled: "{metric} 알람 비활성화됨",
       },
       history: {
@@ -654,6 +668,10 @@ export const translations = {
     },
     dockerGrid: {
       noContainers: "실행 중인 컨테이너 없음",
+      standalone: "Standalone",
+      total: "컨테이너 {count}개",
+      running: "실행 중 {count}개",
+      attention: "주의 {count}개",
     },
     cpuCores: {
       title: "CPU 코어",

@@ -126,6 +126,18 @@ pub enum AlertAction {
         gpu: String,
         current: f32,
     },
+    DockerContainerDown {
+        hostname: String,
+        container: String,
+        state: String,
+        exit_code: Option<i64>,
+        oom_killed: bool,
+        restart_count: u64,
+    },
+    DockerContainerRecovery {
+        hostname: String,
+        container: String,
+    },
 }
 
 impl AlertAction {
@@ -148,6 +160,8 @@ impl AlertAction {
             Self::TemperatureRecovery { .. } => "temperature_recovery",
             Self::GpuOverload { .. } => "gpu_overload",
             Self::GpuRecovery { .. } => "gpu_recovery",
+            Self::DockerContainerDown { .. } => "docker_down",
+            Self::DockerContainerRecovery { .. } => "docker_recovery",
         }
     }
 
@@ -268,6 +282,32 @@ impl AlertAction {
             } => format!(
                 "✅ **[GPU Recovery]** Host `{}` — GPU `{}` returned to {:.1}%.",
                 hostname, gpu, current
+            ),
+            Self::DockerContainerDown {
+                hostname,
+                container,
+                state,
+                exit_code,
+                oom_killed,
+                restart_count,
+            } => {
+                let reason = match (exit_code, oom_killed) {
+                    (Some(code), true) => format!("exit code {code}, OOMKilled"),
+                    (Some(code), false) => format!("exit code {code}"),
+                    (None, true) => "OOMKilled".to_string(),
+                    (None, false) => "no exit code".to_string(),
+                };
+                format!(
+                    "🐳 **[Docker Container Down]** Host `{}` — container `{}` is `{}` ({}, restarts: {}).",
+                    hostname, container, state, reason, restart_count
+                )
+            }
+            Self::DockerContainerRecovery {
+                hostname,
+                container,
+            } => format!(
+                "✅ **[Docker Container Recovery]** Host `{}` — container `{}` is running again.",
+                hostname, container
             ),
         }
     }
@@ -606,6 +646,12 @@ fn compute_status_hash(
     for c in containers {
         c.container_name.hash(&mut hasher);
         c.state.hash(&mut hasher);
+        c.oom_killed.hash(&mut hasher);
+        c.exit_code.hash(&mut hasher);
+        c.restart_count.hash(&mut hasher);
+        c.compose_project.hash(&mut hasher);
+        c.compose_service.hash(&mut hasher);
+        c.health_status.hash(&mut hasher);
     }
     for p in ports {
         p.port.hash(&mut hasher);
@@ -653,6 +699,13 @@ fn collect_alerts(
         &mut actions,
     );
     collect_gpu_alerts(record, hostname, &alert_config.gpu, metrics, &mut actions);
+    collect_docker_alerts(
+        record,
+        hostname,
+        &alert_config.docker,
+        metrics,
+        &mut actions,
+    );
 
     actions
 }
@@ -988,6 +1041,51 @@ fn collect_gpu_alerts(
     }
 }
 
+// ── Docker lifecycle check ──────────────────
+
+fn collect_docker_alerts(
+    record: &HostRecord,
+    hostname: &str,
+    rule: &MetricAlertRule,
+    metrics: &AgentMetrics,
+    actions: &mut Vec<AlertAction>,
+) {
+    if !rule.enabled {
+        return;
+    }
+
+    for container in &metrics.docker_containers {
+        let name = &container.container_name;
+        let is_running = container.state == "running";
+        let was_alerted = record
+            .alert_state
+            .docker_alerted
+            .get(name)
+            .copied()
+            .unwrap_or(false);
+
+        if !is_running {
+            if !was_alerted
+                && cooldown_elapsed(record.alert_state.last_docker_alert, rule.cooldown_secs)
+            {
+                actions.push(AlertAction::DockerContainerDown {
+                    hostname: hostname.to_string(),
+                    container: name.clone(),
+                    state: container.state.clone(),
+                    exit_code: container.exit_code,
+                    oom_killed: container.oom_killed,
+                    restart_count: container.restart_count,
+                });
+            }
+        } else if was_alerted {
+            actions.push(AlertAction::DockerContainerRecovery {
+                hostname: hostname.to_string(),
+                container: name.clone(),
+            });
+        }
+    }
+}
+
 // ──────────────────────────────────────────────
 // Shared utilities
 // ──────────────────────────────────────────────
@@ -1061,6 +1159,16 @@ fn update_alert_state_after_send(record: &mut HostRecord, actions: &[AlertAction
             }
             AlertAction::GpuRecovery { gpu, .. } => {
                 record.alert_state.gpu_alerted.remove(gpu);
+            }
+            AlertAction::DockerContainerDown { container, .. } => {
+                record
+                    .alert_state
+                    .docker_alerted
+                    .insert(container.clone(), true);
+                record.alert_state.last_docker_alert = Some(now);
+            }
+            AlertAction::DockerContainerRecovery { container, .. } => {
+                record.alert_state.docker_alerted.remove(container);
             }
         }
     }
@@ -1200,6 +1308,12 @@ mod tests {
             image: "nginx:latest".to_string(),
             state: "running".to_string(),
             status: "Up 2 hours".to_string(),
+            oom_killed: false,
+            exit_code: None,
+            restart_count: 0,
+            compose_project: None,
+            compose_service: None,
+            health_status: None,
         }];
         let ports = vec![PortStatus {
             port: 80,
@@ -1218,12 +1332,24 @@ mod tests {
             image: "nginx:latest".to_string(),
             state: "running".to_string(),
             status: "Up 2 hours".to_string(),
+            oom_killed: false,
+            exit_code: None,
+            restart_count: 0,
+            compose_project: None,
+            compose_service: None,
+            health_status: None,
         }];
         let exited = vec![DockerContainer {
             container_name: "nginx".to_string(),
             image: "nginx:latest".to_string(),
             state: "exited".to_string(),
             status: "Exited (1) 5 minutes ago".to_string(),
+            oom_killed: false,
+            exit_code: Some(1),
+            restart_count: 0,
+            compose_project: None,
+            compose_service: None,
+            health_status: None,
         }];
         let ports = vec![PortStatus {
             port: 80,
@@ -1964,5 +2090,73 @@ mod tests {
         collect_gpu_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::GpuRecovery { .. }));
+    }
+
+    #[test]
+    fn test_docker_down_alert_includes_exit_details() {
+        use crate::models::agent_metrics::DockerContainer;
+        let record = make_record();
+        let rule = enabled_rule(1.0);
+        let mut metrics = make_metrics(1.0, 10.0, vec![]);
+        metrics.docker_containers = vec![DockerContainer {
+            container_name: "api".into(),
+            image: "api:latest".into(),
+            state: "exited".into(),
+            status: "Exited (137)".into(),
+            oom_killed: true,
+            exit_code: Some(137),
+            restart_count: 3,
+            compose_project: Some("prod".into()),
+            compose_service: Some("api".into()),
+            health_status: None,
+        }];
+        let mut actions = Vec::new();
+        collect_docker_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            AlertAction::DockerContainerDown {
+                container,
+                exit_code,
+                oom_killed,
+                restart_count,
+                ..
+            } => {
+                assert_eq!(container, "api");
+                assert_eq!(*exit_code, Some(137));
+                assert!(*oom_killed);
+                assert_eq!(*restart_count, 3);
+            }
+            _ => panic!("expected DockerContainerDown"),
+        }
+    }
+
+    #[test]
+    fn test_docker_recovery_fires_when_was_down() {
+        use crate::models::agent_metrics::DockerContainer;
+        let mut record = make_record();
+        record.alert_state.docker_alerted.insert("api".into(), true);
+        let rule = enabled_rule(1.0);
+        let mut metrics = make_metrics(1.0, 10.0, vec![]);
+        metrics.docker_containers = vec![DockerContainer {
+            container_name: "api".into(),
+            image: "api:latest".into(),
+            state: "running".into(),
+            status: "Up".into(),
+            oom_killed: false,
+            exit_code: Some(0),
+            restart_count: 1,
+            compose_project: None,
+            compose_service: None,
+            health_status: Some("healthy".into()),
+        }];
+        let mut actions = Vec::new();
+        collect_docker_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+
+        assert_eq!(actions.len(), 1);
+        assert!(matches!(
+            actions[0],
+            AlertAction::DockerContainerRecovery { .. }
+        ));
     }
 }

@@ -192,6 +192,8 @@ pub struct AlertConfig {
     pub temperature: MetricAlertRule,
     /// GPU usage rule — applied to every GPU device.
     pub gpu: MetricAlertRule,
+    /// Docker lifecycle rule — fires when a reported container leaves running state.
+    pub docker: MetricAlertRule,
     pub load_threshold: f64,
     pub load_cooldown_secs: u64,
 }
@@ -239,6 +241,12 @@ impl Default for AlertConfig {
                 enabled: false,
                 threshold: 90.0,
                 sustained_secs: 5 * 60,
+                cooldown_secs: 300,
+            },
+            docker: MetricAlertRule {
+                enabled: false,
+                threshold: 1.0,
+                sustained_secs: 0,
                 cooldown_secs: 300,
             },
             load_threshold: 4.0,
@@ -309,6 +317,8 @@ pub struct AlertState {
     pub temperature_alerted: HashMap<String, bool>,
     /// Per-GPU alert state (keyed by GPU name or index)
     pub gpu_alerted: HashMap<String, bool>,
+    /// Per-container Docker lifecycle alert state (keyed by container name)
+    pub docker_alerted: HashMap<String, bool>,
     pub last_offline_alert: Option<Instant>,
     pub last_recovery_alert: Option<Instant>,
     pub last_cpu_alert: Option<Instant>,
@@ -318,6 +328,7 @@ pub struct AlertState {
     pub last_network_alert: Option<Instant>,
     pub last_temperature_alert: Option<Instant>,
     pub last_gpu_alert: Option<Instant>,
+    pub last_docker_alert: Option<Instant>,
     pub port_alerted: HashMap<u16, Instant>,
 }
 
@@ -332,6 +343,7 @@ impl AlertState {
             disk_alerted: HashMap::new(),
             temperature_alerted: HashMap::new(),
             gpu_alerted: HashMap::new(),
+            docker_alerted: HashMap::new(),
             last_offline_alert: None,
             last_recovery_alert: None,
             last_cpu_alert: None,
@@ -341,6 +353,7 @@ impl AlertState {
             last_network_alert: None,
             last_temperature_alert: None,
             last_gpu_alert: None,
+            last_docker_alert: None,
             port_alerted: HashMap::new(),
         }
     }
