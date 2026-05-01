@@ -42,7 +42,7 @@ Not trying to replace:
 - **Efficient agent protocol.** Agents serve gzipped `bincode` over HTTP, which keeps scrape payloads small over tunneled links.
 - **SQLite rollups instead of TimescaleDB.** Raw 10-second metrics are retained briefly, 5-minute rollups are kept longer, and long-range charts query the smaller rollup table.
 - **Real-time dashboard.** SSE pushes status and live metrics; the client batches updates to avoid render storms.
-- **Docker-aware without heavy polling.** The agent uses Docker events for container lifecycle state and polls container stats separately.
+- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, and polls resource stats separately.
 - **Native agents first, Docker agents later.** Native installation gives the most accurate host view. Dockerized agents can be supported as a convenience mode for Linux homelabs.
 
 ---
@@ -68,7 +68,7 @@ The production hub is a **single container**: Axum serves both `/api/*` and the 
 **Data flow:**
 1. Server schedules each registered agent by that host's `scrape_interval_secs` (10 s by default), batch-inserts metrics in a single query
 2. Raw metrics stored in SQLite (3-day retention) + a 5-min rollup table (90-day retention) maintained by an in-process `rollup_worker` running on a 60-second tick. A daily `retention_worker` prunes each time-series table past its window.
-3. Browser loads the static bundle from the same origin as the API, then connects to the SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network rate + cumulative counters, disks, temperatures, and Docker stats for live chart overlay; long-lived streams are cut when the session is revoked
+3. Browser loads the static bundle from the same origin as the API, then connects to the SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network rate + cumulative counters, disks, temperatures, and Docker stats for live chart overlay; `status` includes Docker lifecycle/Compose/health snapshots. Long-lived streams are cut when the session is revoked
 4. REST API with automatic downsampling: ≤6h raw, 6h-14d 5-min rollup, >14d 15-min re-aggregation
 5. Alerts delivered to Discord, Slack, and/or Email channels
 
@@ -354,9 +354,9 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 | Table | Description |
 |---|---|
 | **`metrics`** | Raw scrape rows. 3-day retention. Stores CPU, memory, load, network, disk, process, temperature, GPU, Docker, port data as JSON text columns, plus nullable scalar `rx_bytes_per_sec` / `tx_bytes_per_sec` projections for bandwidth rollups. |
-| **`metrics_5min`** | 5-minute rollup table (`STRICT, WITHOUT ROWID`, PK `(host_key, bucket)`). Populated by `services::rollup_worker` on a 60-second tick via an idempotent UPSERT from `metrics`; includes cumulative network counters and bucket-averaged bandwidth scalar columns. 90-day retention. |
+| **`metrics_5min`** | 5-minute rollup table (`STRICT, WITHOUT ROWID`, PK `(host_key, bucket)`). Populated by `services::rollup_worker` on a 60-second tick via an idempotent UPSERT from `metrics`; includes cumulative network counters, bucket-averaged bandwidth scalar columns, and last-in-bucket JSON snapshots for Docker stats/container state. 90-day retention. |
 | **`hosts`** | Agent registry (scrape interval, thresholds, monitored ports/containers, system info: OS/CPU/RAM/IP). `ports` / `containers` stored as JSON arrays in TEXT columns. |
-| **`alert_configs`** | Alert rules; `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
+| **`alert_configs`** | Alert rules (`cpu`, `memory`, `disk`, `load`, `network`, `temperature`, `gpu`, `docker`); `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
 | **`notification_channels`** | Alert delivery targets (Discord, Slack, Microsoft Teams, Telegram, generic webhook, Email SMTP). Config stored as JSON text. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSON text). |
 | **`users`** | Local username/password users with optional Google OAuth linkage keyed by `(oauth_provider, oauth_subject)`. Stores verified email/profile fields, role, `password_changed_at`, and `tokens_revoked_at` for JWT revocation. |
