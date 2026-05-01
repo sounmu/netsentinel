@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import useSWR from "swr";
 import {
   LayoutDashboard,
   Settings,
   Bell,
   Globe,
   Shield,
+  Link2,
   Sun,
   Moon,
   LogOut,
@@ -17,6 +19,14 @@ import {
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useTheme } from "@/app/theme/ThemeContext";
 import { useAuth } from "@/app/auth/AuthContext";
+import {
+  ApiError,
+  AuthStatus,
+  getAuthStatusUrl,
+  publicFetcher,
+  startGoogleOAuth,
+} from "@/app/lib/api";
+import { toast } from "sonner";
 
 const HIDDEN_PATHS = ["/login", "/setup"];
 
@@ -27,6 +37,12 @@ export default function Navbar() {
   const { theme, toggleTheme } = useTheme();
   const { user, logout } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [linkingGoogle, setLinkingGoogle] = useState(false);
+  const { data: authStatus } = useSWR<AuthStatus>(
+    user ? getAuthStatusUrl() : null,
+    publicFetcher,
+    { revalidateOnFocus: false, dedupingInterval: 60_000 },
+  );
 
   // Hide navbar on login/setup pages (after all hooks)
   if (HIDDEN_PATHS.includes(pathname)) return null;
@@ -38,6 +54,24 @@ export default function Navbar() {
     { label: t.sidebar.monitors, icon: <Globe size={15} />, href: "/monitors" },
     { label: t.sidebar.status, icon: <Shield size={15} />, href: "/status" },
   ];
+  const canLinkGoogle = Boolean(user && authStatus?.oauth_enabled);
+
+  const handleLinkGoogle = async () => {
+    setLinkingGoogle(true);
+    try {
+      const response = await startGoogleOAuth();
+      window.location.assign(response.authorize_url);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 429) {
+        toast.error(t.auth.loginError.rateLimit);
+      } else if (err instanceof TypeError) {
+        toast.error(t.auth.loginError.network);
+      } else {
+        toast.error(t.auth.loginError.oauth);
+      }
+      setLinkingGoogle(false);
+    }
+  };
 
   return (
     <nav className="navbar" aria-label="Main navigation">
@@ -87,6 +121,21 @@ export default function Navbar() {
         >
           {locale === "en" ? "KO" : "EN"}
         </button>
+        {canLinkGoogle && (
+          <button
+            className="navbar-icon-btn"
+            onClick={handleLinkGoogle}
+            disabled={linkingGoogle}
+            title={t.auth.linkGoogle}
+            aria-label={t.auth.linkGoogle}
+            style={{
+              opacity: linkingGoogle ? 0.7 : 1,
+              cursor: linkingGoogle ? "not-allowed" : "pointer",
+            }}
+          >
+            <Link2 size={14} />
+          </button>
+        )}
         {user && (
           <button
             className="navbar-icon-btn"
@@ -140,6 +189,16 @@ export default function Navbar() {
               >
                 {locale === "en" ? "KO" : "EN"}
               </button>
+              {canLinkGoogle && (
+                <button
+                  className="navbar-icon-btn"
+                  onClick={handleLinkGoogle}
+                  disabled={linkingGoogle}
+                  aria-label={t.auth.linkGoogle}
+                >
+                  <Link2 size={14} />
+                </button>
+              )}
               {user && (
                 <button className="navbar-icon-btn" onClick={logout} aria-label="Logout">
                   <LogOut size={14} />
