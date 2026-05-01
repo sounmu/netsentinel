@@ -106,7 +106,7 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
                 rx_bytes_per_sec, tx_bytes_per_sec,
                 CAST(json_extract(networks, '$.total_rx_bytes') AS INTEGER) AS rx_total,
                 CAST(json_extract(networks, '$.total_tx_bytes') AS INTEGER) AS tx_total,
-                disks, temperatures, gpus, docker_stats,
+                disks, temperatures, gpus, docker_stats, docker_containers,
                 ROW_NUMBER() OVER (PARTITION BY host_key
                                    ORDER BY timestamp DESC, id DESC) AS rn
             FROM metrics
@@ -119,7 +119,7 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             is_online, sample_count,
             total_rx_bytes, total_tx_bytes,
             avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
-            disks, temperatures, gpus, docker_stats
+            disks, temperatures, gpus, docker_stats, docker_containers
         )
         SELECT
             host_key,
@@ -138,7 +138,8 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             MAX(CASE WHEN rn = 1 THEN disks END)        AS disks,
             MAX(CASE WHEN rn = 1 THEN temperatures END) AS temperatures,
             MAX(CASE WHEN rn = 1 THEN gpus END)         AS gpus,
-            MAX(CASE WHEN rn = 1 THEN docker_stats END) AS docker_stats
+            MAX(CASE WHEN rn = 1 THEN docker_stats END) AS docker_stats,
+            MAX(CASE WHEN rn = 1 THEN docker_containers END) AS docker_containers
         FROM tagged
         GROUP BY host_key
         ON CONFLICT (host_key, bucket) DO UPDATE SET
@@ -156,7 +157,8 @@ async fn rollup_bucket(pool: &DbPool, bucket_start: i64) -> Result<u64, sqlx::Er
             disks                = excluded.disks,
             temperatures         = excluded.temperatures,
             gpus                 = excluded.gpus,
-            docker_stats         = excluded.docker_stats
+            docker_stats         = excluded.docker_stats,
+            docker_containers    = excluded.docker_containers
         "#,
     )
     .bind(bucket_start)

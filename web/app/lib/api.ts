@@ -297,7 +297,8 @@ export type MetricType =
   | "load"
   | "network"
   | "temperature"
-  | "gpu";
+  | "gpu"
+  | "docker";
 
 export interface AlertConfigRow {
   id: number;

@@ -15,7 +15,7 @@ interface Props {
   onEdit: (host: HostSummary, metric: MetricPrefix) => void;
 }
 
-const METRICS: readonly MetricPrefix[] = ["cpu", "memory", "disk"] as const;
+const METRICS: readonly MetricPrefix[] = ["cpu", "memory", "disk", "docker"] as const;
 
 export function RulesMatrix({ hosts, globalConfigs, selected, onToggle, onEdit }: Props) {
   const { t } = useI18n();
@@ -28,6 +28,7 @@ export function RulesMatrix({ hosts, globalConfigs, selected, onToggle, onEdit }
     cpu: t.alerts.cpu,
     memory: t.alerts.memory,
     disk: t.alerts.disk,
+    docker: t.alerts.docker,
   };
 
   return (
@@ -113,6 +114,7 @@ function MatrixRow({
   onToggle: (hostKey: string, checked: boolean) => void;
   onEdit: (host: HostSummary, metric: MetricPrefix) => void;
 }) {
+  const { t } = useI18n();
   const { data: hostConfigs } = useSWR<AlertConfigRow[]>(
     getHostAlertConfigsUrl(host.host_key),
     fetcher,
@@ -140,6 +142,7 @@ function MatrixRow({
           <MatrixCell
             key={metric}
             cell={cell}
+            value={formatCellValue(cell, metric, t.alerts.rules.on, t.alerts.rules.off)}
             onClick={() => onEdit(host, metric)}
             aria-label={`Edit ${metric} rule for ${host.display_name}`}
           />
@@ -151,10 +154,12 @@ function MatrixRow({
 
 function MatrixCell({
   cell,
+  value,
   onClick,
   "aria-label": ariaLabel,
 }: {
   cell: ResolvedCell | null;
+  value: string;
   onClick: () => void;
   "aria-label": string;
 }) {
@@ -177,10 +182,21 @@ function MatrixCell({
   return (
     <td className={className}>
       <button type="button" onClick={onClick} aria-label={ariaLabel}>
-        {cell.enabled ? `${cell.threshold}%` : "off"}
+        {value}
       </button>
     </td>
   );
+}
+
+function formatCellValue(
+  cell: ResolvedCell | null,
+  metric: MetricPrefix,
+  onLabel: string,
+  offLabel: string,
+): string {
+  if (!cell) return "—";
+  if (!cell.enabled) return offLabel;
+  return metric === "docker" ? onLabel : `${cell.threshold}%`;
 }
 
 function MatrixMobileItem({
@@ -206,6 +222,7 @@ function MatrixMobileItem({
     cpu: t.alerts.cpu,
     memory: t.alerts.memory,
     disk: t.alerts.disk,
+    docker: t.alerts.docker,
   };
   return (
     <div className="alerts-matrix-mobile__item" role="listitem">
@@ -242,7 +259,7 @@ function MatrixMobileItem({
             >
               <span className="alerts-matrix-mobile__cell-label">{metricLabels[metric]}</span>
               <span className="alerts-matrix-mobile__cell-value">
-                {cell === null ? "—" : cell.enabled ? `${cell.threshold}%` : "off"}
+                {formatCellValue(cell, metric, t.alerts.rules.on, t.alerts.rules.off)}
               </span>
             </button>
           );

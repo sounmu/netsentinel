@@ -232,6 +232,9 @@ fn threshold_bounds(mt: MetricType) -> (f64, f64, &'static str) {
         // Network in bytes/sec — 10 Gbps upper bound.
         MetricType::Network => (0.0, 10_000_000_000.0, " B/s"),
         MetricType::Temperature => (-20.0, 120.0, "°C"),
+        // Docker lifecycle rules use `enabled` + cooldown; keep threshold
+        // accepted for schema consistency with the generic alert_configs row.
+        MetricType::Docker => (0.0, 100.0, ""),
     }
 }
 

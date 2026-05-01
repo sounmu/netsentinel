@@ -1,6 +1,7 @@
 "use client";
 
 import { DockerContainer, DockerContainerStats } from "@/app/types/metrics";
+import { useMemo } from "react";
 import { Box, Cpu } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { formatBytes } from "@/app/lib/formatters";
@@ -12,6 +13,33 @@ interface DockerGridProps {
 
 export default function DockerGrid({ containers, stats }: DockerGridProps) {
   const { t } = useI18n();
+  const statsByName = useMemo(() => {
+    const map = new Map<string, DockerContainerStats>();
+    for (const stat of stats ?? []) map.set(stat.container_name, stat);
+    return map;
+  }, [stats]);
+  const groups = useMemo(() => {
+    const map = new Map<string, DockerContainer[]>();
+    for (const container of containers) {
+      const key = container.compose_project || t.dockerGrid.standalone;
+      const group = map.get(key);
+      if (group) group.push(container);
+      else map.set(key, [container]);
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [containers, t.dockerGrid.standalone]);
+  const summary = useMemo(() => {
+    let running = 0;
+    let attention = 0;
+    for (const container of containers) {
+      const unhealthy = container.health_status === "unhealthy";
+      const stopped = container.state !== "running";
+      if (!stopped) running += 1;
+      if (stopped || unhealthy || container.oom_killed) attention += 1;
+    }
+    return { total: containers.length, running, attention };
+  }, [containers]);
+
   if (containers.length === 0) {
     return (
       <div
@@ -29,16 +57,50 @@ export default function DockerGrid({ containers, stats }: DockerGridProps) {
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
-        gap: 10,
-      }}
-    >
-      {containers.map((c) => {
+    <div style={{ display: "grid", gap: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 8,
+          fontSize: 11,
+          color: "var(--text-muted)",
+        }}
+      >
+        <span>{t.dockerGrid.total.replace("{count}", String(summary.total))}</span>
+        <span>{t.dockerGrid.running.replace("{count}", String(summary.running))}</span>
+        <span
+          style={{
+            color: summary.attention > 0 ? "var(--accent-red)" : "var(--text-muted)",
+            fontWeight: summary.attention > 0 ? 700 : 500,
+          }}
+        >
+          {t.dockerGrid.attention.replace("{count}", String(summary.attention))}
+        </span>
+      </div>
+      {groups.map(([groupName, groupContainers]) => (
+        <section key={groupName} style={{ display: "grid", gap: 8 }}>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: "var(--text-secondary)",
+            }}
+          >
+            {groupName}
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+              gap: 10,
+            }}
+          >
+      {groupContainers.map((c) => {
         const isRunning = c.state === "running";
-        const stat = stats?.find((s) => s.container_name === c.container_name);
+        const stat = statsByName.get(c.container_name);
+        const health = c.health_status;
+        const showLifecycle = c.oom_killed || c.exit_code !== null && c.exit_code !== undefined || c.restart_count > 0 || health;
         return (
           <div
             key={c.container_name}
@@ -140,6 +202,34 @@ export default function DockerGrid({ containers, stats }: DockerGridProps) {
                 {c.status}
               </span>
             </div>
+            {showLifecycle && (
+              <div
+                style={{
+                  marginTop: 8,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                }}
+              >
+                {health && (
+                  <span title="health">{health}</span>
+                )}
+                {c.exit_code !== null && c.exit_code !== undefined && (
+                  <span>exit {c.exit_code}</span>
+                )}
+                {c.oom_killed && (
+                  <span style={{ color: "var(--accent-red)", fontWeight: 700 }}>OOM</span>
+                )}
+                {c.restart_count > 0 && (
+                  <span>restarts {c.restart_count}</span>
+                )}
+                {c.compose_service && (
+                  <span>{c.compose_service}</span>
+                )}
+              </div>
+            )}
             {stat && isRunning && (
               <div
                 style={{
@@ -176,11 +266,26 @@ export default function DockerGrid({ containers, stats }: DockerGridProps) {
                     {formatBytes(stat.net_tx_bytes)}
                   </span>
                 </span>
+                {(stat.block_read_bytes > 0 || stat.block_write_bytes > 0) && (
+                  <span>
+                    IO{" "}
+                    <span style={{ color: "var(--accent-green)" }}>
+                      {formatBytes(stat.block_read_bytes ?? 0)}
+                    </span>
+                    {" / "}
+                    <span style={{ color: "var(--accent-blue)" }}>
+                      {formatBytes(stat.block_write_bytes ?? 0)}
+                    </span>
+                  </span>
+                )}
               </div>
             )}
           </div>
         );
       })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

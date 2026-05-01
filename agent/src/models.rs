@@ -117,6 +117,12 @@ pub(crate) struct DockerContainer {
     pub image: String,
     pub state: String,
     pub status: String,
+    pub oom_killed: bool,
+    pub exit_code: Option<i64>,
+    pub restart_count: u64,
+    pub compose_project: Option<String>,
+    pub compose_service: Option<String>,
+    pub health_status: Option<String>,
 }
 
 /// Per-interface network traffic (cumulative bytes).
@@ -136,6 +142,8 @@ pub(crate) struct DockerContainerStats {
     pub memory_limit_mb: u64,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
+    pub block_read_bytes: u64,
+    pub block_write_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -254,6 +262,12 @@ mod tests {
             image: "nginx:latest".into(),
             state: "running".into(),
             status: "Up 2 hours".into(),
+            oom_killed: false,
+            exit_code: None,
+            restart_count: 0,
+            compose_project: None,
+            compose_service: None,
+            health_status: None,
         };
         let cloned = container.clone();
         assert_eq!(cloned.container_name, "nginx");

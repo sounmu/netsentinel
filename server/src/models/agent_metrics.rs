@@ -154,7 +154,7 @@ struct LegacyAgentMetrics {
     #[serde(default)]
     load_average: LoadAverage,
     #[serde(rename = "docker", default)]
-    docker_containers: Vec<DockerContainer>,
+    docker_containers: Vec<LegacyDockerContainer>,
     #[serde(default)]
     ports: Vec<PortStatus>,
     #[serde(default)]
@@ -164,7 +164,49 @@ struct LegacyAgentMetrics {
     #[serde(default)]
     network_interfaces: Vec<NetworkInterfaceInfo>,
     #[serde(default)]
-    docker_stats: Vec<DockerContainerStats>,
+    docker_stats: Vec<LegacyDockerContainerStats>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct LegacyDockerAgentMetrics {
+    hostname: String,
+    timestamp: String,
+    is_online: bool,
+    system: SystemMetrics,
+    #[serde(default)]
+    network: NetworkTotal,
+    #[serde(default)]
+    load_average: LoadAverage,
+    #[serde(rename = "docker", default)]
+    docker_containers: Vec<LegacyDockerContainer>,
+    #[serde(default)]
+    ports: Vec<PortStatus>,
+    #[serde(default)]
+    agent_version: String,
+    #[serde(default)]
+    cpu_cores: Vec<f32>,
+    #[serde(default)]
+    network_interfaces: Vec<NetworkInterfaceInfo>,
+    #[serde(default)]
+    docker_stats: Vec<LegacyDockerContainerStats>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct LegacyDockerContainer {
+    container_name: String,
+    image: String,
+    state: String,
+    status: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct LegacyDockerContainerStats {
+    container_name: String,
+    cpu_percent: f32,
+    memory_usage_mb: u64,
+    memory_limit_mb: u64,
+    net_rx_bytes: u64,
+    net_tx_bytes: u64,
 }
 
 impl From<LegacyNetworkTotal> for NetworkTotal {
@@ -188,12 +230,79 @@ impl From<LegacyAgentMetrics> for AgentMetrics {
             system: metrics.system,
             network: metrics.network.into(),
             load_average: metrics.load_average,
-            docker_containers: metrics.docker_containers,
+            docker_containers: metrics
+                .docker_containers
+                .into_iter()
+                .map(DockerContainer::from)
+                .collect(),
             ports: metrics.ports,
             agent_version: metrics.agent_version,
             cpu_cores: metrics.cpu_cores,
             network_interfaces: metrics.network_interfaces,
-            docker_stats: metrics.docker_stats,
+            docker_stats: metrics
+                .docker_stats
+                .into_iter()
+                .map(DockerContainerStats::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<LegacyDockerAgentMetrics> for AgentMetrics {
+    fn from(metrics: LegacyDockerAgentMetrics) -> Self {
+        Self {
+            hostname: metrics.hostname,
+            timestamp: metrics.timestamp,
+            is_online: metrics.is_online,
+            system: metrics.system,
+            network: metrics.network,
+            load_average: metrics.load_average,
+            docker_containers: metrics
+                .docker_containers
+                .into_iter()
+                .map(DockerContainer::from)
+                .collect(),
+            ports: metrics.ports,
+            agent_version: metrics.agent_version,
+            cpu_cores: metrics.cpu_cores,
+            network_interfaces: metrics.network_interfaces,
+            docker_stats: metrics
+                .docker_stats
+                .into_iter()
+                .map(DockerContainerStats::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<LegacyDockerContainer> for DockerContainer {
+    fn from(container: LegacyDockerContainer) -> Self {
+        Self {
+            container_name: container.container_name,
+            image: container.image,
+            state: container.state,
+            status: container.status,
+            oom_killed: false,
+            exit_code: None,
+            restart_count: 0,
+            compose_project: None,
+            compose_service: None,
+            health_status: None,
+        }
+    }
+}
+
+impl From<LegacyDockerContainerStats> for DockerContainerStats {
+    fn from(stats: LegacyDockerContainerStats) -> Self {
+        Self {
+            container_name: stats.container_name,
+            cpu_percent: stats.cpu_percent,
+            memory_usage_mb: stats.memory_usage_mb,
+            memory_limit_mb: stats.memory_limit_mb,
+            net_rx_bytes: stats.net_rx_bytes,
+            net_tx_bytes: stats.net_tx_bytes,
+            block_read_bytes: 0,
+            block_write_bytes: 0,
         }
     }
 }
@@ -212,12 +321,18 @@ pub fn deserialize_agent_metrics(bytes: &[u8]) -> Result<AgentMetrics, bincode::
             metrics.network.rate_fields_present = true;
             Ok(metrics)
         }
-        Err(new_err) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
-            Ok(metrics) => {
-                crate::services::metrics_service::record_legacy_fallback_used();
+        Err(new_err) => match bincode_options().deserialize::<LegacyDockerAgentMetrics>(bytes) {
+            Ok(mut metrics) => {
+                metrics.network.rate_fields_present = true;
                 Ok(metrics.into())
             }
-            Err(_) => Err(new_err),
+            Err(_) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
+                Ok(metrics) => {
+                    crate::services::metrics_service::record_legacy_fallback_used();
+                    Ok(metrics.into())
+                }
+                Err(_) => Err(new_err),
+            },
         },
     }
 }
@@ -313,6 +428,51 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_agent_metrics_accepts_legacy_docker_payload() {
+        let legacy = LegacyDockerAgentMetrics {
+            hostname: "docker-box".into(),
+            timestamp: "2026-05-01T00:00:00Z".into(),
+            is_online: true,
+            system: system_metrics(),
+            network: NetworkTotal {
+                total_rx_bytes: 100,
+                total_tx_bytes: 200,
+                rx_bytes_per_sec: 1.0,
+                tx_bytes_per_sec: 2.0,
+                rate_fields_present: false,
+            },
+            load_average: LoadAverage::default(),
+            docker_containers: vec![LegacyDockerContainer {
+                container_name: "app".into(),
+                image: "app:latest".into(),
+                state: "running".into(),
+                status: "Up".into(),
+            }],
+            ports: vec![],
+            agent_version: "0.5.0".into(),
+            cpu_cores: vec![],
+            network_interfaces: vec![],
+            docker_stats: vec![LegacyDockerContainerStats {
+                container_name: "app".into(),
+                cpu_percent: 1.0,
+                memory_usage_mb: 64,
+                memory_limit_mb: 512,
+                net_rx_bytes: 10,
+                net_tx_bytes: 20,
+            }],
+        };
+
+        let bytes = bincode_options().serialize(&legacy).unwrap();
+        let decoded = deserialize_agent_metrics(&bytes).unwrap();
+
+        assert!(decoded.network.rate_fields_present);
+        assert_eq!(decoded.docker_containers[0].container_name, "app");
+        assert!(!decoded.docker_containers[0].oom_killed);
+        assert_eq!(decoded.docker_stats[0].block_read_bytes, 0);
+        assert_eq!(decoded.docker_stats[0].block_write_bytes, 0);
+    }
+
+    #[test]
     fn deserialize_agent_metrics_rejects_oversized_payload() {
         let bytes = vec![0_u8; (MAX_AGENT_PAYLOAD_BYTES as usize) + 1];
         assert!(deserialize_agent_metrics(&bytes).is_err());
@@ -334,6 +494,18 @@ pub struct DockerContainer {
     pub image: String,
     pub state: String,  // "running", "exited", "dead", etc.
     pub status: String, // human-readable status string, e.g. "Up 2 hours"
+    #[serde(default)]
+    pub oom_killed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i64>,
+    #[serde(default)]
+    pub restart_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose_service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health_status: Option<String>,
 }
 
 /// Per-interface network traffic (cumulative bytes)
@@ -353,6 +525,10 @@ pub struct DockerContainerStats {
     pub memory_limit_mb: u64,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
+    #[serde(default)]
+    pub block_read_bytes: u64,
+    #[serde(default)]
+    pub block_write_bytes: u64,
 }
 
 /// Local port open/closed status
