@@ -105,21 +105,6 @@ pub async fn find_by_oauth_subject(
     .await
 }
 
-pub async fn find_by_email(pool: &DbPool, email: &str) -> Result<Option<UserRow>, sqlx::Error> {
-    sqlx::query_as::<_, UserRow>(
-        r#"
-        SELECT id, username, password_hash, oauth_provider, oauth_subject,
-               email, display_name, picture_url,
-               role, created_at, updated_at
-        FROM users
-        WHERE lower(email) = lower(?1)
-        "#,
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await
-}
-
 pub async fn create_user<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
     executor: E,
     username: &str,

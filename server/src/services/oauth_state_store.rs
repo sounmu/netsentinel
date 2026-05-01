@@ -14,6 +14,7 @@ pub struct PendingOAuthState {
     pub code_verifier: String,
     pub nonce: String,
     pub post_login_redirect: String,
+    pub link_user_id: Option<i32>,
     created_at: Instant,
 }
 
@@ -35,12 +36,14 @@ impl OAuthStateStore {
         code_verifier: String,
         nonce: String,
         post_login_redirect: String,
+        link_user_id: Option<i32>,
     ) -> String {
         let state = random_url_token();
         let pending = PendingOAuthState {
             code_verifier,
             nonce,
             post_login_redirect,
+            link_user_id,
             created_at: Instant::now(),
         };
         let mut guard = self.pending.write().unwrap_or_else(|e| e.into_inner());
@@ -77,7 +80,12 @@ mod tests {
     #[test]
     fn consume_is_single_use() {
         let store = OAuthStateStore::new();
-        let state = store.issue("verifier".to_string(), "nonce".to_string(), "/".to_string());
+        let state = store.issue(
+            "verifier".to_string(),
+            "nonce".to_string(),
+            "/".to_string(),
+            None,
+        );
 
         assert!(store.consume(&state).is_some());
         assert!(store.consume(&state).is_none());

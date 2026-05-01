@@ -51,12 +51,31 @@ impl GoogleOAuthConfig {
         if any_configured
             && (client_id.is_empty() || client_secret.is_empty() || redirect_uri.is_empty())
         {
-            anyhow::bail!(
-                "Google OAuth is partially configured. Set GOOGLE_OAUTH_CLIENT_ID, \
-                 GOOGLE_OAUTH_CLIENT_SECRET, and GOOGLE_OAUTH_REDIRECT_URI together, \
-                 or unset all three to use local login only."
+            tracing::warn!(
+                "Google OAuth is partially configured; disabling Google linked login. \
+                 Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, and \
+                 GOOGLE_OAUTH_REDIRECT_URI together."
             );
         }
+        let redirect_origin = if any_configured
+            && !client_id.is_empty()
+            && !client_secret.is_empty()
+            && !redirect_uri.is_empty()
+        {
+            match origin_from_url(&redirect_uri) {
+                Some(origin) => Some(origin),
+                None => {
+                    tracing::warn!(
+                        redirect_uri,
+                        "Google OAuth redirect URI is invalid; disabling Google linked login"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let enabled = redirect_origin.is_some();
         let admin_emails = std::env::var("OAUTH_ADMIN_EMAILS")
             .unwrap_or_default()
             .split(',')
@@ -69,7 +88,7 @@ impl GoogleOAuthConfig {
             .map(|origin| origin.trim().trim_end_matches('/').to_string())
             .filter(|origin| !origin.is_empty())
             .collect();
-        if let Some(origin) = origin_from_url(&redirect_uri) {
+        if let Some(origin) = redirect_origin {
             allowed_post_login_origins.insert(origin);
         }
         let bootstrap_first_login_as_admin = std::env::var("OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN")
@@ -83,7 +102,7 @@ impl GoogleOAuthConfig {
             .unwrap_or(true);
 
         Ok(Self {
-            enabled: any_configured,
+            enabled,
             client_id,
             client_secret,
             redirect_uri,
@@ -93,8 +112,8 @@ impl GoogleOAuthConfig {
         })
     }
 
-    pub fn is_admin_email(&self, email: &str) -> bool {
-        self.admin_emails.contains(&email.to_ascii_lowercase())
+    pub fn is_bootstrap_email_allowed(&self, email: &str) -> bool {
+        self.admin_emails.is_empty() || self.admin_emails.contains(&email.to_ascii_lowercase())
     }
 
     pub fn post_login_redirect_for_origin(&self, origin: Option<&str>) -> String {
@@ -116,11 +135,17 @@ pub fn build_google_authorize_url(
     config: &GoogleOAuthConfig,
     state_store: &OAuthStateStore,
     post_login_redirect: String,
+    link_user_id: Option<i32>,
 ) -> Result<OAuthAuthorize, AppError> {
     let code_verifier = random_url_token();
     let code_challenge = pkce_s256(&code_verifier);
     let nonce = random_url_token();
-    let state = state_store.issue(code_verifier, nonce.clone(), post_login_redirect);
+    let state = state_store.issue(
+        code_verifier,
+        nonce.clone(),
+        post_login_redirect,
+        link_user_id,
+    );
 
     let mut url = Url::parse(GOOGLE_AUTH_URL)
         .map_err(|e| AppError::Internal(format!("Invalid Google auth URL: {e}")))?;
@@ -308,7 +333,7 @@ mod tests {
         };
         let store = OAuthStateStore::new();
 
-        let auth = build_google_authorize_url(&config, &store, "/".to_string()).unwrap();
+        let auth = build_google_authorize_url(&config, &store, "/".to_string(), None).unwrap();
         let url = Url::parse(&auth.authorize_url).unwrap();
         let query: HashSet<(String, String)> = url.query_pairs().into_owned().collect();
 

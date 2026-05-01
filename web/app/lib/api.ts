@@ -602,6 +602,7 @@ export const setupAdmin = async (username: string, password: string): Promise<Lo
 export const startGoogleOAuth = async (): Promise<OAuthStartResponse> => {
   const res = await fetch(`${API_BASE}/api/auth/oauth/google/start`, {
     method: "GET",
+    headers: authHeaders(),
     credentials: "include",
   });
   if (!res.ok) {

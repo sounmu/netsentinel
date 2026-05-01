@@ -47,6 +47,10 @@ export default function LoginPage() {
     const error = new URLSearchParams(window.location.search).get("error");
     if (error === "not_allowed") {
       toast.error(t.auth.loginError.notAllowed);
+    } else if (error === "not_linked") {
+      toast.error(t.auth.loginError.notLinked);
+    } else if (error === "oauth_conflict") {
+      toast.error(t.auth.loginError.oauthConflict);
     } else if (error === "rate_limited") {
       toast.error(t.auth.loginError.rateLimit);
     } else if (error === "oauth") {
