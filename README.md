@@ -240,7 +240,7 @@ cargo run
 | `GOOGLE_OAUTH_CLIENT_ID` | No | — | Optional Google OAuth web-client id. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | No | — | Optional Google OAuth web-client secret. Server-side only. |
 | `GOOGLE_OAUTH_REDIRECT_URI` | No | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. Required only when Google OAuth is enabled. |
-| `OAUTH_ADMIN_EMAILS` | No | empty | Comma-separated Google email allowlist. Emails are lowercased before comparison. Matching existing local users can link/sign in by verified email. |
+| `OAUTH_ADMIN_EMAILS` | No | empty | Comma-separated Google email allowlist reserved for Google bootstrap policy. Existing users must start Google linking from an authenticated local session. |
 | `OAUTH_BOOTSTRAP_FIRST_LOGIN_AS_ADMIN` | No | `true` | When Google OAuth is enabled and `users` is empty, the first verified Google login creates the initial admin. |
 | `COOKIE_SECURE` | No | inferred | Refresh cookie `Secure` flag. Unset infers from `GOOGLE_OAUTH_REDIRECT_URI`: `https` uses Secure, `http` omits it for local/LAN testing. |
 | `NETSENTINEL_VERSION` | No | `latest` | Docker image tag for `ghcr.io/sounmu/netsentinel-server`. Pin a release tag such as `v0.4.2` for reproducible installs. |
@@ -292,8 +292,8 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 |---|---|---|
 | `POST` | `/api/auth/login` | Local username/password login **(no auth)** |
 | `POST` | `/api/auth/setup` | Create initial local admin **(no auth, first run only)** |
-| `GET` | `/api/auth/oauth/google/start` | Start Google OAuth with state + PKCE **(no auth)** |
-| `GET` | `/api/auth/oauth/google/callback` | Google OAuth callback **(no auth)** |
+| `GET` | `/api/auth/oauth/google/start` | Start Google OAuth with state + PKCE. If called with a valid user JWT, the state is marked for account linking **(no auth required for sign-in start)** |
+| `GET` | `/api/auth/oauth/google/callback` | Google OAuth callback. Unlinked Google subjects are rejected unless the state was created from an authenticated local session **(no auth)** |
 | `GET` | `/api/auth/me` | Current user info |
 | `GET` | `/api/auth/status` | Public auth entry points **(no auth)** |
 | `PUT` | `/api/auth/password` | Change or set current user's local password |
