@@ -4,6 +4,8 @@
 > adapted for monitoring dashboard information density.
 >
 > **Seed color:** Blue (#3B82F6) · **Theming:** CSS custom properties in `globals.css`
+>
+> **Implementation note:** the runtime token source of truth is `web/app/globals.css`. It now exposes compatibility aliases for the canonical M3 names used in this document, so both the existing short-form tokens (`corner-sm`, `motion-short3`) and the document-facing names (`corner-small`, `motion-duration-short3`) resolve correctly.
 
 ## ⚠️ Golden Rules — Read Before Any UI Work
 
@@ -31,7 +33,7 @@ This design system follows M3's structure, naming, and principles with these int
 | Area | M3 Default | NetSentinel Adaptation | Rationale |
 |---|---|---|---|
 | Typography scale | Display 57px, Body 16px | Display 40px, Body 14px | Higher information density for metric grids |
-| Typography weight | Display/Headline 400 | Display/Headline 400 (aligned) | — |
+| Typography weight | Display/Headline 400 | Display 400, Headline 700 | Denser hierarchy for monitoring layouts |
 | Card shape | `corner-medium` (12px) | `corner-large` (16px) | Stronger visual grouping in card-heavy layouts |
 | Text input shape | `corner-extra-small` (4px) | `corner-small` (8px) | Visual consistency with card-heavy UI |
 | Breakpoints | 5 tiers (compact → extra-large) | 4 tiers (compact → large) | Dashboard doesn't benefit from large/extra-large split |
@@ -233,38 +235,38 @@ When series exceed available tokens, generate intermediate tones via `color-mix(
 
 ## 2. Typography
 
-M3 type scale using **Inter** (sans-serif) and **JetBrains Mono** (monospace).
+M3 type scale using **IBM Plex Sans KR** (sans-serif) and **IBM Plex Mono** (monospace).
 
-> **Adaptation:** Display and Headline sizes scaled down ~30% from M3 defaults for dashboard information density. Body and Label sizes kept at or near M3 defaults for readability. Font weights follow M3 specification (Display/Headline: 400, Title/Label: 500, Body: 400).
+> **Adaptation:** Display and Headline sizes scaled down ~30% from M3 defaults for dashboard information density. Body and Label sizes kept at or near M3 defaults for readability. Runtime compatibility aliases also expose `--font-inter` and `--font-jetbrains-mono` so older snippets continue to resolve safely.
 
 ### 2.1 Type Scale
 
 ```css
 :root {
   /* Display — hero metric callouts, large numbers */
-  --md-sys-typescale-display-large:  400 2.5rem/3rem var(--font-inter);      /* 40px (M3: 57px) */
-  --md-sys-typescale-display-medium: 400 2rem/2.5rem var(--font-inter);      /* 32px (M3: 45px) */
-  --md-sys-typescale-display-small:  400 1.75rem/2.25rem var(--font-inter);  /* 28px (M3: 36px) */
+  --md-sys-typescale-display-large:  400 2.5rem/3rem var(--font-ibm-plex-sans);      /* 40px (M3: 57px) */
+  --md-sys-typescale-display-medium: 400 2rem/2.5rem var(--font-ibm-plex-sans);      /* 32px (M3: 45px) */
+  --md-sys-typescale-display-small:  400 1.75rem/2.25rem var(--font-ibm-plex-sans);  /* 28px (M3: 36px) */
 
   /* Headline — page titles, section headers */
-  --md-sys-typescale-headline-large:  400 1.5rem/2rem var(--font-inter);     /* 24px (M3: 32px) */
-  --md-sys-typescale-headline-medium: 400 1.375rem/1.75rem var(--font-inter);/* 22px (M3: 28px) */
-  --md-sys-typescale-headline-small:  400 1.25rem/1.625rem var(--font-inter);/* 20px (M3: 24px) */
+  --md-sys-typescale-headline-large:  700 1.5rem/2rem var(--font-ibm-plex-sans);     /* 24px (M3: 32px) */
+  --md-sys-typescale-headline-medium: 700 1.375rem/1.75rem var(--font-ibm-plex-sans);/* 22px (M3: 28px) */
+  --md-sys-typescale-headline-small:  700 1.25rem/1.625rem var(--font-ibm-plex-sans);/* 20px (M3: 24px) */
 
   /* Title — card titles, nav items */
-  --md-sys-typescale-title-large:  500 1.125rem/1.5rem var(--font-inter);    /* 18px (M3: 22px) */
-  --md-sys-typescale-title-medium: 500 1rem/1.375rem var(--font-inter);      /* 16px (M3: 16px) */
-  --md-sys-typescale-title-small:  500 0.875rem/1.25rem var(--font-inter);   /* 14px (M3: 14px) */
+  --md-sys-typescale-title-large:  500 1.125rem/1.5rem var(--font-ibm-plex-sans);    /* 18px (M3: 22px) */
+  --md-sys-typescale-title-medium: 500 1rem/1.375rem var(--font-ibm-plex-sans);      /* 16px (M3: 16px) */
+  --md-sys-typescale-title-small:  500 0.875rem/1.25rem var(--font-ibm-plex-sans);   /* 14px (M3: 14px) */
 
   /* Body — paragraphs, descriptions, table cells */
-  --md-sys-typescale-body-large:  400 1rem/1.5rem var(--font-inter);         /* 16px (M3: 16px) */
-  --md-sys-typescale-body-medium: 400 0.875rem/1.25rem var(--font-inter);    /* 14px (M3: 14px) */
-  --md-sys-typescale-body-small:  400 0.75rem/1rem var(--font-inter);        /* 12px (M3: 12px) */
+  --md-sys-typescale-body-large:  400 1rem/1.5rem var(--font-ibm-plex-sans);         /* 16px (M3: 16px) */
+  --md-sys-typescale-body-medium: 400 0.875rem/1.25rem var(--font-ibm-plex-sans);    /* 14px (M3: 14px) */
+  --md-sys-typescale-body-small:  400 0.75rem/1rem var(--font-ibm-plex-sans);        /* 12px (M3: 12px) */
 
   /* Label — buttons, badges, metadata, table headers */
-  --md-sys-typescale-label-large:  500 0.875rem/1.25rem var(--font-inter);   /* 14px (M3: 14px) */
-  --md-sys-typescale-label-medium: 500 0.75rem/1rem var(--font-inter);       /* 12px (M3: 12px) */
-  --md-sys-typescale-label-small:  500 0.6875rem/1rem var(--font-inter);     /* 11px (M3: 11px) */
+  --md-sys-typescale-label-large:  500 0.875rem/1.25rem var(--font-ibm-plex-sans);   /* 14px (M3: 14px) */
+  --md-sys-typescale-label-medium: 500 0.75rem/1rem var(--font-ibm-plex-sans);       /* 12px (M3: 12px) */
+  --md-sys-typescale-label-small:  500 0.6875rem/1rem var(--font-ibm-plex-sans);     /* 11px (M3: 11px) */
 }
 ```
 
