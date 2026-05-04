@@ -47,11 +47,12 @@ where
     }
 
     let key = metrics_cache_key(host_key, start_ts, end_ts, raw_boundary_secs);
-    if let Some(cached) = cache.get(&key) {
-        return Ok(cached);
-    }
-    let rows = fetch().await?;
-    Ok(cache.insert(key, rows))
+    // Singleflight: concurrent dashboards opening the same wide-range chart
+    // collapse onto a single SQL execution. Followers wait on the leader's
+    // Notify and re-read the cache instead of running the same query in
+    // parallel — the failure mode `cached_or_fetch` was missing before.
+    let arc = cache.get_or_fetch::<_, _, sqlx::Error>(key, fetch).await?;
+    Ok(arc)
 }
 
 /// Optional shared-secret bearer guard for `/metrics`.
