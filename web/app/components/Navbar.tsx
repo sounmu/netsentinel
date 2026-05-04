@@ -8,6 +8,7 @@ import {
   Settings,
   Bell,
   Globe,
+  Box,
   Shield,
   Link2,
   Sun,
@@ -49,6 +50,7 @@ export default function Navbar() {
 
   const navItems = [
     { label: t.sidebar.overview, icon: <LayoutDashboard size={15} />, href: "/", exact: true },
+    { label: t.sidebar.containers, icon: <Box size={15} />, href: "/containers" },
     { label: t.sidebar.agents, icon: <Settings size={15} />, href: "/agents" },
     { label: t.sidebar.alerts, icon: <Bell size={15} />, href: "/alerts" },
     { label: t.sidebar.monitors, icon: <Globe size={15} />, href: "/monitors" },

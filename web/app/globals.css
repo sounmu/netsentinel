@@ -71,6 +71,12 @@
   --md-sys-shape-corner-lg: 16px;
   --md-sys-shape-corner-xl: 28px;
   --md-sys-shape-corner-full: 9999px;
+  /* Canonical M3 aliases used by DESIGN.md */
+  --md-sys-shape-corner-extra-small: var(--md-sys-shape-corner-xs);
+  --md-sys-shape-corner-small: var(--md-sys-shape-corner-sm);
+  --md-sys-shape-corner-medium: var(--md-sys-shape-corner-md);
+  --md-sys-shape-corner-large: var(--md-sys-shape-corner-lg);
+  --md-sys-shape-corner-extra-large: var(--md-sys-shape-corner-xl);
 
   /* Backward-compat aliases */
   --radius-sm: var(--md-sys-shape-corner-sm);
@@ -83,11 +89,31 @@
   --md-sys-motion-short4: 200ms;
   --md-sys-motion-medium1: 250ms;
   --md-sys-motion-medium2: 300ms;
+  --md-sys-motion-medium3: 350ms;
   --md-sys-motion-medium4: 400ms;
+  --md-sys-motion-long1: 450ms;
+  --md-sys-motion-long2: 500ms;
+  /* Canonical M3 aliases used by DESIGN.md */
+  --md-sys-motion-duration-short1: 50ms;
+  --md-sys-motion-duration-short2: var(--md-sys-motion-short2);
+  --md-sys-motion-duration-short3: var(--md-sys-motion-short3);
+  --md-sys-motion-duration-short4: var(--md-sys-motion-short4);
+  --md-sys-motion-duration-medium1: var(--md-sys-motion-medium1);
+  --md-sys-motion-duration-medium2: var(--md-sys-motion-medium2);
+  --md-sys-motion-duration-medium3: var(--md-sys-motion-medium3);
+  --md-sys-motion-duration-medium4: var(--md-sys-motion-medium4);
+  --md-sys-motion-duration-long1: var(--md-sys-motion-long1);
+  --md-sys-motion-duration-long2: var(--md-sys-motion-long2);
 
   --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
-  --md-sys-motion-easing-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
-  --md-sys-motion-easing-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  --md-sys-motion-easing-standard-decelerate: cubic-bezier(0, 0, 0, 1);
+  --md-sys-motion-easing-standard-accelerate: cubic-bezier(0.3, 0, 1, 1);
+  --md-sys-motion-easing-emphasized: var(--md-sys-motion-easing-standard);
+  --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-easing-emphasized-accelerate: cubic-bezier(0.3, 0, 0.8, 0.15);
+  /* Legacy shortened aliases still used across the app */
+  --md-sys-motion-easing-decelerate: var(--md-sys-motion-easing-emphasized-decelerate);
+  --md-sys-motion-easing-accelerate: var(--md-sys-motion-easing-emphasized-accelerate);
 
   /* ── Spacing (M3, 4px grid) ────────────────── */
   --md-sys-spacing-xs: 4px;
@@ -129,6 +155,7 @@
   --md-sys-color-surface-container: #EDEDF4;
   --md-sys-color-surface-container-high: #E7E8EE;
   --md-sys-color-surface-container-highest: #E2E2E9;
+  --md-sys-color-surface-tint: #1B6EF3;
 
   --md-sys-color-outline: #74777F;
   --md-sys-color-outline-variant: #C4C6D0;
@@ -152,6 +179,54 @@
   --md-custom-color-on-info: #FFFFFF;
   --md-custom-color-info-container: #B8EAFF;
   --md-custom-color-on-info-container: #001F2A;
+  /* Chart aliases mirrored from DESIGN.md */
+  --md-chart-1: var(--chart-1);
+  --md-chart-2: var(--chart-2);
+  --md-chart-3: var(--chart-3);
+  --md-chart-4: var(--chart-4);
+  --md-chart-5: var(--chart-5);
+  --md-chart-6: var(--accent-red);
+  --md-chart-7: var(--md-sys-color-secondary);
+  --md-chart-8: #E07B53;
+  --md-chart-extended: color-mix(in srgb, var(--md-sys-color-primary) 60%, var(--md-sys-color-tertiary));
+  /* Font aliases mirrored from DESIGN.md */
+  --font-inter: var(--font-ibm-plex-sans);
+  --font-jetbrains-mono: var(--font-mono);
+  /* Docker grid — light mode refinements */
+  --docker-grid-filter-bg: color-mix(in srgb, var(--md-sys-color-primary-container) 22%, var(--md-sys-color-surface-container-high));
+  --docker-grid-filter-hover-bg: color-mix(in srgb, var(--md-sys-color-primary-container) 34%, var(--md-sys-color-surface-container-high));
+  --docker-grid-empty-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-sys-color-primary-container) 12%, var(--md-sys-color-surface-container-low)) 0%,
+    var(--md-sys-color-surface-container-low) 100%
+  );
+  --docker-grid-group-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-sys-color-primary-container) 18%, var(--md-sys-color-surface-container-low)) 0%,
+    color-mix(in srgb, var(--md-sys-color-tertiary-container) 10%, var(--md-sys-color-surface-container-low)) 100%
+  );
+  --docker-grid-group-chip-bg: color-mix(in srgb, var(--md-sys-color-surface-container-high) 82%, var(--md-sys-color-primary-container));
+  --docker-grid-card-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-sys-color-surface-container-high) 68%, white) 0%,
+    color-mix(in srgb, var(--md-sys-color-primary-container) 10%, var(--md-sys-color-surface-container)) 100%
+  );
+  --docker-grid-card-attention-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-sys-color-error-container) 18%, white) 0%,
+    color-mix(in srgb, var(--md-sys-color-error-container) 32%, var(--md-sys-color-surface-container)) 100%
+  );
+  --docker-grid-tag-bg: color-mix(in srgb, var(--md-sys-color-surface-container-high) 76%, white);
+  --docker-grid-status-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-sys-color-primary-container) 12%, white) 0%,
+    color-mix(in srgb, var(--md-sys-color-surface-container-high) 90%, white) 100%
+  );
+  --docker-grid-status-attention-bg: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--md-sys-color-error-container) 26%, white) 0%,
+    color-mix(in srgb, var(--md-sys-color-error-container) 38%, var(--md-sys-color-surface-container-high)) 100%
+  );
 
   /* ── Typography (M3, dashboard-density) ─── */
   --md-sys-typescale-display-large:  400 2.5rem/3rem var(--font-ibm-plex-sans), -apple-system, BlinkMacSystemFont, sans-serif;
@@ -220,6 +295,16 @@
   --chart-3: hsl(30, 80%, 60%);
   --chart-4: hsl(280, 65%, 65%);
   --chart-5: hsl(340, 75%, 60%);
+  --docker-grid-filter-bg: var(--md-sys-color-surface-container-high);
+  --docker-grid-filter-hover-bg: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, var(--md-sys-color-surface-container-high));
+  --docker-grid-empty-bg: var(--md-sys-color-surface-container-low);
+  --docker-grid-group-bg: var(--md-sys-color-surface-container-low);
+  --docker-grid-group-chip-bg: var(--md-sys-color-surface-container-high);
+  --docker-grid-card-bg: var(--md-sys-color-surface-container);
+  --docker-grid-card-attention-bg: color-mix(in srgb, var(--md-sys-color-error-container) 28%, var(--md-sys-color-surface-container));
+  --docker-grid-tag-bg: var(--md-sys-color-surface-container-high);
+  --docker-grid-status-bg: var(--md-sys-color-surface-container-high);
+  --docker-grid-status-attention-bg: color-mix(in srgb, var(--md-sys-color-error-container) 50%, var(--md-sys-color-surface-container-high));
 
   /* ── Color (M3) — dark theme ─────────────── */
   --md-sys-color-primary: #AAC7FF;
@@ -252,6 +337,7 @@
   --md-sys-color-surface-container: #1E2025;
   --md-sys-color-surface-container-high: #292A2F;
   --md-sys-color-surface-container-highest: #33353A;
+  --md-sys-color-surface-tint: #AAC7FF;
 
   --md-sys-color-outline: #8E9099;
   --md-sys-color-outline-variant: #44474E;
@@ -878,6 +964,210 @@ body {
   border-radius: 9999px;
   transition: width 0.5s var(--md-sys-motion-easing-standard),
               background var(--md-sys-motion-medium2) var(--md-sys-motion-easing-standard);
+}
+
+.docker-grid__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--md-sys-spacing-sm);
+}
+
+.docker-grid__filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--md-sys-shape-corner-full);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--docker-grid-filter-bg);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+  cursor: pointer;
+  transition:
+    background var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard),
+    border-color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
+}
+
+.docker-grid__filter-btn:hover {
+  background: var(--docker-grid-filter-hover-bg);
+  color: var(--md-sys-color-on-surface);
+}
+
+.docker-grid__filter-btn[data-active="true"] {
+  background: var(--md-sys-color-primary-container);
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.docker-grid__filter-btn--running[data-active="true"] {
+  background: var(--md-custom-color-success-container);
+  border-color: var(--md-custom-color-success);
+  color: var(--md-custom-color-on-success-container);
+}
+
+.docker-grid__filter-btn--attention[data-active="true"] {
+  background: var(--md-sys-color-error-container);
+  border-color: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.docker-grid__empty-filter {
+  padding: var(--md-sys-spacing-lg);
+  border-radius: var(--md-sys-shape-corner-lg);
+  background: var(--docker-grid-empty-bg);
+  border: 1px dashed var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-body-small);
+}
+
+.docker-grid__group {
+  display: grid;
+  gap: var(--md-sys-spacing-md);
+  padding: var(--md-sys-spacing-lg);
+  border-radius: var(--md-sys-shape-corner-lg);
+  background: var(--docker-grid-group-bg);
+  border: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.docker-grid__group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--md-sys-spacing-md);
+  flex-wrap: wrap;
+}
+
+.docker-grid__group-meta {
+  display: grid;
+  gap: var(--md-sys-spacing-xs);
+}
+
+.docker-grid__group-title {
+  font: var(--md-sys-typescale-title-small);
+  color: var(--md-sys-color-on-surface);
+}
+
+.docker-grid__group-subtitle {
+  font: var(--md-sys-typescale-label-small);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.docker-grid__group-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--docker-grid-group-chip-bg);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+}
+
+.docker-grid__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--md-sys-spacing-md);
+}
+
+.docker-grid__card {
+  position: relative;
+  display: grid;
+  gap: var(--md-sys-spacing-sm);
+  padding: var(--md-sys-spacing-lg);
+  border-radius: var(--md-sys-shape-corner-large);
+  background: var(--docker-grid-card-bg);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+}
+
+.docker-grid__card:hover {
+  border-color: color-mix(in srgb, var(--md-sys-color-on-surface) 24%, var(--md-sys-color-outline-variant));
+}
+
+.docker-grid__card[data-tone="attention"]::before {
+  content: "";
+  position: absolute;
+  inset: var(--md-sys-spacing-sm) auto var(--md-sys-spacing-sm) 0;
+  width: 3px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: var(--md-sys-color-error);
+}
+
+.docker-grid__card-state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-sm);
+}
+
+.docker-grid__card-state-text {
+  font: var(--md-sys-typescale-label-medium);
+  text-transform: uppercase;
+  color: var(--md-custom-color-success);
+}
+
+.docker-grid__card-state-text[data-tone="attention"] {
+  color: var(--md-sys-color-error);
+}
+
+.docker-grid__card-title-wrap {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.docker-grid__card-title {
+  font: var(--md-sys-typescale-title-medium);
+  color: var(--md-sys-color-on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docker-grid__card-image {
+  font: var(--md-sys-typescale-label-small);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--font-mono), monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docker-grid__card-status {
+  font: var(--md-sys-typescale-body-small);
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docker-grid__tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--md-sys-spacing-sm);
+}
+
+.docker-grid__tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--md-sys-shape-corner-sm);
+  background: transparent;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+  line-height: 1.4;
+}
+
+.docker-grid__tag[data-tone="healthy"] {
+  border-color: color-mix(in srgb, var(--md-custom-color-success) 50%, var(--md-sys-color-outline-variant));
+  color: var(--md-custom-color-on-success-container);
+}
+
+.docker-grid__tag[data-tone="unhealthy"],
+.docker-grid__tag[data-tone="attention"] {
+  border-color: color-mix(in srgb, var(--md-sys-color-error) 50%, var(--md-sys-color-outline-variant));
+  color: var(--md-sys-color-error);
 }
 
 .meter-green { background: var(--accent-green); }
