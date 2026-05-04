@@ -42,7 +42,7 @@ Not trying to replace:
 - **Efficient agent protocol.** Agents serve gzipped `bincode` over HTTP, which keeps scrape payloads small over tunneled links.
 - **SQLite rollups instead of TimescaleDB.** Raw 10-second metrics are retained briefly, 5-minute rollups are kept longer, and long-range charts query the smaller rollup table.
 - **Real-time dashboard.** SSE pushes status and live metrics; the client batches updates to avoid render storms.
-- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, and polls resource stats separately.
+- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, polls resource stats separately, and the dashboard surfaces both a per-host Docker drill-down and an all-containers inventory page.
 - **Native agents first, Docker agents later.** Native installation gives the most accurate host view. Dockerized agents can be supported as a convenience mode for Linux homelabs.
 
 ---
