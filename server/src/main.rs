@@ -190,7 +190,15 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(AppState {
         store: Arc::new(RwLock::new(MetricsStore::new())),
-        http_client: reqwest::Client::new(),
+        http_client: reqwest::Client::builder()
+            // SSRF guarantee: validators check the *initial* hostname, but
+            // a 30x redirect can re-target the request at an internal IP
+            // after that check. Disable automatic redirects so every
+            // outbound URL we send (alert webhooks, HTTP monitors, OAuth
+            // token exchange, agent scrape) is the one we validated.
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("reqwest::Client::builder must build with default settings"),
         google_oauth: Arc::clone(&google_oauth),
         oauth_state_store: Arc::clone(&oauth_state_store),
         oauth_bootstrap_lock: Arc::new(tokio::sync::Mutex::new(())),
