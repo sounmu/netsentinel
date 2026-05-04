@@ -47,7 +47,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // twice on every developer page load. The guard is a `useRef` rather
   // than module-scope state so multiple AuthProvider instances (tests,
   // Storybook) get independent budgets.
-  const initStartedRef = useRef(false);
+  //
+  // The guard tracks two phases independently:
+  //   - `bootstrap`: the very first session restoration attempt
+  //   - `protectedRefresh`: a follow-up refresh once the user navigates
+  //     from a public route into a protected route. Without this second
+  //     phase, a user landing on `/status` would skip the refresh entirely
+  //     and then bounce off any protected page to `/login`, even with a
+  //     valid `nm_refresh` cookie.
+  const initStartedRef = useRef({ bootstrap: false, protectedRefresh: false });
 
   // On mount: attempt session restoration. Priority order:
   //   1. In-memory access token (tab-reuse — already present if we didn't
@@ -56,47 +64,91 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   //      /api/auth/refresh to mint a fresh access token.
   //   3. Neither → unauthenticated.
   useEffect(() => {
-    if (initStartedRef.current) return;
-    initStartedRef.current = true;
+    const isPublic = PUBLIC_PATHS.some(
+      (p) => pathname === p || pathname.startsWith(p + "/"),
+    );
 
-    let cancelled = false;
-    clearLegacyStorage();
-
-    const init = async () => {
-      const isPublic = PUBLIC_PATHS.some(
-        (p) => pathname === p || pathname.startsWith(p + "/"),
-      );
-
-      // Path 1: memory token exists — validate server-side.
-      if (getAccessToken()) {
-        try {
-          const u = await getMe();
-          if (!cancelled) setUser(u);
-        } catch {
-          setAccessToken(null);
-        }
-        if (!cancelled) setIsLoading(false);
-        return;
-      }
-
+    // First mount only.
+    if (!initStartedRef.current.bootstrap) {
+      initStartedRef.current.bootstrap = true;
+      // If we land on a public path with no token, we don't refresh yet —
+      // mark that path so a later navigation into a protected route can
+      // still try `/api/auth/refresh` once.
       if (isPublic) {
-        if (!cancelled) setIsLoading(false);
-        return;
+        initStartedRef.current.protectedRefresh = false;
+      } else {
+        initStartedRef.current.protectedRefresh = true;
       }
 
-      // Path 2: no memory token — try to refresh via httpOnly cookie.
-      const result = await tryRefreshSession();
-      if (!cancelled) {
-        if (result) {
-          setUser(result.user);
+      let cancelled = false;
+      clearLegacyStorage();
+
+      const init = async () => {
+        // Path 1: memory token exists — validate server-side.
+        if (getAccessToken()) {
+          try {
+            const u = await getMe();
+            if (!cancelled) setUser(u);
+          } catch {
+            setAccessToken(null);
+          }
+          if (!cancelled) setIsLoading(false);
+          return;
         }
-        setIsLoading(false);
-      }
-    };
 
-    void init();
-    return () => { cancelled = true; };
-  }, [pathname]);
+        if (isPublic) {
+          if (!cancelled) setIsLoading(false);
+          return;
+        }
+
+        // Path 2: no memory token — try to refresh via httpOnly cookie.
+        const result = await tryRefreshSession();
+        if (!cancelled) {
+          if (result) setUser(result.user);
+          setIsLoading(false);
+        }
+      };
+
+      void init();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Subsequent navigations: if we previously skipped the refresh because
+    // the entry path was public, attempt it once now that the user has
+    // moved into a protected route. Without this, a valid refresh cookie
+    // is wasted and the user is bounced to /login.
+    if (
+      !isPublic &&
+      !initStartedRef.current.protectedRefresh &&
+      !getAccessToken() &&
+      !user
+    ) {
+      initStartedRef.current.protectedRefresh = true;
+      let cancelled = false;
+      // setIsLoading(true) suppresses the unauthenticated → /login redirect
+      // (in the next effect) for the brief window of the refresh round-trip.
+      // Same documented escape as `app/status/page.tsx`: the rule flags
+      // post-mount setState, but recovering an in-flight session bootstrap
+      // is exactly the lifecycle this hatch exists for. Without it, a user
+      // navigating from /status → / would race the redirect and bounce
+      // off /login even with a valid refresh cookie.
+      /* eslint-disable react-hooks/set-state-in-effect */
+      setIsLoading(true);
+      void (async () => {
+        const result = await tryRefreshSession();
+        if (!cancelled) {
+          if (result) setUser(result.user);
+          setIsLoading(false);
+        }
+      })();
+      /* eslint-enable react-hooks/set-state-in-effect */
+      return () => {
+        cancelled = true;
+      };
+    }
+  }, [pathname, user]);
 
   useEffect(() => {
     if (!isLoading && !user) {
