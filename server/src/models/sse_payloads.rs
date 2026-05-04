@@ -92,14 +92,37 @@ pub struct HostStatusPayload {
 
 /// Event variants delivered to SSE handlers via a `tokio::sync::broadcast` channel.
 ///
-/// Payloads are wrapped in `Arc` so the `broadcast::Sender` can hand each
-/// subscriber a cheap reference-count bump instead of a full `HostMetricsPayload`
-/// / `HostStatusPayload` clone per receiver. `HostStatusPayload` alone carries
-/// five sizeable `Vec`s (docker containers, ports, disks, processes, etc.) —
-/// with N connected SSE clients the pre-Arc shape was O(N × payload) allocation
-/// per scrape tick.
+/// Payloads carry **pre-serialized JSON** (`Arc<str>`) rather than the
+/// original Rust structs. The `broadcast::Sender` fan-out is `O(subscribers)`,
+/// and the previous shape (`Arc<HostStatusPayload>`) forced every subscriber
+/// to call `serde_json::to_string` on its own copy — the JSON encoding cost
+/// scaled `subscribers × payload_size` per scrape tick. By moving the encode
+/// to the producer, every SSE client just clones the `Arc<str>` and hands it
+/// to `axum::sse::Event::data` (which copies the bytes once into the frame).
+///
+/// `HostStatusPayload` is still cached as `Arc<HostStatusPayload>` in
+/// `last_known_status` so the SSE handshake / `Lagged` re-snapshot can do
+/// its own one-shot serialization out of band; only the broadcast hot
+/// path uses the pre-serialized form.
 #[derive(Clone, Debug)]
 pub enum SseBroadcast {
-    Metrics(Arc<HostMetricsPayload>),
-    Status(Arc<HostStatusPayload>),
+    Metrics(Arc<str>),
+    Status(Arc<str>),
+}
+
+impl SseBroadcast {
+    /// Serialize a metrics payload once for all subscribers. Returns `None`
+    /// if serialization fails (the producer drops the broadcast in that
+    /// case, mirroring the pre-existing `if let Ok(json) = ...` shape).
+    pub fn metrics(payload: &HostMetricsPayload) -> Option<Self> {
+        serde_json::to_string(payload)
+            .ok()
+            .map(|s| Self::Metrics(Arc::from(s)))
+    }
+
+    pub fn status(payload: &HostStatusPayload) -> Option<Self> {
+        serde_json::to_string(payload)
+            .ok()
+            .map(|s| Self::Status(Arc::from(s)))
+    }
 }
