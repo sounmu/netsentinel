@@ -124,17 +124,15 @@ pub async fn sse_handler(
                     }
                     result = stream_state.rx.recv() => {
                         match result {
-                            Ok(SseBroadcast::Metrics(payload)) => {
-                                if let Ok(json) = serde_json::to_string(&*payload) {
-                                    let event = Event::default().event("metrics").data(json);
-                                    return Some((Ok(event), stream_state));
-                                }
+                            Ok(SseBroadcast::Metrics(json)) => {
+                                // Pre-serialized at the producer; subscribers
+                                // just hand the bytes to axum's SSE framer.
+                                let event = Event::default().event("metrics").data(&*json);
+                                return Some((Ok(event), stream_state));
                             }
-                            Ok(SseBroadcast::Status(payload)) => {
-                                if let Ok(json) = serde_json::to_string(&*payload) {
-                                    let event = Event::default().event("status").data(json);
-                                    return Some((Ok(event), stream_state));
-                                }
+                            Ok(SseBroadcast::Status(json)) => {
+                                let event = Event::default().event("status").data(&*json);
+                                return Some((Ok(event), stream_state));
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                                 // Slow consumer: the broadcast ring overflowed. Rather than silently

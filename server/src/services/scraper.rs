@@ -487,21 +487,28 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
             metrics.network.rx_bytes_per_sec = result.metrics_payload.network_rate.rx_bytes_per_sec;
             metrics.network.tx_bytes_per_sec = result.metrics_payload.network_rate.tx_bytes_per_sec;
 
-            // Wrap once so every subscriber gets an `Arc::clone` via the
-            // broadcast fan-out rather than a full `HostMetricsPayload` clone
-            // (see `SseBroadcast` docs).
-            let _ = ctx
-                .state
-                .sse_tx
-                .send(SseBroadcast::Metrics(Arc::new(result.metrics_payload)));
+            // Pre-serialize once at the producer; every subscriber gets a
+            // cheap `Arc<str>` clone instead of paying for its own
+            // `serde_json::to_string` (see `SseBroadcast` docs).
+            if let Some(ev) = SseBroadcast::metrics(&result.metrics_payload) {
+                let _ = ctx.state.sse_tx.send(ev);
+            }
 
             if let Some(status_payload) = result.status_payload {
+                // The `last_known_status` cache still holds the structured
+                // payload — `build_initial_events` (handshake / Lagged
+                // recovery) and `handle_down` both mutate / re-serialize
+                // it independently. Only the broadcast fan-out is
+                // pre-serialized.
+                let serialized = SseBroadcast::status(&status_payload);
                 let arc = Arc::new(status_payload);
                 // SAFETY: no .await while lock is held
                 if let Ok(mut lks) = ctx.state.last_known_status.write() {
                     lks.insert(ctx.target.clone(), Arc::clone(&arc));
                 }
-                let _ = ctx.state.sse_tx.send(SseBroadcast::Status(arc));
+                if let Some(ev) = serialized {
+                    let _ = ctx.state.sse_tx.send(ev);
+                }
             }
         }
         Err(e) => {
@@ -779,9 +786,12 @@ async fn handle_down(
             status.is_online = false;
             status.last_seen = server_ts;
             status.processes = vec![];
-            let broadcast_arc = Arc::clone(arc);
-
-            let _ = state.sse_tx.send(SseBroadcast::Status(broadcast_arc));
+            // Serialize once for the broadcast fan-out; the cache still
+            // holds the structured `Arc<HostStatusPayload>` for handshake
+            // re-snapshots.
+            if let Some(ev) = SseBroadcast::status(status) {
+                let _ = state.sse_tx.send(ev);
+            }
         }
     }
 
