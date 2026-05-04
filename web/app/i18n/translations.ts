@@ -367,6 +367,8 @@ export const translations = {
       monitorsSection: "External Monitors",
       disabledTitle: "Public status page is disabled",
       disabledBody: "Set PUBLIC_STATUS_ENABLED=true on the server to expose this page.",
+      errorTitle: "Status page unavailable",
+      errorBody: "Could not reach the status backend. Refreshing automatically.",
     },
     // Monitors page
     monitors: {
@@ -773,6 +775,8 @@ export const translations = {
       monitorsSection: "외부 모니터",
       disabledTitle: "공개 상태 페이지가 비활성화되어 있습니다",
       disabledBody: "서버에서 PUBLIC_STATUS_ENABLED=true 환경변수를 설정해 주세요.",
+      errorTitle: "상태 페이지를 불러올 수 없습니다",
+      errorBody: "상태 백엔드에 연결할 수 없습니다. 잠시 후 자동으로 다시 시도합니다.",
     },
     monitors: {
       title: "외부 모니터",

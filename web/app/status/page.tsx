@@ -41,12 +41,19 @@ export default function StatusPage() {
   // rather than showing an empty list (which is indistinguishable from "no
   // hosts registered" and wastes the operator's triage time).
   const isDisabled = error instanceof ApiError && error.status === 404;
+  // Any other fetch error (5xx, network drop) must NOT collapse into
+  // `data = undefined` → empty arrays → vacuous `every()` → "all operational".
+  // A public status page that lies green during a backend outage is the
+  // single worst failure mode for this surface.
+  const hasError = Boolean(error) && !isDisabled && !data;
 
   const hosts: PublicHostStatus[] = data?.hosts ?? [];
   const monitors: PublicMonitorStatus[] = data?.monitors ?? [];
 
   const allOnline =
-    hosts.every((h) => h.is_online) && monitors.every((m) => m.is_online);
+    !hasError &&
+    hosts.every((h) => h.is_online) &&
+    monitors.every((m) => m.is_online);
 
   const hostRows: StatusRow[] = hosts.map((h) => ({
     key: `host:${h.host_key}`,
@@ -100,6 +107,34 @@ export default function StatusPage() {
           </div>
           <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
             {t.statusPage.disabledBody}
+          </div>
+        </div>
+      ) : hasError ? (
+        <div
+          className="glass-card"
+          style={{
+            padding: "24px",
+            textAlign: "center",
+            background: "var(--status-offline-bg)",
+            borderColor: "var(--badge-offline-border)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 700,
+              marginBottom: 8,
+              color: "var(--badge-offline-text)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+            }}
+          >
+            <XCircle size={18} aria-hidden="true" />
+            {t.statusPage.errorTitle}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {t.statusPage.errorBody}
           </div>
         </div>
       ) : (
