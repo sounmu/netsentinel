@@ -886,7 +886,7 @@ pub async fn fetch_host_summaries(pool: &DbPool) -> Result<Vec<HostSummary>, sql
         SELECT
             h.host_key,
             h.display_name,
-            COALESCE(r.timestamp > strftime('%s','now') - 60, 0) AS is_online,
+            COALESCE(r.is_online = 1 AND r.timestamp > strftime('%s','now') - 60, 0) AS is_online,
             r.timestamp AS last_seen
         FROM hosts h
         LEFT JOIN (
