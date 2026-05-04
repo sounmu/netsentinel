@@ -143,12 +143,76 @@ struct LegacyNetworkTotal {
     total_tx_bytes: u64,
 }
 
+/// Older `GpuInfo` shape — pre `power_watts` / `frequency_mhz`.
+///
+/// Bincode 1.3.3 with `with_fixint_encoding()` does NOT honour
+/// `#[serde(default)]` for missing trailing fields inside a *nested* struct:
+/// the byte stream has no field tags, so a missing `Option<f32>` doesn't
+/// fail-soft, it byte-shifts everything that comes after `gpus`. Shipping
+/// new fields on `GpuInfo` therefore requires an explicit legacy shim, the
+/// same way `LegacyDockerContainer` covers the docker container append.
+/// See AGENTS.md → "bincode wire format" → "recursive rule".
+#[derive(Deserialize, Serialize)]
+struct LegacyGpuInfo {
+    name: String,
+    gpu_usage_percent: u32,
+    memory_used_mb: u64,
+    memory_total_mb: u64,
+    temperature_c: u32,
+}
+
+impl From<LegacyGpuInfo> for GpuInfo {
+    fn from(g: LegacyGpuInfo) -> Self {
+        Self {
+            name: g.name,
+            gpu_usage_percent: g.gpu_usage_percent,
+            memory_used_mb: g.memory_used_mb,
+            memory_total_mb: g.memory_total_mb,
+            temperature_c: g.temperature_c,
+            power_watts: None,
+            frequency_mhz: None,
+        }
+    }
+}
+
+/// `SystemMetrics` mirror that uses `LegacyGpuInfo` for the `gpus` field.
+/// Used inside every `Legacy*AgentMetrics` so older agents still decode.
+#[derive(Deserialize, Serialize)]
+struct LegacySystemMetrics {
+    cpu_usage_percent: f32,
+    memory_total_mb: u64,
+    memory_used_mb: u64,
+    memory_usage_percent: f32,
+    disks: Vec<DiskInfo>,
+    #[serde(default)]
+    processes: Vec<ProcessInfo>,
+    #[serde(default)]
+    temperatures: Vec<TemperatureInfo>,
+    #[serde(default)]
+    gpus: Vec<LegacyGpuInfo>,
+}
+
+impl From<LegacySystemMetrics> for SystemMetrics {
+    fn from(s: LegacySystemMetrics) -> Self {
+        Self {
+            cpu_usage_percent: s.cpu_usage_percent,
+            memory_total_mb: s.memory_total_mb,
+            memory_used_mb: s.memory_used_mb,
+            memory_usage_percent: s.memory_usage_percent,
+            disks: s.disks,
+            processes: s.processes,
+            temperatures: s.temperatures,
+            gpus: s.gpus.into_iter().map(GpuInfo::from).collect(),
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 struct LegacyAgentMetrics {
     hostname: String,
     timestamp: String,
     is_online: bool,
-    system: SystemMetrics,
+    system: LegacySystemMetrics,
     #[serde(default)]
     network: LegacyNetworkTotal,
     #[serde(default)]
@@ -172,7 +236,7 @@ struct LegacyDockerAgentMetrics {
     hostname: String,
     timestamp: String,
     is_online: bool,
-    system: SystemMetrics,
+    system: LegacySystemMetrics,
     #[serde(default)]
     network: NetworkTotal,
     #[serde(default)]
@@ -189,6 +253,34 @@ struct LegacyDockerAgentMetrics {
     network_interfaces: Vec<NetworkInterfaceInfo>,
     #[serde(default)]
     docker_stats: Vec<LegacyDockerContainerStats>,
+}
+
+/// Most-recent legacy: agent has new docker + new network rate fields,
+/// but is still on the old `GpuInfo` shape (i.e. pre `power_watts`).
+/// Caught after the main `AgentMetrics` decode but before the older
+/// shims so we don't downgrade `LoadAverage`/`docker_stats` unnecessarily.
+#[derive(Deserialize, Serialize)]
+struct LegacyGpuAgentMetrics {
+    hostname: String,
+    timestamp: String,
+    is_online: bool,
+    system: LegacySystemMetrics,
+    #[serde(default)]
+    network: NetworkTotal,
+    #[serde(default)]
+    load_average: LoadAverage,
+    #[serde(rename = "docker", default)]
+    docker_containers: Vec<DockerContainer>,
+    #[serde(default)]
+    ports: Vec<PortStatus>,
+    #[serde(default)]
+    agent_version: String,
+    #[serde(default)]
+    cpu_cores: Vec<f32>,
+    #[serde(default)]
+    network_interfaces: Vec<NetworkInterfaceInfo>,
+    #[serde(default)]
+    docker_stats: Vec<DockerContainerStats>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -227,7 +319,7 @@ impl From<LegacyAgentMetrics> for AgentMetrics {
             hostname: metrics.hostname,
             timestamp: metrics.timestamp,
             is_online: metrics.is_online,
-            system: metrics.system,
+            system: metrics.system.into(),
             network: metrics.network.into(),
             load_average: metrics.load_average,
             docker_containers: metrics
@@ -254,7 +346,7 @@ impl From<LegacyDockerAgentMetrics> for AgentMetrics {
             hostname: metrics.hostname,
             timestamp: metrics.timestamp,
             is_online: metrics.is_online,
-            system: metrics.system,
+            system: metrics.system.into(),
             network: metrics.network,
             load_average: metrics.load_average,
             docker_containers: metrics
@@ -271,6 +363,25 @@ impl From<LegacyDockerAgentMetrics> for AgentMetrics {
                 .into_iter()
                 .map(DockerContainerStats::from)
                 .collect(),
+        }
+    }
+}
+
+impl From<LegacyGpuAgentMetrics> for AgentMetrics {
+    fn from(metrics: LegacyGpuAgentMetrics) -> Self {
+        Self {
+            hostname: metrics.hostname,
+            timestamp: metrics.timestamp,
+            is_online: metrics.is_online,
+            system: metrics.system.into(),
+            network: metrics.network,
+            load_average: metrics.load_average,
+            docker_containers: metrics.docker_containers,
+            ports: metrics.ports,
+            agent_version: metrics.agent_version,
+            cpu_cores: metrics.cpu_cores,
+            network_interfaces: metrics.network_interfaces,
+            docker_stats: metrics.docker_stats,
         }
     }
 }
@@ -321,17 +432,24 @@ pub fn deserialize_agent_metrics(bytes: &[u8]) -> Result<AgentMetrics, bincode::
             metrics.network.rate_fields_present = true;
             Ok(metrics)
         }
-        Err(new_err) => match bincode_options().deserialize::<LegacyDockerAgentMetrics>(bytes) {
+        Err(new_err) => match bincode_options().deserialize::<LegacyGpuAgentMetrics>(bytes) {
             Ok(mut metrics) => {
                 metrics.network.rate_fields_present = true;
+                crate::services::metrics_service::record_legacy_fallback_used();
                 Ok(metrics.into())
             }
-            Err(_) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
-                Ok(metrics) => {
-                    crate::services::metrics_service::record_legacy_fallback_used();
+            Err(_) => match bincode_options().deserialize::<LegacyDockerAgentMetrics>(bytes) {
+                Ok(mut metrics) => {
+                    metrics.network.rate_fields_present = true;
                     Ok(metrics.into())
                 }
-                Err(_) => Err(new_err),
+                Err(_) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
+                    Ok(metrics) => {
+                        crate::services::metrics_service::record_legacy_fallback_used();
+                        Ok(metrics.into())
+                    }
+                    Err(_) => Err(new_err),
+                },
             },
         },
     }
@@ -354,13 +472,26 @@ mod tests {
         }
     }
 
+    fn legacy_system_metrics() -> LegacySystemMetrics {
+        LegacySystemMetrics {
+            cpu_usage_percent: 12.5,
+            memory_total_mb: 8192,
+            memory_used_mb: 4096,
+            memory_usage_percent: 50.0,
+            disks: vec![],
+            processes: vec![],
+            temperatures: vec![],
+            gpus: vec![],
+        }
+    }
+
     #[test]
     fn deserialize_agent_metrics_accepts_legacy_network_payload() {
         let legacy = LegacyAgentMetrics {
             hostname: "legacy-box".into(),
             timestamp: "2026-04-21T00:00:00Z".into(),
             is_online: true,
-            system: system_metrics(),
+            system: legacy_system_metrics(),
             network: LegacyNetworkTotal {
                 total_rx_bytes: 100,
                 total_tx_bytes: 200,
@@ -433,7 +564,7 @@ mod tests {
             hostname: "docker-box".into(),
             timestamp: "2026-05-01T00:00:00Z".into(),
             is_online: true,
-            system: system_metrics(),
+            system: legacy_system_metrics(),
             network: NetworkTotal {
                 total_rx_bytes: 100,
                 total_tx_bytes: 200,
@@ -470,6 +601,52 @@ mod tests {
         assert!(!decoded.docker_containers[0].oom_killed);
         assert_eq!(decoded.docker_stats[0].block_read_bytes, 0);
         assert_eq!(decoded.docker_stats[0].block_write_bytes, 0);
+    }
+
+    #[test]
+    fn deserialize_agent_metrics_accepts_legacy_gpu_payload() {
+        // Older agent: new docker + new network shape, but old `GpuInfo`
+        // (no power_watts / frequency_mhz). Without the LegacyGpuInfo shim
+        // this would fail to decode and break mixed-version deployments.
+        let mut sys = legacy_system_metrics();
+        sys.gpus.push(LegacyGpuInfo {
+            name: "GeForce RTX".into(),
+            gpu_usage_percent: 42,
+            memory_used_mb: 1024,
+            memory_total_mb: 8192,
+            temperature_c: 60,
+        });
+        let legacy = LegacyGpuAgentMetrics {
+            hostname: "gpu-box".into(),
+            timestamp: "2026-05-03T00:00:00Z".into(),
+            is_online: true,
+            system: sys,
+            network: NetworkTotal {
+                total_rx_bytes: 100,
+                total_tx_bytes: 200,
+                rx_bytes_per_sec: 0.0,
+                tx_bytes_per_sec: 0.0,
+                rate_fields_present: false,
+            },
+            load_average: LoadAverage::default(),
+            docker_containers: vec![],
+            ports: vec![],
+            agent_version: "0.6.0".into(),
+            cpu_cores: vec![],
+            network_interfaces: vec![],
+            docker_stats: vec![],
+        };
+
+        let bytes = bincode_options().serialize(&legacy).unwrap();
+        let decoded = deserialize_agent_metrics(&bytes).unwrap();
+
+        assert_eq!(decoded.system.gpus.len(), 1);
+        let gpu = &decoded.system.gpus[0];
+        assert_eq!(gpu.name, "GeForce RTX");
+        assert_eq!(gpu.gpu_usage_percent, 42);
+        assert!(gpu.power_watts.is_none());
+        assert!(gpu.frequency_mhz.is_none());
+        assert!(decoded.network.rate_fields_present);
     }
 
     #[test]
