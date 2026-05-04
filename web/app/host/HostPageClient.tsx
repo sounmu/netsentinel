@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useSSE } from "@/app/lib/sse-context";
 import { fetcher, getHostsUrl } from "@/app/lib/api";
+import DockerGrid from "@/app/components/DockerGrid";
 const TimeSeriesChart = dynamic(
   () => import("@/app/components/TimeSeriesChart"),
   { ssr: false, loading: () => <div className="skeleton" style={{ height: 300 }} /> },
@@ -26,6 +27,7 @@ import {
   Globe,
   Server,
   Cpu,
+  Box,
   MemoryStick,
 } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
@@ -129,7 +131,9 @@ export default function HostPageClient() {
 
   const ports = statusData?.ports ?? [];
   const gpus = statusData?.gpus ?? [];
+  const dockerContainers = statusData?.docker_containers ?? [];
   const latestTimestamp = liveMetrics?.timestamp ?? statusData?.last_seen ?? null;
+  const hasDockerData = dockerContainers.length > 0;
 
   const isOnline = liveMetrics?.is_online ?? statusData?.is_online;
   const hostStatus = latestTimestamp
@@ -339,6 +343,17 @@ export default function HostPageClient() {
           <div style={{ marginBottom: 16 }}>
             <TimeSeriesChart hostKey={decodedHostKey} />
           </div>
+
+          {hasDockerData && (
+            <div style={{ display: "grid", gap: 16, marginBottom: 16 }}>
+              <SectionCard
+                title={`${t.host.dockerContainers} (${dockerContainers.length})`}
+                icon={<Box size={15} />}
+              >
+                <DockerGrid containers={dockerContainers} />
+              </SectionCard>
+            </div>
+          )}
 
           {/* Ports + GPU — small info cards */}
           <div
