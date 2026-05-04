@@ -436,6 +436,19 @@ impl<T> CacheInner<T> {
 /// oldest-inserted entries are evicted until both caps fit.
 pub struct MetricsQueryCache<T> {
     inner: RwLock<CacheInner<T>>,
+    /// Per-key in-flight map for singleflight de-duplication of cache misses.
+    ///
+    /// Without this, two dashboards opening the same wide-range chart at the
+    /// same time both miss the cache and run the SQL twice (or N times for
+    /// N concurrent users). On `>14d` queries — which the route comment
+    /// explicitly flags as "the 15-min re-aggregation branch" — this used
+    /// to dominate SQLite writer contention during dashboard spikes.
+    ///
+    /// First miss inserts a `Notify` and runs the fetch; concurrent misses
+    /// wait on that `Notify` and re-read the cache when notified. The map
+    /// is cleared by the leader on completion, bounded by the count of
+    /// concurrently-distinct in-flight keys.
+    inflight: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Notify>>>,
     ttl: Duration,
     max_entries: usize,
     max_bytes: usize,
@@ -483,9 +496,79 @@ where
     pub fn new(ttl: Duration, max_entries: usize, max_bytes: usize) -> Self {
         Self {
             inner: RwLock::new(CacheInner::new()),
+            inflight: std::sync::Mutex::new(HashMap::new()),
             ttl,
             max_entries: max_entries.max(1),
             max_bytes: max_bytes.max(1),
+        }
+    }
+
+    /// Cache-miss-deduplicated fetch.
+    ///
+    /// Returns the cached `Arc<Vec<T>>` if present; otherwise either runs
+    /// `fetch` itself (the leader) or waits on the leader's notify and
+    /// re-reads the cache (the follower). If the leader's fetch errors,
+    /// followers fall back to their own `fetch` so a transient SQL error
+    /// is not promoted into a sticky cache poison.
+    ///
+    /// The notify is keyed on the same string as the cache entry so the
+    /// caller's `metrics_cache_key(...)` already shapes hits/misses correctly.
+    pub async fn get_or_fetch<F, Fut, E>(&self, key: String, fetch: F) -> Result<Arc<Vec<T>>, E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<T>, E>>,
+    {
+        if let Some(cached) = self.get(&key) {
+            return Ok(cached);
+        }
+
+        let (notify, is_leader) = {
+            let mut g = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(existing) = g.get(&key).cloned() {
+                (existing, false)
+            } else {
+                let n = Arc::new(tokio::sync::Notify::new());
+                g.insert(key.clone(), Arc::clone(&n));
+                (n, true)
+            }
+        };
+
+        if !is_leader {
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            // Register interest *before* re-checking the cache, so a
+            // notify_waiters() that lands between this enable() and the
+            // .await still wakes us. Without enable(), the future only
+            // registers on its first poll inside `.await`, which is
+            // exactly the race we are guarding against.
+            notified.as_mut().enable();
+            if let Some(cached) = self.get(&key) {
+                return Ok(cached);
+            }
+            notified.await;
+            if let Some(cached) = self.get(&key) {
+                return Ok(cached);
+            }
+            // Leader errored — fall back to a private fetch.
+            let rows = fetch().await?;
+            return Ok(Arc::new(rows));
+        }
+
+        let result = fetch().await;
+        {
+            let mut g = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+            g.remove(&key);
+        }
+        match result {
+            Ok(rows) => {
+                let arc = self.insert(key, rows);
+                notify.notify_waiters();
+                Ok(arc)
+            }
+            Err(e) => {
+                notify.notify_waiters();
+                Err(e)
+            }
         }
     }
 
