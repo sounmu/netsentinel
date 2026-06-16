@@ -7,7 +7,9 @@ use futures::StreamExt;
 use futures::stream;
 use reqwest::Client;
 
-use crate::models::agent_metrics::{AgentMetrics, SystemInfoResponse, deserialize_agent_metrics};
+use crate::models::agent_metrics::{
+    AgentMetrics, SystemInfoResponse, WIRE_VERSION_HEADER, deserialize_agent_metrics_versioned,
+};
 use crate::models::app_state::{AlertConfig, AppState, HostRecord};
 use crate::models::sse_payloads::{HostStatusPayload, SseBroadcast};
 use crate::repositories::{alert_configs_repo, hosts_repo, metrics_repo};
@@ -344,6 +346,14 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
         .await
     {
         Ok(resp) if resp.status().is_success() => {
+            // Read the agent's advertised wire version before the chunk loop
+            // consumes the response. `None` means a pre-versioning agent that
+            // sent no header → the decoder falls back to the legacy chain.
+            let wire_version = resp
+                .headers()
+                .get(WIRE_VERSION_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.trim().parse::<u8>().ok());
             let mut bytes = Vec::new();
             let mut resp = resp;
             loop {
@@ -368,7 +378,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                 }
             }
 
-            match deserialize_agent_metrics(&bytes) {
+            match deserialize_agent_metrics_versioned(&bytes, wire_version) {
                 Ok(mut metrics) => {
                     // Defense-in-depth: cap untrusted Vec fields to sane maximums
                     metrics.cpu_cores.truncate(1024);

@@ -17,6 +17,20 @@ const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MAX_CONTAINER_SELECTORS: usize = 100;
 const MAX_METRICS_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
 
+/// Wire-format version advertised to the server via the
+/// `x-netsentinel-wire-version` response header. The server uses it to pick a
+/// deserialization path deterministically instead of guessing through its
+/// positional legacy-fallback chain (which, with `allow_trailing_bytes()`, can
+/// mis-decode an older shape as a newer one).
+///
+/// Bump this whenever the bincode shape of `AgentMetrics` — or **any** nested
+/// struct — changes, and keep it in lock-step with the server's
+/// `models::agent_metrics::CURRENT_WIRE_VERSION`. The header is purely
+/// additive: pre-versioning agents send no header and pre-versioning servers
+/// ignore it, so neither rollout direction breaks.
+pub(crate) const WIRE_VERSION: u8 = 1;
+const WIRE_VERSION_HEADER: &str = "x-netsentinel-wire-version";
+
 fn bincode_options() -> impl bincode::Options {
     bincode::DefaultOptions::new()
         .with_limit(MAX_METRICS_PAYLOAD_BYTES as u64)
@@ -128,7 +142,13 @@ pub(crate) async fn metrics_handler(
         return (StatusCode::PAYLOAD_TOO_LARGE, "metrics payload too large").into_response();
     }
 
-    ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response()
+    let mut response =
+        ([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response();
+    response.headers_mut().insert(
+        header::HeaderName::from_static(WIRE_VERSION_HEADER),
+        header::HeaderValue::from(WIRE_VERSION as u16),
+    );
+    response
 }
 
 /// GET /system-info — static system information (OS, CPU model, IP, boot time, total RAM).
