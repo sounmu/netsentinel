@@ -13,6 +13,7 @@ const TimeSeriesChart = dynamic(
 );
 import PortList from "@/app/components/PortList";
 import GpuCard from "@/app/components/GpuCard";
+import UptimeHistory from "@/app/components/UptimeHistory";
 import {
   getHostStatus,
   STATUS_DOT_CLASS,
@@ -342,6 +343,14 @@ export default function HostPageClient() {
           {/* Main time-series charts (CPU, RAM, Network, Temp, Cores, Disk, Processes) */}
           <div style={{ marginBottom: 16 }}>
             <TimeSeriesChart hostKey={decodedHostKey} />
+          </div>
+
+          {/* Daily uptime breakdown — day boundaries are in the workspace
+              timezone reported by the API, labelled accordingly. */}
+          <div style={{ marginBottom: 16 }}>
+            <SectionCard title={t.host.uptimeHistory} icon={<Activity size={15} />}>
+              <UptimeHistory hostKey={decodedHostKey} />
+            </SectionCard>
           </div>
 
           {hasDockerData && (
