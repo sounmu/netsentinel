@@ -94,6 +94,8 @@ export const translations = {
       topProcesses: "Top Processes",
       temperatures: "Temperatures",
       gpu: "GPU",
+      uptimeHistory: "Uptime History",
+      uptimeNoData: "No uptime data yet",
     },
     containers: {
       title: "All Containers",
@@ -552,6 +554,8 @@ export const translations = {
       topProcesses: "상위 프로세스",
       temperatures: "온도",
       gpu: "GPU",
+      uptimeHistory: "가동률 기록",
+      uptimeNoData: "가동률 데이터가 아직 없습니다",
     },
     containers: {
       title: "전체 컨테이너",
