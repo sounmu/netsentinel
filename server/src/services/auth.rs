@@ -3,7 +3,6 @@ use axum::http::request::Parts;
 
 use crate::errors::AppError;
 use chrono::Utc;
-use chrono_tz::Asia::Seoul;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -108,7 +107,7 @@ pub(crate) fn is_token_iat_still_valid(user_id: i32, iat: usize) -> bool {
 }
 
 pub fn generate_jwt() -> Result<String, AppError> {
-    let exp = Utc::now().with_timezone(&Seoul).timestamp() as usize + 60;
+    let exp = Utc::now().timestamp() as usize + 60;
     let claims = Claims {
         exp,
         aud: "agent".to_string(),

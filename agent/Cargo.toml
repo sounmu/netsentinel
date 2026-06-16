@@ -22,7 +22,6 @@ gpu-apple = ["dep:macmon"]
 axum = "0.7"
 bollard = "0.20"
 chrono = "0.4"
-chrono-tz = "0.9"
 anyhow = "1.0"
 dotenvy = "0.15"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }

@@ -237,7 +237,10 @@ pub async fn get_uptime(
     Query(query): Query<UptimeQuery>,
 ) -> Result<Json<UptimeSummary>, AppError> {
     let days = query.days.unwrap_or(30).min(90);
-    let summary = metrics_repo::fetch_uptime(&state.db_pool, &host_key, days).await?;
+    // Calendar-day grouping uses the configured workspace timezone (default
+    // UTC); raw storage and the lookback window stay UTC.
+    let tz = crate::time_util::workspace_timezone();
+    let summary = metrics_repo::fetch_uptime(&state.db_pool, &host_key, days, tz).await?;
     Ok(Json(summary))
 }
 

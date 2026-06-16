@@ -425,6 +425,10 @@ export interface UptimePoint {
 export interface UptimeSummary {
   host_key: string;
   overall_pct: number;
+  // IANA workspace timezone the daily buckets were grouped by (e.g. "UTC",
+  // "Asia/Seoul"). `day` values are UTC instants of local midnight in this zone;
+  // format them with `Intl.DateTimeFormat(locale, { timeZone })` for day labels.
+  timezone: string;
   daily: UptimePoint[];
 }
 

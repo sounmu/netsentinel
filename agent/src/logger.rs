@@ -1,18 +1,19 @@
 use std::path::PathBuf;
 
 use chrono::Utc;
-use chrono_tz::Asia::Seoul;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[derive(Clone, Debug)]
-struct KstTime;
+struct UtcTime;
 
-impl FormatTime for KstTime {
+impl FormatTime for UtcTime {
     fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
-        let now = Utc::now().with_timezone(&Seoul);
-        write!(w, "{}", now.format("%Y-%m-%d %H:%M:%S.%3f %Z"))
+        // Logs are emitted in UTC regardless of host timezone — no hardcoded
+        // local/KST assumption. The trailing literal makes the zone explicit.
+        let now = Utc::now();
+        write!(w, "{}", now.format("%Y-%m-%d %H:%M:%S.%3f UTC"))
     }
 }
 
@@ -106,13 +107,13 @@ pub fn init_tracing() -> WorkerGuard {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
     let console_layer = fmt::layer()
-        .with_timer(KstTime)
+        .with_timer(UtcTime)
         .with_ansi(true)
         .with_target(false)
         .pretty();
 
     let file_layer = fmt::layer()
-        .with_timer(KstTime)
+        .with_timer(UtcTime)
         .with_ansi(false)
         .with_writer(non_blocking)
         .json();
