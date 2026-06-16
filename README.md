@@ -262,6 +262,7 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | `SERVER_HOST` | No | `0.0.0.0` | Bind address |
 | `SERVER_PORT` | No | `3000` | Bind port |
 | `SCRAPE_INTERVAL_SECS` | No | `10` | Fallback scrape interval if a host row has no valid `scrape_interval_secs`; normal scheduling is per-host |
+| `WORKSPACE_TIMEZONE` | No | `UTC` | IANA timezone name (e.g. `Asia/Seoul`, `America/Los_Angeles`) used **only** for calendar grouping such as the uptime daily breakdown. All stored and API timestamps stay UTC; the dashboard displays in your browser's timezone. Invalid names warn and fall back to UTC. |
 | `MAX_DB_CONNECTIONS` | No | `10` | sqlx connection pool size. SQLite serialises writes via a single writer lock, so values beyond ~10 provide no throughput gain and only grow idle pool memory. |
 | `SSE_BUFFER_SIZE` | No | `128` | SSE broadcast channel buffer; floor is 128, so env can raise but not lower it |
 | `TRUSTED_PROXY_COUNT` | No | `0` | Reverse proxy count for X-Forwarded-For (0 = use peer IP directly) |
@@ -273,6 +274,8 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | `COOKIE_SECURE` | No | `true` | Whether the refresh cookie carries the `Secure` flag. Leave enabled in production; set `false` only for local plain-HTTP development. |
 | `METRICS_TOKEN` | No | — | Bearer token for `/metrics` (Prometheus). When set, every scrape must send `Authorization: Bearer <token>`. |
 | `ALLOW_UNAUTHENTICATED_METRICS` | No | `false` | Explicit opt-in to leave `/metrics` open when `METRICS_TOKEN` is unset. |
+
+> **Time & timezones.** NetSentinel stores and transmits every timestamp in **UTC** (epoch integers in SQLite, RFC 3339 `…Z` on the API) — it never assumes KST or the server's local timezone. The dashboard renders times in **your browser's timezone** automatically. Calendar/report grouping (the uptime daily breakdown) uses the configurable `WORKSPACE_TIMEZONE` (default `UTC`).
 
 ### Agent `agent/.env`
 

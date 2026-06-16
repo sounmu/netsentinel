@@ -7,6 +7,7 @@ mod repositories;
 mod request_id;
 mod routes;
 mod services;
+mod time_util;
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -103,6 +104,11 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .unwrap_or(30);
     let db_pool = db::connect(&database_url, max_db_connections, statement_timeout_secs).await?;
+
+    // Validate WORKSPACE_TIMEZONE at startup (warns + falls back to UTC if the
+    // IANA name is invalid). Storage/wire stay UTC; this only affects calendar
+    // grouping such as the uptime daily breakdown.
+    let _ = time_util::workspace_timezone();
 
     // ── Run database migrations ──
     db::run_migrations(&db_pool).await?;

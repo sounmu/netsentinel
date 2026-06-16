@@ -1,8 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::db::DbPool;
 use chrono::{DateTime, Utc};
-use chrono_tz::Asia::Seoul;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -22,34 +21,34 @@ use crate::models::agent_metrics::{AgentMetrics, DiskInfo, DockerContainerStats,
 /// preset (`6h` = 21600 s, far above this).
 pub const CHART_RAW_BOUNDARY_SECS: i64 = 62 * 60;
 
-pub mod kst_date_format {
-    use super::*;
-    use serde::{self, Deserialize, Deserializer, Serializer};
+/// Upper bound (inclusive) for serving the **raw** 10-second table from the
+/// range endpoint (`fetch_metrics_range`), expressed in *whole hours* and
+/// compared against `Duration::num_hours()`.
+///
+/// `num_hours()` truncates, so a request the frontend inflated to e.g.
+/// 6 h 2 m by minute-rounding still resolves to `6` and stays on raw. This
+/// is the range-endpoint analogue of the 62-minute buffer baked into
+/// [`CHART_RAW_BOUNDARY_SECS`]: do **not** "unify" it into a seconds
+/// comparison against `6 * 3600`, that silently degrades the 6 h preset to
+/// 5-minute resolution (the exact bug the chart boundary's buffer fixes).
+const RANGE_RAW_BOUNDARY_HOURS: i64 = 6;
 
-    pub fn serialize<S>(date: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        // `%:z` emits the RFC 3339 offset with a colon (`+09:00`), unlike
-        // `%z` (`+0900`) which Safari/Firefox reject in `Date.parse` edge
-        // cases and which our own `parse_from_rfc3339` (used in
-        // `deserialize` below) refuses to parse — making the previous
-        // format asymmetric with its own round-trip.
-        let kst_date = date.with_timezone(&Seoul);
-        let s = kst_date.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string();
-        serializer.serialize_str(&s)
-    }
+/// Upper bound (inclusive) for serving the 5-minute rollup directly; beyond
+/// this both endpoints re-aggregate the rollup into 15-minute buckets. 14 days.
+///
+/// The two query functions compare this cut in **different units by design** —
+/// `fetch_metrics_range` in whole hours ([`ROLLUP_BOUNDARY_HOURS`], to keep the
+/// same truncation tolerance as the raw boundary above) and
+/// `fetch_chart_metrics_range` in seconds ([`ROLLUP_BOUNDARY_SECS`]). Both name
+/// the identical 14-day boundary; keep the two constants in lock-step.
+const ROLLUP_BOUNDARY_HOURS: i64 = 14 * 24; // 336 h
+const ROLLUP_BOUNDARY_SECS: i64 = ROLLUP_BOUNDARY_HOURS * 3600;
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        DateTime::parse_from_rfc3339(&s)
-            .map(|dt| dt.with_timezone(&Utc))
-            .map_err(serde::de::Error::custom)
-    }
-}
+// All API timestamps are serialized as canonical **UTC RFC 3339** (e.g.
+// `2026-06-16T11:20:30Z`) via chrono's default `DateTime<Utc>` Serialize impl —
+// identical to every other repository in this crate. The frontend treats the
+// wire value as UTC and re-localizes to the browser's timezone for display, so
+// the server never bakes a fixed offset (previously `+09:00`) into the wire.
 
 // ──────────────────────────────────────────────
 // Select (GET /api/metrics/:host_key)
@@ -79,7 +78,6 @@ pub struct MetricsRow {
     pub cpu_cores: Option<Value>,
     pub network_interfaces: Option<Value>,
     pub docker_stats: Option<Value>,
-    #[serde(with = "kst_date_format")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -122,7 +120,6 @@ pub struct ChartMetricsRow {
     pub disks: Vec<ChartDiskInfo>,
     pub temperatures: Vec<TemperatureInfo>,
     pub docker_stats: Vec<ChartDockerStats>,
-    #[serde(with = "kst_date_format")]
     pub timestamp: DateTime<Utc>,
 }
 
@@ -138,36 +135,7 @@ pub struct HostSummary {
     /// UI display name
     pub display_name: String,
     pub is_online: bool,
-    #[serde(with = "kst_date_format_opt")]
     pub last_seen: Option<DateTime<Utc>>,
-}
-
-pub mod kst_date_format_opt {
-    use super::*;
-    use serde::{self, Deserializer, Serializer};
-
-    pub fn serialize<S>(date: &Option<DateTime<Utc>>, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match date {
-            Some(dt) => kst_date_format::serialize(dt, serializer),
-            None => serializer.serialize_none(),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = Option::<String>::deserialize(deserializer)?;
-        match s {
-            Some(s) => DateTime::parse_from_rfc3339(&s)
-                .map(|dt| Some(dt.with_timezone(&Utc)))
-                .map_err(serde::de::Error::custom),
-            None => Ok(None),
-        }
-    }
 }
 
 // ──────────────────────────────────────────────
@@ -175,8 +143,11 @@ pub mod kst_date_format_opt {
 // ──────────────────────────────────────────────
 
 /// Daily uptime data point
-#[derive(Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Serialize, Deserialize)]
 pub struct UptimePoint {
+    /// UTC instant of the start of this calendar day **in the workspace
+    /// timezone** (see [`UptimeSummary::timezone`]). Serialized as RFC 3339
+    /// `…Z`; the frontend formats it in that timezone for day labels.
     pub day: DateTime<Utc>,
     pub total_count: i64,
     pub online_count: i64,
@@ -188,6 +159,9 @@ pub struct UptimePoint {
 pub struct UptimeSummary {
     pub host_key: String,
     pub overall_pct: f64,
+    /// IANA name of the workspace timezone the daily buckets were grouped by
+    /// (e.g. `UTC`, `Asia/Seoul`). Lets the client label `day` unambiguously.
+    pub timezone: String,
     pub daily: Vec<UptimePoint>,
 }
 
@@ -557,7 +531,7 @@ pub async fn fetch_metrics_range(
     let duration = end - start;
     let hours = duration.num_hours();
 
-    if hours <= 6 {
+    if hours <= RANGE_RAW_BOUNDARY_HOURS {
         // Short range: raw rows. Trim JSON columns the chart layer never
         // reads (ports, docker_containers, cpu_cores, processes).
         // `total_rx_bytes` / `total_tx_bytes` come from migration 0005's
@@ -602,7 +576,7 @@ pub async fn fetch_metrics_range(
         return raws.into_iter().map(MetricsRow::try_from).collect();
     }
 
-    if hours <= 336 {
+    if hours <= ROLLUP_BOUNDARY_HOURS {
         // 6h–14d: direct read from metrics_5min rollup (populated by the
         // rollup worker). Return the scalar bandwidth totals directly; the
         // `networks` JSON object is synthesized Rust-side in
@@ -779,7 +753,7 @@ pub async fn fetch_chart_metrics_range(
         return raws.into_iter().map(ChartMetricsRow::try_from).collect();
     }
 
-    if seconds <= 14 * 24 * 3600 {
+    if seconds <= ROLLUP_BOUNDARY_SECS {
         let raws = sqlx::query_as::<_, ChartMetricsRowRaw>(
             r#"
             SELECT
@@ -930,32 +904,29 @@ pub async fn fetch_batch_uptime_pct(
     Ok(rows.into_iter().collect())
 }
 
-/// Compute daily uptime percentage for a host over the given number of days.
-/// Uses the metrics_5min rollup for efficient daily re-aggregation;
-/// sample_count provides weighted averages for accurate uptime calculation.
+/// Compute daily uptime percentage for a host over the given number of days,
+/// grouping days by calendar day in the workspace timezone `tz`.
+///
+/// The 5-min rollup rows are pulled and grouped **in Rust** rather than in SQL:
+/// SQLite has no IANA/DST support and the `'localtime'` modifier is
+/// intentionally avoided, so DST-correct calendar-day boundaries are computed
+/// via `time_util::day_start_utc`. The lookback window stays a UTC rolling
+/// window (`strftime('%s','now')`). With `tz == UTC` the result is identical to
+/// the previous UTC-day grouping.
 pub async fn fetch_uptime(
     pool: &DbPool,
     host_key: &str,
     days: i32,
+    tz: chrono_tz::Tz,
 ) -> Result<UptimeSummary, sqlx::Error> {
-    let daily = sqlx::query_as::<_, UptimePoint>(
+    let rows = sqlx::query_as::<_, (i64, i64, i64)>(
         r#"
-        SELECT
-            (bucket / 86400) * 86400 AS day,
-            CAST(SUM(sample_count) AS INTEGER) AS total_count,
-            CAST(SUM(CASE WHEN is_online = 1 THEN sample_count ELSE 0 END) AS INTEGER)
-                AS online_count,
-            CASE
-                WHEN SUM(sample_count) > 0
-                THEN (CAST(SUM(CASE WHEN is_online = 1 THEN sample_count ELSE 0 END) AS REAL)
-                      / CAST(SUM(sample_count) AS REAL)) * 100.0
-                ELSE 0.0
-            END AS uptime_pct
+        SELECT bucket,
+               CAST(is_online AS INTEGER) AS is_online,
+               CAST(sample_count AS INTEGER) AS sample_count
         FROM metrics_5min
         WHERE host_key = ?1
           AND bucket >= strftime('%s','now') - ?2 * 86400
-        GROUP BY (bucket / 86400) * 86400
-        ORDER BY day DESC
         "#,
     )
     .bind(host_key)
@@ -963,9 +934,40 @@ pub async fn fetch_uptime(
     .fetch_all(pool)
     .await?;
 
-    let (total, online) = daily.iter().fold((0i64, 0i64), |(t, o), p| {
-        (t + p.total_count, o + p.online_count)
-    });
+    // workspace-tz day start (UTC epoch) -> (total_samples, online_samples)
+    let mut by_day: BTreeMap<i64, (i64, i64)> = BTreeMap::new();
+    let (mut total, mut online) = (0i64, 0i64);
+    for (bucket, is_online, sample_count) in rows {
+        let day = crate::time_util::day_start_utc(tz, bucket);
+        let entry = by_day.entry(day).or_insert((0, 0));
+        entry.0 += sample_count;
+        total += sample_count;
+        if is_online == 1 {
+            entry.1 += sample_count;
+            online += sample_count;
+        }
+    }
+
+    // Most-recent day first, matching the previous `ORDER BY day DESC`.
+    let daily: Vec<UptimePoint> = by_day
+        .into_iter()
+        .rev()
+        .map(|(day_epoch, (total_count, online_count))| {
+            let uptime_pct = if total_count > 0 {
+                (online_count as f64 / total_count as f64) * 100.0
+            } else {
+                0.0
+            };
+            UptimePoint {
+                day: DateTime::<Utc>::from_timestamp(day_epoch, 0)
+                    .expect("day-start epoch is always a valid timestamp"),
+                total_count,
+                online_count,
+                uptime_pct,
+            }
+        })
+        .collect();
+
     let overall_pct = if total > 0 {
         (online as f64 / total as f64) * 100.0
     } else {
@@ -975,6 +977,7 @@ pub async fn fetch_uptime(
     Ok(UptimeSummary {
         host_key: host_key.to_string(),
         overall_pct,
+        timezone: tz.name().to_string(),
         daily,
     })
 }
@@ -1373,8 +1376,56 @@ mod sqlite_tests {
         let batch = fetch_batch_uptime_pct(&pool, 7).await.unwrap();
         assert!(batch.is_empty());
 
-        let summary = fetch_uptime(&pool, "h1:9101", 7).await.unwrap();
+        let summary = fetch_uptime(&pool, "h1:9101", 7, chrono_tz::Tz::UTC)
+            .await
+            .unwrap();
         assert_eq!(summary.overall_pct, 0.0);
         assert!(summary.daily.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod serialization_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    /// API timestamps must serialize as canonical UTC RFC 3339 (`…Z`), never a
+    /// fixed offset like `+09:00`. Guards against re-introducing KST/local-time
+    /// serialization on the wire.
+    #[test]
+    fn timestamps_serialize_as_utc_rfc3339_z() {
+        let dt = Utc.with_ymd_and_hms(2026, 6, 16, 11, 20, 30).unwrap();
+
+        let point = UptimePoint {
+            day: dt,
+            total_count: 10,
+            online_count: 9,
+            uptime_pct: 90.0,
+        };
+        let json = serde_json::to_string(&point).unwrap();
+        assert!(json.contains("\"2026-06-16T11:20:30Z\""), "got {json}");
+        assert!(
+            !json.contains("+09:00"),
+            "must not emit a fixed offset: {json}"
+        );
+
+        let some = HostSummary {
+            host_key: "h:9101".into(),
+            display_name: "box".into(),
+            is_online: true,
+            last_seen: Some(dt),
+        };
+        let j2 = serde_json::to_string(&some).unwrap();
+        assert!(j2.contains("\"2026-06-16T11:20:30Z\""), "got {j2}");
+        assert!(!j2.contains("+09:00"), "must not emit a fixed offset: {j2}");
+
+        let none = HostSummary {
+            host_key: "h:9101".into(),
+            display_name: "box".into(),
+            is_online: false,
+            last_seen: None,
+        };
+        let j3 = serde_json::to_string(&none).unwrap();
+        assert!(j3.contains("\"last_seen\":null"), "got {j3}");
     }
 }
