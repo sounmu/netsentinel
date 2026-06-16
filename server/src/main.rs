@@ -91,9 +91,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(10);
 
     let max_db_connections: u32 = std::env::var("MAX_DB_CONNECTIONS")
-        .unwrap_or_else(|_| "4".to_string())
+        .unwrap_or_else(|_| "10".to_string())
         .parse()
-        .unwrap_or(4);
+        .unwrap_or(10);
 
     // ── Database connection pool ──
     // SQLite is the single embedded backend. `crate::db` owns the pool

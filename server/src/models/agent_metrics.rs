@@ -418,10 +418,61 @@ impl From<LegacyDockerContainerStats> for DockerContainerStats {
     }
 }
 
+/// Wire-format version the current `AgentMetrics` bincode shape corresponds to.
+/// Agents advertise their version via the `x-netsentinel-wire-version` response
+/// header (see the agent's `handler::WIRE_VERSION`); keep the two in lock-step
+/// and bump whenever the bincode shape of `AgentMetrics` or any nested struct
+/// changes.
+pub const CURRENT_WIRE_VERSION: u8 = 1;
+
+/// HTTP header an agent uses to advertise its [`CURRENT_WIRE_VERSION`].
+pub const WIRE_VERSION_HEADER: &str = "x-netsentinel-wire-version";
+
+/// Version-aware decode entry point.
+///
+/// When the agent advertised the current wire version we decode straight to
+/// `AgentMetrics` — deterministic, and it skips the positional
+/// guess-and-fallback chain entirely. That chain uses `allow_trailing_bytes()`,
+/// so a shorter/older shape can decode *successfully but incorrectly* by
+/// ignoring trailing bytes; trusting an explicit version removes that risk for
+/// every up-to-date agent.
+///
+/// Any other value — an unknown future version, or `None` for a pre-versioning
+/// agent that sent no header — falls through to [`deserialize_agent_metrics`],
+/// the existing best-effort path. A new agent talking to an old server (which
+/// returns `None` here because it predates this function) therefore still
+/// decodes via the legacy chain exactly as before: the header is additive and
+/// breaks neither rollout direction.
+///
+/// If the agent claims [`CURRENT_WIRE_VERSION`] but the payload fails to decode
+/// as `AgentMetrics`, we return that error rather than silently guessing — a
+/// declared-but-unparseable payload is genuinely corrupt, and falling back to
+/// the positional chain could mis-decode it.
+pub fn deserialize_agent_metrics_versioned(
+    bytes: &[u8],
+    wire_version: Option<u8>,
+) -> Result<AgentMetrics, bincode::Error> {
+    if bytes.len() > MAX_AGENT_PAYLOAD_BYTES as usize {
+        return Err(Box::new(bincode::ErrorKind::SizeLimit));
+    }
+
+    if wire_version == Some(CURRENT_WIRE_VERSION) {
+        let mut metrics = bincode_options().deserialize::<AgentMetrics>(bytes)?;
+        metrics.network.rate_fields_present = true;
+        return Ok(metrics);
+    }
+
+    deserialize_agent_metrics(bytes)
+}
+
 /// Decode the bincode agent payload while preserving one-way compatibility:
 /// old agents that emitted only cumulative network counters still work with
 /// new servers, while new-agent rate fields are marked as present even when
 /// the actual rate is 0 B/s.
+///
+/// This is the positional best-effort fallback chain. Prefer
+/// [`deserialize_agent_metrics_versioned`] when the agent's advertised wire
+/// version is available; this entry point is for unversioned (legacy) agents.
 pub fn deserialize_agent_metrics(bytes: &[u8]) -> Result<AgentMetrics, bincode::Error> {
     if bytes.len() > MAX_AGENT_PAYLOAD_BYTES as usize {
         return Err(Box::new(bincode::ErrorKind::SizeLimit));
@@ -441,6 +492,7 @@ pub fn deserialize_agent_metrics(bytes: &[u8]) -> Result<AgentMetrics, bincode::
             Err(_) => match bincode_options().deserialize::<LegacyDockerAgentMetrics>(bytes) {
                 Ok(mut metrics) => {
                     metrics.network.rate_fields_present = true;
+                    crate::services::metrics_service::record_legacy_fallback_used();
                     Ok(metrics.into())
                 }
                 Err(_) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
@@ -653,6 +705,95 @@ mod tests {
     fn deserialize_agent_metrics_rejects_oversized_payload() {
         let bytes = vec![0_u8; (MAX_AGENT_PAYLOAD_BYTES as usize) + 1];
         assert!(deserialize_agent_metrics(&bytes).is_err());
+    }
+
+    fn current_metrics(hostname: &str) -> AgentMetrics {
+        AgentMetrics {
+            hostname: hostname.into(),
+            timestamp: "2026-06-16T00:00:00Z".into(),
+            is_online: true,
+            system: system_metrics(),
+            network: NetworkTotal {
+                total_rx_bytes: 100,
+                total_tx_bytes: 200,
+                rx_bytes_per_sec: 0.0,
+                tx_bytes_per_sec: 0.0,
+                rate_fields_present: false,
+            },
+            load_average: LoadAverage::default(),
+            docker_containers: vec![],
+            ports: vec![],
+            agent_version: "0.5.0".into(),
+            cpu_cores: vec![],
+            network_interfaces: vec![],
+            docker_stats: vec![],
+        }
+    }
+
+    #[test]
+    fn versioned_current_decodes_directly() {
+        let bytes = bincode_options()
+            .serialize(&current_metrics("v1-box"))
+            .unwrap();
+        let decoded =
+            deserialize_agent_metrics_versioned(&bytes, Some(CURRENT_WIRE_VERSION)).unwrap();
+        assert_eq!(decoded.hostname, "v1-box");
+        // The direct path still marks zero-rate fields as present.
+        assert!(decoded.network.rate_fields_present);
+    }
+
+    #[test]
+    fn versioned_none_falls_back_to_legacy_chain() {
+        // A pre-versioning agent (no header → None) emitting the oldest shape
+        // must still decode via the fallback chain.
+        let legacy = LegacyAgentMetrics {
+            hostname: "legacy-box".into(),
+            timestamp: "2026-04-21T00:00:00Z".into(),
+            is_online: true,
+            system: legacy_system_metrics(),
+            network: LegacyNetworkTotal {
+                total_rx_bytes: 100,
+                total_tx_bytes: 200,
+            },
+            load_average: LoadAverage::default(),
+            docker_containers: vec![],
+            ports: vec![],
+            agent_version: "0.4.0".into(),
+            cpu_cores: vec![],
+            network_interfaces: vec![],
+            docker_stats: vec![],
+        };
+        let bytes = bincode_options().serialize(&legacy).unwrap();
+        let decoded = deserialize_agent_metrics_versioned(&bytes, None).unwrap();
+        assert_eq!(decoded.hostname, "legacy-box");
+        assert_eq!(decoded.network.total_rx_bytes, 100);
+    }
+
+    #[test]
+    fn versioned_unknown_version_falls_back() {
+        // A future version this server does not recognise must not be trusted
+        // for a direct decode; it falls through to the best-effort chain, which
+        // tries the current `AgentMetrics` shape first and so still succeeds for
+        // an append-only forward-compatible payload.
+        let bytes = bincode_options()
+            .serialize(&current_metrics("future-box"))
+            .unwrap();
+        let decoded = deserialize_agent_metrics_versioned(&bytes, Some(99)).unwrap();
+        assert_eq!(decoded.hostname, "future-box");
+    }
+
+    #[test]
+    fn versioned_current_rejects_corrupt_without_guessing() {
+        // Agent declares the current version but the payload is truncated.
+        // We must surface the error rather than silently mis-decoding it
+        // against an older shape via `allow_trailing_bytes()`.
+        let full = bincode_options()
+            .serialize(&current_metrics("corrupt-box"))
+            .unwrap();
+        let truncated = &full[..full.len() / 2];
+        assert!(
+            deserialize_agent_metrics_versioned(truncated, Some(CURRENT_WIRE_VERSION)).is_err()
+        );
     }
 }
 
