@@ -101,7 +101,7 @@ pub async fn process_metrics(
     // ── Lock region: only lightweight data manipulation ──
     // AlertMetricPoint is a Copy type (~20 B), so pushing inside the lock is trivially cheap.
     // Vec clones for HostStatusPayload are deferred until after the lock is released.
-    let (alert_actions, history_count, metrics_payload, needs_status) = {
+    let (alert_actions, history_count, metrics_payload, needs_status, alert_eval_now) = {
         let mut store = state.store.write().map_err(|e| {
             AppError::Internal(format!("Failed to acquire store write lock: {}", e))
         })?;
@@ -114,8 +114,9 @@ pub async fn process_metrics(
         record.last_known_hostname.clone_from(&hostname);
 
         // ── Push lightweight metric point + evict stale entries ──
+        let now = Instant::now();
         let point = AlertMetricPoint {
-            received_at: Instant::now(),
+            received_at: now,
             cpu_usage_percent: metrics.system.cpu_usage_percent,
             memory_usage_percent: metrics.system.memory_usage_percent,
         };
@@ -135,10 +136,11 @@ pub async fn process_metrics(
             &metrics.ports,
             &metrics.system.disks,
         );
-        let now = Instant::now();
-        let periodic_elapsed = record
-            .last_status_sent
-            .is_none_or(|t| t.elapsed() >= Duration::from_secs(STATUS_PERIODIC_INTERVAL_SECS));
+        let periodic_elapsed = record.last_status_sent.is_none_or(|t| {
+            now.checked_duration_since(t).is_some_and(|elapsed| {
+                elapsed >= Duration::from_secs(STATUS_PERIODIC_INTERVAL_SECS)
+            })
+        });
         let hash_changed = record.prev_status_hash != Some(new_hash);
 
         let needs_status = hash_changed || periodic_elapsed;
@@ -173,6 +175,7 @@ pub async fn process_metrics(
             alert_config,
             metrics,
             &metrics_payload.network_rate,
+            now,
         );
 
         tracing::info!(
@@ -182,7 +185,13 @@ pub async fn process_metrics(
             "📊 [Store] Recorded metrics"
         );
 
-        (alert_actions, history_count, metrics_payload, needs_status)
+        (
+            alert_actions,
+            history_count,
+            metrics_payload,
+            needs_status,
+            now,
+        )
         // ← RwLockWriteGuard is dropped here, releasing the lock immediately
     };
 
@@ -232,7 +241,7 @@ pub async fn process_metrics(
             AppError::Internal(format!("Failed to acquire store write lock: {}", e))
         })?;
         if let Some(record) = store.hosts.get_mut(target) {
-            update_alert_state_after_send(record, &alert_actions);
+            update_alert_state_after_send(record, &alert_actions, alert_eval_now);
         }
     }
 
@@ -397,13 +406,28 @@ mod tests {
 
     #[test]
     fn test_cooldown_elapsed_never_alerted_is_always_ready() {
-        assert!(cooldown_elapsed(None, 60));
+        assert!(cooldown_elapsed(None, 60, Instant::now()));
     }
 
     #[test]
     fn test_cooldown_elapsed_just_sent_is_not_ready() {
         let just_now = Instant::now();
-        assert!(!cooldown_elapsed(Some(just_now), 60));
+        assert!(!cooldown_elapsed(Some(just_now), 60, Instant::now()));
+    }
+
+    #[test]
+    fn test_cooldown_elapsed_uses_injected_now() {
+        let sent_at = Instant::now();
+        assert!(!cooldown_elapsed(
+            Some(sent_at),
+            60,
+            sent_at + Duration::from_secs(59)
+        ));
+        assert!(cooldown_elapsed(
+            Some(sent_at),
+            60,
+            sent_at + Duration::from_secs(60)
+        ));
     }
 
     // ── compute_status_hash ───────────────────────
@@ -477,7 +501,14 @@ mod tests {
         let metrics = make_metrics(5.0, 10.0, vec![]);
         let config = default_alert_config();
         let mut actions = Vec::new();
-        collect_load_alerts(&record, TEST_HOSTNAME, &config, &metrics, &mut actions);
+        collect_load_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &config,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::LoadOverload { .. }));
     }
@@ -488,7 +519,14 @@ mod tests {
         let metrics = make_metrics(1.0, 10.0, vec![]);
         let config = default_alert_config();
         let mut actions = Vec::new();
-        collect_load_alerts(&record, TEST_HOSTNAME, &config, &metrics, &mut actions);
+        collect_load_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &config,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -499,7 +537,14 @@ mod tests {
         let metrics = make_metrics(5.0, 10.0, vec![]);
         let config = default_alert_config();
         let mut actions = Vec::new();
-        collect_load_alerts(&record, TEST_HOSTNAME, &config, &metrics, &mut actions);
+        collect_load_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &config,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -510,7 +555,14 @@ mod tests {
         let metrics = make_metrics(1.0, 10.0, vec![]);
         let config = default_alert_config();
         let mut actions = Vec::new();
-        collect_load_alerts(&record, TEST_HOSTNAME, &config, &metrics, &mut actions);
+        collect_load_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &config,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::LoadRecovery { .. }));
     }
@@ -522,7 +574,7 @@ mod tests {
         let record = make_record_with_cpu_history(90.0, 3, false);
         let rule = default_cpu_rule();
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::CpuOverload { .. }));
     }
@@ -532,7 +584,7 @@ mod tests {
         let record = make_record_with_cpu_history(50.0, 3, false);
         let rule = default_cpu_rule();
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(actions.is_empty());
     }
 
@@ -541,7 +593,7 @@ mod tests {
         let record = make_record_with_cpu_history(90.0, 3, true);
         let rule = default_cpu_rule();
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(actions.is_empty());
     }
 
@@ -550,7 +602,7 @@ mod tests {
         let record = make_record_with_cpu_history(50.0, 3, true);
         let rule = default_cpu_rule();
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::CpuRecovery { .. }));
     }
@@ -560,7 +612,7 @@ mod tests {
         let record = make_record_with_cpu_history(90.0, 1, false);
         let rule = default_cpu_rule();
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(actions.is_empty());
     }
 
@@ -569,7 +621,7 @@ mod tests {
         let record = make_record();
         let rule = default_cpu_rule();
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(actions.is_empty());
     }
 
@@ -579,7 +631,7 @@ mod tests {
         let mut rule = default_cpu_rule();
         rule.enabled = false;
         let mut actions = Vec::new();
-        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_cpu_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(
             actions.is_empty(),
             "A disabled rule must not generate alerts"
@@ -593,7 +645,7 @@ mod tests {
         let record = make_record_with_memory_history(95.0, 3, false);
         let rule = default_memory_rule();
         let mut actions = Vec::new();
-        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::MemoryOverload { .. }));
     }
@@ -603,7 +655,7 @@ mod tests {
         let record = make_record_with_memory_history(50.0, 3, false);
         let rule = default_memory_rule();
         let mut actions = Vec::new();
-        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(actions.is_empty());
     }
 
@@ -612,7 +664,7 @@ mod tests {
         let record = make_record_with_memory_history(50.0, 3, true);
         let rule = default_memory_rule();
         let mut actions = Vec::new();
-        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::MemoryRecovery { .. }));
     }
@@ -623,7 +675,7 @@ mod tests {
         let mut rule = default_memory_rule();
         rule.enabled = false;
         let mut actions = Vec::new();
-        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, &mut actions);
+        collect_memory_alerts(&record, TEST_HOSTNAME, &rule, Instant::now(), &mut actions);
         assert!(
             actions.is_empty(),
             "A disabled rule must not generate alerts"
@@ -714,7 +766,7 @@ mod tests {
             threshold: 80.0,
             current: 90.0,
         }];
-        update_alert_state_after_send(&mut record, &actions);
+        update_alert_state_after_send(&mut record, &actions, Instant::now());
         assert!(record.alert_state.cpu_alerted);
         assert!(record.alert_state.last_cpu_alert.is_some());
     }
@@ -727,7 +779,7 @@ mod tests {
             hostname: "test".to_string(),
             current: 50.0,
         }];
-        update_alert_state_after_send(&mut record, &actions);
+        update_alert_state_after_send(&mut record, &actions, Instant::now());
         assert!(!record.alert_state.cpu_alerted);
     }
 
@@ -740,7 +792,7 @@ mod tests {
             threshold: 90.0,
             current: 95.0,
         }];
-        update_alert_state_after_send(&mut record, &actions);
+        update_alert_state_after_send(&mut record, &actions, Instant::now());
         assert!(record.alert_state.memory_alerted);
         assert!(record.alert_state.last_memory_alert.is_some());
     }
@@ -753,7 +805,7 @@ mod tests {
             hostname: "test".to_string(),
             current: 50.0,
         }];
-        update_alert_state_after_send(&mut record, &actions);
+        update_alert_state_after_send(&mut record, &actions, Instant::now());
         assert!(!record.alert_state.memory_alerted);
     }
 
@@ -764,7 +816,7 @@ mod tests {
             hostname: "test-host".to_string(),
             port: 80,
         }];
-        update_alert_state_after_send(&mut record, &actions);
+        update_alert_state_after_send(&mut record, &actions, Instant::now());
         assert!(record.alert_state.port_alerted.contains_key(&80));
     }
 
@@ -776,7 +828,7 @@ mod tests {
             hostname: "test-host".to_string(),
             port: 443,
         }];
-        update_alert_state_after_send(&mut record, &actions);
+        update_alert_state_after_send(&mut record, &actions, Instant::now());
         assert!(!record.alert_state.port_alerted.contains_key(&443));
     }
 
@@ -915,7 +967,14 @@ mod tests {
             write_bytes_per_sec: 0.0,
         }];
         let mut actions = Vec::new();
-        collect_disk_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_disk_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::DiskOverload { .. }));
     }
@@ -941,7 +1000,14 @@ mod tests {
             write_bytes_per_sec: 0.0,
         }];
         let mut actions = Vec::new();
-        collect_disk_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_disk_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -970,7 +1036,14 @@ mod tests {
             write_bytes_per_sec: 0.0,
         }];
         let mut actions = Vec::new();
-        collect_disk_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_disk_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -999,7 +1072,14 @@ mod tests {
             write_bytes_per_sec: 0.0,
         }];
         let mut actions = Vec::new();
-        collect_disk_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_disk_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::DiskRecovery { .. }));
     }
@@ -1025,7 +1105,14 @@ mod tests {
             write_bytes_per_sec: 0.0,
         }];
         let mut actions = Vec::new();
-        collect_disk_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_disk_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -1051,7 +1138,14 @@ mod tests {
             total_tx_bytes: 0,
         };
         let mut actions = Vec::new();
-        collect_network_alerts(&record, TEST_HOSTNAME, &rule, &rate, &mut actions);
+        collect_network_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &rate,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::NetworkOverload { .. }));
     }
@@ -1067,7 +1161,14 @@ mod tests {
             total_tx_bytes: 0,
         };
         let mut actions = Vec::new();
-        collect_network_alerts(&record, TEST_HOSTNAME, &rule, &rate, &mut actions);
+        collect_network_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &rate,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -1083,7 +1184,14 @@ mod tests {
             total_tx_bytes: 0,
         };
         let mut actions = Vec::new();
-        collect_network_alerts(&record, TEST_HOSTNAME, &rule, &rate, &mut actions);
+        collect_network_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &rate,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::NetworkRecovery { .. }));
     }
@@ -1105,7 +1213,14 @@ mod tests {
             },
         ];
         let mut actions = Vec::new();
-        collect_temperature_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_temperature_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         match &actions[0] {
             AlertAction::TemperatureOverload { sensor, .. } => assert_eq!(sensor, "cpu"),
@@ -1127,7 +1242,14 @@ mod tests {
             temperature_c: 100.0,
         }];
         let mut actions = Vec::new();
-        collect_temperature_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_temperature_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert!(actions.is_empty());
     }
 
@@ -1146,7 +1268,14 @@ mod tests {
             temperature_c: 40.0,
         }];
         let mut actions = Vec::new();
-        collect_temperature_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_temperature_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             actions[0],
@@ -1170,7 +1299,14 @@ mod tests {
             frequency_mhz: None,
         }];
         let mut actions = Vec::new();
-        collect_gpu_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_gpu_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::GpuOverload { .. }));
     }
@@ -1195,7 +1331,14 @@ mod tests {
             frequency_mhz: None,
         }];
         let mut actions = Vec::new();
-        collect_gpu_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_gpu_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::GpuRecovery { .. }));
     }
@@ -1219,7 +1362,14 @@ mod tests {
             health_status: None,
         }];
         let mut actions = Vec::new();
-        collect_docker_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_docker_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
 
         assert_eq!(actions.len(), 1);
         match &actions[0] {
@@ -1259,7 +1409,14 @@ mod tests {
             health_status: Some("healthy".into()),
         }];
         let mut actions = Vec::new();
-        collect_docker_alerts(&record, TEST_HOSTNAME, &rule, &metrics, &mut actions);
+        collect_docker_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &rule,
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
 
         assert_eq!(actions.len(), 1);
         assert!(matches!(
