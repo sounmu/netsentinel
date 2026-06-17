@@ -1,7 +1,7 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::models::agent_metrics::AgentMetrics;
-use crate::models::app_state::{AlertConfig, HostRecord, MetricAlertRule};
+use crate::models::app_state::{AlertConfig, AlertMetricPoint, HostRecord, MetricAlertRule};
 use crate::models::sse_payloads::NetworkRate;
 
 use super::alerts::{AlertAction, cooldown_elapsed};
@@ -59,47 +59,28 @@ pub(super) fn collect_cpu_alerts(
     rule: &MetricAlertRule,
     actions: &mut Vec<AlertAction>,
 ) {
-    if !rule.enabled || record.alert_history.is_empty() {
-        return;
-    }
-
-    let sustained = Duration::from_secs(rule.sustained_secs);
-    let recent_points: Vec<_> = record
-        .alert_history
-        .iter()
-        .rev()
-        .take_while(|p| p.received_at.elapsed() <= sustained)
-        .collect();
-
-    if recent_points.len() < 2 {
-        return;
-    }
-
-    let all_high = recent_points
-        .iter()
-        .all(|p| p.cpu_usage_percent as f64 > rule.threshold);
-    let latest_cpu = record
-        .alert_history
-        .back()
-        .map(|p| p.cpu_usage_percent)
-        .unwrap_or(0.0);
-
-    if all_high {
-        if !record.alert_state.cpu_alerted
-            && cooldown_elapsed(record.alert_state.last_cpu_alert, rule.cooldown_secs)
-        {
+    match sustained_percent_decision(
+        record,
+        rule,
+        record.alert_state.cpu_alerted,
+        record.alert_state.last_cpu_alert,
+        |p| p.cpu_usage_percent,
+    ) {
+        Some(SustainedPercentDecision::Overload { current }) => {
             actions.push(AlertAction::CpuOverload {
                 hostname: hostname.to_string(),
                 sustained_mins: rule.sustained_secs / 60,
                 threshold: rule.threshold,
-                current: latest_cpu,
+                current,
             });
         }
-    } else if record.alert_state.cpu_alerted {
-        actions.push(AlertAction::CpuRecovery {
-            hostname: hostname.to_string(),
-            current: latest_cpu,
-        });
+        Some(SustainedPercentDecision::Recovery { current }) => {
+            actions.push(AlertAction::CpuRecovery {
+                hostname: hostname.to_string(),
+                current,
+            });
+        }
+        None => {}
     }
 }
 
@@ -111,48 +92,74 @@ pub(super) fn collect_memory_alerts(
     rule: &MetricAlertRule,
     actions: &mut Vec<AlertAction>,
 ) {
-    if !rule.enabled || record.alert_history.is_empty() {
-        return;
-    }
-
-    let sustained = Duration::from_secs(rule.sustained_secs);
-    let recent_points: Vec<_> = record
-        .alert_history
-        .iter()
-        .rev()
-        .take_while(|p| p.received_at.elapsed() <= sustained)
-        .collect();
-
-    if recent_points.len() < 2 {
-        return;
-    }
-
-    let all_high = recent_points
-        .iter()
-        .all(|p| p.memory_usage_percent as f64 > rule.threshold);
-    let latest_mem = record
-        .alert_history
-        .back()
-        .map(|p| p.memory_usage_percent)
-        .unwrap_or(0.0);
-
-    if all_high {
-        if !record.alert_state.memory_alerted
-            && cooldown_elapsed(record.alert_state.last_memory_alert, rule.cooldown_secs)
-        {
+    match sustained_percent_decision(
+        record,
+        rule,
+        record.alert_state.memory_alerted,
+        record.alert_state.last_memory_alert,
+        |p| p.memory_usage_percent,
+    ) {
+        Some(SustainedPercentDecision::Overload { current }) => {
             actions.push(AlertAction::MemoryOverload {
                 hostname: hostname.to_string(),
                 sustained_mins: rule.sustained_secs / 60,
                 threshold: rule.threshold,
-                current: latest_mem,
+                current,
             });
         }
-    } else if record.alert_state.memory_alerted {
-        actions.push(AlertAction::MemoryRecovery {
-            hostname: hostname.to_string(),
-            current: latest_mem,
-        });
+        Some(SustainedPercentDecision::Recovery { current }) => {
+            actions.push(AlertAction::MemoryRecovery {
+                hostname: hostname.to_string(),
+                current,
+            });
+        }
+        None => {}
     }
+}
+
+enum SustainedPercentDecision {
+    Overload { current: f32 },
+    Recovery { current: f32 },
+}
+
+fn sustained_percent_decision(
+    record: &HostRecord,
+    rule: &MetricAlertRule,
+    is_alerted: bool,
+    last_alert: Option<Instant>,
+    value_of: impl Fn(&AlertMetricPoint) -> f32,
+) -> Option<SustainedPercentDecision> {
+    if !rule.enabled || record.alert_history.is_empty() {
+        return None;
+    }
+
+    let sustained = Duration::from_secs(rule.sustained_secs);
+    let mut recent_count = 0;
+    let mut all_high = true;
+    for point in record
+        .alert_history
+        .iter()
+        .rev()
+        .take_while(|p| p.received_at.elapsed() <= sustained)
+    {
+        recent_count += 1;
+        all_high &= value_of(point) as f64 > rule.threshold;
+    }
+
+    if recent_count < 2 {
+        return None;
+    }
+
+    let latest = record.alert_history.back().map(value_of).unwrap_or(0.0);
+
+    if all_high {
+        if !is_alerted && cooldown_elapsed(last_alert, rule.cooldown_secs) {
+            return Some(SustainedPercentDecision::Overload { current: latest });
+        }
+    } else if is_alerted {
+        return Some(SustainedPercentDecision::Recovery { current: latest });
+    }
+    None
 }
 
 // ── Load average overload check ──────────────
