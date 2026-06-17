@@ -17,19 +17,28 @@ pub(super) fn collect_alerts(
     alert_config: &AlertConfig,
     metrics: &AgentMetrics,
     network_rate: &NetworkRate,
+    now: Instant,
 ) -> Vec<AlertAction> {
     let mut actions = Vec::new();
 
-    collect_cpu_alerts(record, hostname, &alert_config.cpu, &mut actions);
-    collect_memory_alerts(record, hostname, &alert_config.memory, &mut actions);
-    collect_load_alerts(record, hostname, alert_config, metrics, &mut actions);
+    collect_cpu_alerts(record, hostname, &alert_config.cpu, now, &mut actions);
+    collect_memory_alerts(record, hostname, &alert_config.memory, now, &mut actions);
+    collect_load_alerts(record, hostname, alert_config, metrics, now, &mut actions);
     collect_port_alerts(record, hostname, metrics, &mut actions);
-    collect_disk_alerts(record, hostname, &alert_config.disk, metrics, &mut actions);
+    collect_disk_alerts(
+        record,
+        hostname,
+        &alert_config.disk,
+        metrics,
+        now,
+        &mut actions,
+    );
     collect_network_alerts(
         record,
         hostname,
         &alert_config.network,
         network_rate,
+        now,
         &mut actions,
     );
     collect_temperature_alerts(
@@ -37,14 +46,23 @@ pub(super) fn collect_alerts(
         hostname,
         &alert_config.temperature,
         metrics,
+        now,
         &mut actions,
     );
-    collect_gpu_alerts(record, hostname, &alert_config.gpu, metrics, &mut actions);
+    collect_gpu_alerts(
+        record,
+        hostname,
+        &alert_config.gpu,
+        metrics,
+        now,
+        &mut actions,
+    );
     collect_docker_alerts(
         record,
         hostname,
         &alert_config.docker,
         metrics,
+        now,
         &mut actions,
     );
 
@@ -57,6 +75,7 @@ pub(super) fn collect_cpu_alerts(
     record: &HostRecord,
     hostname: &str,
     rule: &MetricAlertRule,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     match sustained_percent_decision(
@@ -64,6 +83,7 @@ pub(super) fn collect_cpu_alerts(
         rule,
         record.alert_state.cpu_alerted,
         record.alert_state.last_cpu_alert,
+        now,
         |p| p.cpu_usage_percent,
     ) {
         Some(SustainedPercentDecision::Overload { current }) => {
@@ -90,6 +110,7 @@ pub(super) fn collect_memory_alerts(
     record: &HostRecord,
     hostname: &str,
     rule: &MetricAlertRule,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     match sustained_percent_decision(
@@ -97,6 +118,7 @@ pub(super) fn collect_memory_alerts(
         rule,
         record.alert_state.memory_alerted,
         record.alert_state.last_memory_alert,
+        now,
         |p| p.memory_usage_percent,
     ) {
         Some(SustainedPercentDecision::Overload { current }) => {
@@ -127,6 +149,7 @@ fn sustained_percent_decision(
     rule: &MetricAlertRule,
     is_alerted: bool,
     last_alert: Option<Instant>,
+    now: Instant,
     value_of: impl Fn(&AlertMetricPoint) -> f32,
 ) -> Option<SustainedPercentDecision> {
     if !rule.enabled || record.alert_history.is_empty() {
@@ -136,12 +159,10 @@ fn sustained_percent_decision(
     let sustained = Duration::from_secs(rule.sustained_secs);
     let mut recent_count = 0;
     let mut all_high = true;
-    for point in record
-        .alert_history
-        .iter()
-        .rev()
-        .take_while(|p| p.received_at.elapsed() <= sustained)
-    {
+    for point in record.alert_history.iter().rev().take_while(|p| {
+        now.checked_duration_since(p.received_at)
+            .is_some_and(|elapsed| elapsed <= sustained)
+    }) {
         recent_count += 1;
         all_high &= value_of(point) as f64 > rule.threshold;
     }
@@ -153,7 +174,7 @@ fn sustained_percent_decision(
     let latest = record.alert_history.back().map(value_of).unwrap_or(0.0);
 
     if all_high {
-        if !is_alerted && cooldown_elapsed(last_alert, rule.cooldown_secs) {
+        if !is_alerted && cooldown_elapsed(last_alert, rule.cooldown_secs, now) {
             return Some(SustainedPercentDecision::Overload { current: latest });
         }
     } else if is_alerted {
@@ -169,6 +190,7 @@ pub(super) fn collect_load_alerts(
     hostname: &str,
     alert_config: &AlertConfig,
     metrics: &AgentMetrics,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     let load_1min = metrics.load_average.one_min;
@@ -179,6 +201,7 @@ pub(super) fn collect_load_alerts(
             && cooldown_elapsed(
                 record.alert_state.last_load_alert,
                 alert_config.load_cooldown_secs,
+                now,
             )
         {
             actions.push(AlertAction::LoadOverload {
@@ -229,6 +252,7 @@ pub(super) fn collect_disk_alerts(
     hostname: &str,
     rule: &MetricAlertRule,
     metrics: &AgentMetrics,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     if !rule.enabled {
@@ -247,7 +271,7 @@ pub(super) fn collect_disk_alerts(
 
         if (usage as f64) > rule.threshold {
             if !was_alerted
-                && cooldown_elapsed(record.alert_state.last_disk_alert, rule.cooldown_secs)
+                && cooldown_elapsed(record.alert_state.last_disk_alert, rule.cooldown_secs, now)
             {
                 actions.push(AlertAction::DiskOverload {
                     hostname: hostname.to_string(),
@@ -273,6 +297,7 @@ pub(super) fn collect_network_alerts(
     hostname: &str,
     rule: &MetricAlertRule,
     rate: &NetworkRate,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     if !rule.enabled {
@@ -282,7 +307,11 @@ pub(super) fn collect_network_alerts(
     let aggregate = rate.rx_bytes_per_sec + rate.tx_bytes_per_sec;
     if aggregate > rule.threshold {
         if !record.alert_state.network_alerted
-            && cooldown_elapsed(record.alert_state.last_network_alert, rule.cooldown_secs)
+            && cooldown_elapsed(
+                record.alert_state.last_network_alert,
+                rule.cooldown_secs,
+                now,
+            )
         {
             actions.push(AlertAction::NetworkOverload {
                 hostname: hostname.to_string(),
@@ -305,6 +334,7 @@ pub(super) fn collect_temperature_alerts(
     hostname: &str,
     rule: &MetricAlertRule,
     metrics: &AgentMetrics,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     if !rule.enabled {
@@ -326,6 +356,7 @@ pub(super) fn collect_temperature_alerts(
                 && cooldown_elapsed(
                     record.alert_state.last_temperature_alert,
                     rule.cooldown_secs,
+                    now,
                 )
             {
                 actions.push(AlertAction::TemperatureOverload {
@@ -352,6 +383,7 @@ pub(super) fn collect_gpu_alerts(
     hostname: &str,
     rule: &MetricAlertRule,
     metrics: &AgentMetrics,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     if !rule.enabled {
@@ -370,7 +402,7 @@ pub(super) fn collect_gpu_alerts(
 
         if (current as f64) > rule.threshold {
             if !was_alerted
-                && cooldown_elapsed(record.alert_state.last_gpu_alert, rule.cooldown_secs)
+                && cooldown_elapsed(record.alert_state.last_gpu_alert, rule.cooldown_secs, now)
             {
                 actions.push(AlertAction::GpuOverload {
                     hostname: hostname.to_string(),
@@ -396,6 +428,7 @@ pub(super) fn collect_docker_alerts(
     hostname: &str,
     rule: &MetricAlertRule,
     metrics: &AgentMetrics,
+    now: Instant,
     actions: &mut Vec<AlertAction>,
 ) {
     if !rule.enabled {
@@ -414,7 +447,11 @@ pub(super) fn collect_docker_alerts(
 
         if !is_running {
             if !was_alerted
-                && cooldown_elapsed(record.alert_state.last_docker_alert, rule.cooldown_secs)
+                && cooldown_elapsed(
+                    record.alert_state.last_docker_alert,
+                    rule.cooldown_secs,
+                    now,
+                )
             {
                 actions.push(AlertAction::DockerContainerDown {
                     hostname: hostname.to_string(),

@@ -277,12 +277,22 @@ impl AlertAction {
 // ──────────────────────────────────────────────
 
 /// Returns true if the cooldown period has elapsed. Cooldown duration is injected for flexibility.
-pub(super) fn cooldown_elapsed(last_alert: Option<Instant>, cooldown_secs: u64) -> bool {
-    last_alert.is_none_or(|t| t.elapsed() >= Duration::from_secs(cooldown_secs))
+pub(super) fn cooldown_elapsed(
+    last_alert: Option<Instant>,
+    cooldown_secs: u64,
+    now: Instant,
+) -> bool {
+    last_alert.is_none_or(|t| {
+        now.checked_duration_since(t)
+            .is_some_and(|elapsed| elapsed >= Duration::from_secs(cooldown_secs))
+    })
 }
 
-pub(super) fn update_alert_state_after_send(record: &mut HostRecord, actions: &[AlertAction]) {
-    let now = Instant::now();
+pub(super) fn update_alert_state_after_send(
+    record: &mut HostRecord,
+    actions: &[AlertAction],
+    now: Instant,
+) {
     for action in actions {
         match action {
             AlertAction::CpuOverload { .. } => {
