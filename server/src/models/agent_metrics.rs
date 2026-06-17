@@ -10,6 +10,13 @@ fn bincode_options() -> impl bincode::Options {
         .allow_trailing_bytes()
 }
 
+fn strict_bincode_options() -> impl bincode::Options {
+    bincode::DefaultOptions::new()
+        .with_limit(MAX_AGENT_PAYLOAD_BYTES)
+        .with_fixint_encoding()
+        .reject_trailing_bytes()
+}
+
 /// Static system information returned by the agent's `GET /system-info` endpoint.
 /// Fetched on reconnection and every 24 hours.
 #[derive(Deserialize, Debug, Clone)]
@@ -457,7 +464,7 @@ pub fn deserialize_agent_metrics_versioned(
     }
 
     if wire_version == Some(CURRENT_WIRE_VERSION) {
-        let mut metrics = bincode_options().deserialize::<AgentMetrics>(bytes)?;
+        let mut metrics = strict_bincode_options().deserialize::<AgentMetrics>(bytes)?;
         metrics.network.rate_fields_present = true;
         return Ok(metrics);
     }
@@ -794,6 +801,19 @@ mod tests {
         assert!(
             deserialize_agent_metrics_versioned(truncated, Some(CURRENT_WIRE_VERSION)).is_err()
         );
+    }
+
+    #[test]
+    fn versioned_current_rejects_trailing_bytes() {
+        // A declared-current payload must match the current wire shape exactly.
+        // Extra bytes usually mean the agent appended a field but forgot to bump
+        // WIRE_VERSION, so accepting the prefix would silently drop data.
+        let mut bytes = bincode_options()
+            .serialize(&current_metrics("extra-box"))
+            .unwrap();
+        bytes.extend_from_slice(&[0, 1, 2, 3]);
+
+        assert!(deserialize_agent_metrics_versioned(&bytes, Some(CURRENT_WIRE_VERSION)).is_err());
     }
 }
 
