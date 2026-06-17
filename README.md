@@ -236,7 +236,7 @@ cargo run
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 chars). Every agent needs the same value. `bootstrap.sh` generates it via `openssl rand -hex 32`. |
+| `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 bytes). Every agent needs the same value. `bootstrap.sh` generates it via `openssl rand -hex 32`; server startup rejects empty, short, and known public example values. |
 | `GOOGLE_OAUTH_CLIENT_ID` | No | — | Optional Google OAuth web-client id. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | No | — | Optional Google OAuth web-client secret. Server-side only. |
 | `GOOGLE_OAUTH_REDIRECT_URI` | No | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. Required only when Google OAuth is enabled. |
@@ -281,7 +281,7 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | **Yes** | — | Must match server's `JWT_SECRET` |
+| `JWT_SECRET` | **Yes** | — | Must match server's generated `JWT_SECRET`; do not use example/placeholder values. |
 | `AGENT_PORT` | No | `9101` | Port the agent HTTP server listens on |
 | `AGENT_BIND` | No | `0.0.0.0` | Bind address. Use a Tailscale IP such as `100.x.y.z` to expose the native agent only on that interface. |
 

@@ -31,6 +31,7 @@ use sha2::{Digest, Sha256};
 
 use crate::errors::AppError;
 use crate::repositories::refresh_tokens_repo::{self, RefreshTokenRow};
+use crate::repositories::users_repo;
 
 /// Lifetime of a refresh token from issuance to hard expiry.
 pub const REFRESH_TTL_DAYS: i64 = 14;
@@ -196,6 +197,19 @@ pub async fn rotate(
         return Ok(handle_reuse_detected(pool, &row).await);
     }
 
+    if let Some(cutoff) = users_repo::revocation_cutoff_epoch(pool, row.user_id).await?
+        && row.issued_at.timestamp() < cutoff
+    {
+        tracing::warn!(
+            user_id = row.user_id,
+            row_id = row.id,
+            issued_at = row.issued_at.timestamp(),
+            cutoff,
+            "🔒 [Auth] Refresh token predates revocation cutoff — rejecting"
+        );
+        return Ok(RotateOutcome::Rejected);
+    }
+
     let new_plain = encode_plaintext(&random_token_bytes());
     let new_hash = hash_token(&new_plain);
     let new_expires_at = Utc::now() + Duration::days(REFRESH_TTL_DAYS);
@@ -299,6 +313,8 @@ pub async fn revoke_all_for_user(pool: &DbPool, user_id: i32) -> Result<(), AppE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
 
     #[test]
     fn test_hash_token_is_deterministic() {
@@ -333,5 +349,37 @@ mod tests {
         let s = encode_plaintext(&bytes);
         assert!(!s.contains('='), "base64url encoded token must not pad");
         assert!(!s.contains('+') && !s.contains('/'), "must be URL-safe");
+    }
+
+    async fn fresh_pool() -> DbPool {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(false)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Memory);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn rotate_rejects_tokens_older_than_revocation_cutoff() {
+        let pool = fresh_pool().await;
+        let user = users_repo::create_user(&pool, "alice", "hash-placeholder", "admin")
+            .await
+            .unwrap();
+        let issued = issue_new_family(&pool, user.id, None, None).await.unwrap();
+
+        sqlx::query("UPDATE users SET tokens_revoked_at = strftime('%s','now') + 1 WHERE id = ?1")
+            .bind(user.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let outcome = rotate(&pool, &issued.plaintext, None, None).await.unwrap();
+        assert!(matches!(outcome, RotateOutcome::Rejected));
     }
 }

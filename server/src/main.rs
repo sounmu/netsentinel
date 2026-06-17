@@ -22,6 +22,37 @@ use models::app_state::{AppState, LoginRateLimiter, MetricsStore};
 use routes::metrics_routes;
 use tokio::net::TcpListener;
 
+const FORBIDDEN_JWT_SECRETS: &[&str] = &["change_me_to_a_long_random_hex_string"];
+
+fn validate_jwt_secret(jwt_secret: &str) -> anyhow::Result<()> {
+    if jwt_secret.len() < 32 {
+        // `str::len()` returns *bytes*, not characters. The original message
+        // said "characters" which would mislead anyone passing a multi-byte
+        // UTF-8 secret through this check. RFC 7518 §3.2 specifies that the
+        // HS256 MAC key SHOULD be ≥ 256 bits (32 bytes), and that threshold
+        // is what this guard enforces — so we report bytes and cite the RFC
+        // so the number doesn't look arbitrary in a support thread later.
+        anyhow::bail!(
+            "JWT_SECRET is {} bytes — must be ≥ 32 bytes for adequate HS256 security\n\
+             (RFC 7518 §3.2 recommends ≥ 256 bits of keying material).\n\n\
+             Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
+             secret and invalidates every previously-issued JWT). Be sure to\n\
+             distribute the new value to every agent afterwards.",
+            jwt_secret.len()
+        );
+    }
+
+    if FORBIDDEN_JWT_SECRETS.contains(&jwt_secret.trim()) {
+        anyhow::bail!(
+            "JWT_SECRET uses a public example value and is not safe for HS256 signing.\n\n\
+             Regenerate with: `openssl rand -hex 32` or `./scripts/bootstrap.sh --force`,\n\
+             then distribute the same value to every agent."
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file (ignored if not present — env vars may come from Docker / systemd)
@@ -55,22 +86,7 @@ async fn main() -> anyhow::Result<()> {
              to .env. The SAME value must appear in every agent's .env."
         )
     })?;
-    if jwt_secret.len() < 32 {
-        // `str::len()` returns *bytes*, not characters. The original message
-        // said "characters" which would mislead anyone passing a multi-byte
-        // UTF-8 secret through this check. RFC 7518 §3.2 specifies that the
-        // HS256 MAC key SHOULD be ≥ 256 bits (32 bytes), and that threshold
-        // is what this guard enforces — so we report bytes and cite the RFC
-        // so the number doesn't look arbitrary in a support thread later.
-        anyhow::bail!(
-            "JWT_SECRET is {} bytes — must be ≥ 32 bytes for adequate HS256 security\n\
-             (RFC 7518 §3.2 recommends ≥ 256 bits of keying material).\n\n\
-             Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
-             secret and invalidates every previously-issued JWT). Be sure to\n\
-             distribute the new value to every agent afterwards.",
-            jwt_secret.len()
-        );
-    }
+    validate_jwt_secret(&jwt_secret)?;
     services::auth::init_encoding_key(&jwt_secret);
 
     let google_oauth = Arc::new(services::oauth::GoogleOAuthConfig::from_env()?);
@@ -565,6 +581,30 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("✅ Shutdown complete.");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jwt_secret_rejects_short_values() {
+        let err = validate_jwt_secret("too-short").unwrap_err().to_string();
+        assert!(err.contains("must be ≥ 32 bytes"));
+    }
+
+    #[test]
+    fn jwt_secret_rejects_public_example_value() {
+        let err = validate_jwt_secret("change_me_to_a_long_random_hex_string")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("public example value"));
+    }
+
+    #[test]
+    fn jwt_secret_accepts_random_length_secret() {
+        validate_jwt_secret("0123456789abcdef0123456789abcdef").unwrap();
+    }
 }
 
 async fn shutdown_signal() {
