@@ -255,6 +255,28 @@ pub async fn load_tokens_revoked_at(
     Ok(rows.into_iter().collect())
 }
 
+/// Return the latest persisted token cutoff for a user, considering both
+/// password changes and explicit session revocations.
+pub async fn revocation_cutoff_epoch(
+    pool: &DbPool,
+    user_id: i32,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT max(cutoff)
+        FROM (
+            SELECT password_changed_at AS cutoff FROM users WHERE id = ?1
+            UNION ALL
+            SELECT tokens_revoked_at AS cutoff FROM users WHERE id = ?1
+        )
+        WHERE cutoff IS NOT NULL
+        "#,
+    )
+    .bind(user_id)
+    .fetch_one(pool)
+    .await
+}
+
 #[cfg(test)]
 mod sqlite_tests {
     use super::*;
@@ -360,5 +382,28 @@ mod sqlite_tests {
         let changed = load_password_changed_at(&pool).await.unwrap();
         assert_eq!(changed.len(), 1);
         assert!(changed.contains_key(&b.id));
+    }
+
+    #[tokio::test]
+    async fn revocation_cutoff_returns_latest_source() {
+        let pool = fresh_pool().await;
+        let user = create_user(&pool, "alice", "hash-placeholder", "admin")
+            .await
+            .unwrap();
+
+        assert_eq!(revocation_cutoff_epoch(&pool, user.id).await.unwrap(), None);
+
+        sqlx::query(
+            "UPDATE users SET password_changed_at = 100, tokens_revoked_at = 200 WHERE id = ?1",
+        )
+        .bind(user.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            revocation_cutoff_epoch(&pool, user.id).await.unwrap(),
+            Some(200)
+        );
     }
 }

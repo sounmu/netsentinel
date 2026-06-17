@@ -399,9 +399,7 @@ pub async fn change_password(
 
     let now = chrono::Utc::now().timestamp();
     crate::services::auth::update_password_changed_at(user.id, now);
-    if let Err(e) = refresh_token::revoke_all_for_user(&state.db_pool, user.id).await {
-        tracing::warn!(err = ?e, user_id = user.id, "⚠️ [Auth] Failed to revoke refresh rows on password change");
-    }
+    refresh_token::revoke_all_for_user(&state.db_pool, user.id).await?;
 
     Ok(Json(serde_json::json!({ "success": true })))
 }
@@ -432,9 +430,7 @@ pub async fn logout(
     users_repo::revoke_user_tokens(&state.db_pool, user_id).await?;
     let now = chrono::Utc::now().timestamp();
     crate::services::auth::update_tokens_revoked_at(user_id, now);
-    if let Err(e) = refresh_token::revoke_all_for_user(&state.db_pool, user_id).await {
-        tracing::warn!(err = ?e, user_id, "⚠️ [Auth] Failed to revoke refresh rows on logout");
-    }
+    refresh_token::revoke_all_for_user(&state.db_pool, user_id).await?;
     tracing::info!(
         user_id,
         %username,
@@ -474,9 +470,7 @@ pub async fn admin_revoke_user_sessions(
     users_repo::revoke_user_tokens(&state.db_pool, user_id).await?;
     let now = chrono::Utc::now().timestamp();
     crate::services::auth::update_tokens_revoked_at(user_id, now);
-    if let Err(e) = refresh_token::revoke_all_for_user(&state.db_pool, user_id).await {
-        tracing::warn!(err = ?e, target_user_id = user_id, "⚠️ [Auth] Failed to revoke refresh rows on admin kill");
-    }
+    refresh_token::revoke_all_for_user(&state.db_pool, user_id).await?;
 
     tracing::warn!(
         admin = %admin.claims.username,
