@@ -1,13 +1,16 @@
-use crate::db::DbPool;
 use crate::models::agent_metrics::AgentMetrics;
 
 /// Persist collected agent metrics to the database.
 /// Batch-insert metrics for multiple hosts in a single query.
-/// Reduces DB round-trips from N (one per host) to 1 per scrape cycle.
-pub async fn insert_metrics_batch(
-    pool: &DbPool,
+/// Generic over `SqliteExecutor` so a scrape cycle can group online and
+/// offline batch inserts in one transaction.
+pub async fn insert_metrics_batch<'e, E>(
+    executor: E,
     batch: &[(&str, &AgentMetrics)],
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     if batch.is_empty() {
         return Ok(());
     }
@@ -55,15 +58,18 @@ pub async fn insert_metrics_batch(
             .push_bind(total_tx);
     });
 
-    qb.build().execute(pool).await?;
+    qb.build().execute(executor).await?;
     Ok(())
 }
 
 /// Batch-insert offline metric records for multiple unreachable hosts.
-pub async fn insert_offline_metrics_batch(
-    pool: &DbPool,
+pub async fn insert_offline_metrics_batch<'e, E>(
+    executor: E,
     batch: &[(&str, &str)],
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     if batch.is_empty() {
         return Ok(());
     }
@@ -87,6 +93,6 @@ pub async fn insert_offline_metrics_batch(
             .push_bind(0f64)
             .push_bind(0f64);
     });
-    qb.build().execute(pool).await?;
+    qb.build().execute(executor).await?;
     Ok(())
 }

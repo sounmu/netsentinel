@@ -278,7 +278,7 @@ pub async fn process_metrics(
     }
 
     // DB persistence is deferred — the caller (scraper) collects ProcessResults
-    // and batch-inserts all metrics in a single query per scrape cycle.
+    // and commits all metrics writes in a single transaction per scrape cycle.
 
     Ok(ProcessResult {
         log_msg: format!(

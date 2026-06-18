@@ -66,7 +66,7 @@ The production hub is a **single container**: Axum serves both `/api/*` and the 
 **Frontend route contract:** the host detail page is now the static route `/host/?key=<host_key>`. Because the bundle is exported as plain HTML with `trailingSlash: true`, the canonical URL keeps the trailing slash and the `host_key` is passed as a query parameter — resolved client-side via `useSearchParams()` instead of being encoded as a dynamic path segment.
 
 **Data flow:**
-1. Server schedules each registered agent by that host's `scrape_interval_secs` (10 s by default), batch-inserts metrics in a single query
+1. Server schedules each registered agent by that host's `scrape_interval_secs` (10 s by default), batch-inserts metrics in a single transaction
 2. Raw metrics stored in SQLite (3-day retention) + a 5-min rollup table (90-day retention) maintained by an in-process `rollup_worker` running on a 60-second tick. A daily `retention_worker` prunes each time-series table past its window.
 3. Browser loads the static bundle from the same origin as the API, then connects to the SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network rate + cumulative counters, disks, temperatures, and Docker stats for live chart overlay; `status` includes Docker lifecycle/Compose/health snapshots. Long-lived streams are cut when the session is revoked
 4. REST API with automatic downsampling: ≤6h raw, 6h-14d 5-min rollup, >14d 15-min re-aggregation

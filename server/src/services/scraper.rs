@@ -274,26 +274,33 @@ async fn scrape_all(
         }
     }
 
-    // ── Batch DB persistence (single round-trip per type) ──
-    if !online_batch.is_empty() {
-        let batch_refs: Vec<(&str, &AgentMetrics)> = online_batch
+    // ── Batch DB persistence (single transaction per scrape cycle) ──
+    if !online_batch.is_empty() || !offline_batch.is_empty() {
+        let online_refs: Vec<(&str, &AgentMetrics)> = online_batch
             .iter()
             .map(|(hk, m)| (hk.as_str(), m))
             .collect();
-        if let Err(e) = metrics_repo::insert_metrics_batch(&state.db_pool, &batch_refs).await {
-            tracing::error!(err = ?e, count = online_batch.len(), "⚠️ [Scraper] Batch online INSERT failed");
-        }
-    }
-
-    if !offline_batch.is_empty() {
-        let batch_refs: Vec<(&str, &str)> = offline_batch
+        let offline_refs: Vec<(&str, &str)> = offline_batch
             .iter()
             .map(|(hk, dn)| (hk.as_str(), dn.as_str()))
             .collect();
-        if let Err(e) =
-            metrics_repo::insert_offline_metrics_batch(&state.db_pool, &batch_refs).await
-        {
-            tracing::error!(err = ?e, count = offline_batch.len(), "⚠️ [Scraper] Batch offline INSERT failed");
+
+        let persist_result: Result<(), sqlx::Error> = async {
+            let mut tx = state.db_pool.begin().await?;
+            metrics_repo::insert_metrics_batch(&mut *tx, &online_refs).await?;
+            metrics_repo::insert_offline_metrics_batch(&mut *tx, &offline_refs).await?;
+            tx.commit().await?;
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = persist_result {
+            tracing::error!(
+                err = ?e,
+                online_count = online_batch.len(),
+                offline_count = offline_batch.len(),
+                "⚠️ [Scraper] Batch metrics transaction failed"
+            );
         }
     }
 
@@ -702,7 +709,7 @@ async fn handle_down(
     let host_key = target.to_string();
 
     // DB persistence is deferred — the caller (scrape_all) collects offline hosts
-    // and batch-inserts them in a single query per scrape cycle.
+    // and commits all metrics writes in a single transaction per scrape cycle.
 
     // ── Phase 1: store write lock (lightweight — alert state only) ──
     let (alert_msg, hostname, should_broadcast) = {
