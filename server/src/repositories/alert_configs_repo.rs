@@ -320,6 +320,7 @@ pub async fn bulk_upsert_host_configs(
     let total = host_keys.len().saturating_mul(requests.len());
     let mut out = Vec::with_capacity(total);
     let mut buffer: Vec<BulkUpsertRow<'_>> = Vec::with_capacity(CHUNK_ROWS.min(total));
+    let mut tx = pool.begin().await?;
 
     for hk in host_keys {
         for req in requests {
@@ -333,12 +334,13 @@ pub async fn bulk_upsert_host_configs(
                 cooldown_secs: req.cooldown_secs,
             });
             if buffer.len() >= CHUNK_ROWS {
-                flush_bulk_chunk(pool, &buffer, &mut out).await?;
+                flush_bulk_chunk(&mut *tx, &buffer, &mut out).await?;
                 buffer.clear();
             }
         }
     }
-    flush_bulk_chunk(pool, &buffer, &mut out).await?;
+    flush_bulk_chunk(&mut *tx, &buffer, &mut out).await?;
+    tx.commit().await?;
     Ok(out)
 }
 
@@ -357,11 +359,14 @@ struct BulkUpsertRow<'a> {
 /// SQLite statement. Extracted from `bulk_upsert_host_configs` because
 /// async closures still require awkward lifetime gymnastics — a plain
 /// async fn inherits the borrow checker's normal elision rules.
-async fn flush_bulk_chunk(
-    pool: &DbPool,
+async fn flush_bulk_chunk<'e, E>(
+    executor: E,
     chunk: &[BulkUpsertRow<'_>],
     out: &mut Vec<AlertConfigRow>,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     use sqlx::{QueryBuilder, Sqlite};
 
     if chunk.is_empty() {
@@ -394,7 +399,7 @@ async fn flush_bulk_chunk(
     qb.push(ALERT_CONFIG_COLUMNS);
     let rows = qb
         .build_query_as::<AlertConfigRow>()
-        .fetch_all(pool)
+        .fetch_all(executor)
         .await?;
     out.extend(rows);
     Ok(())
@@ -524,6 +529,35 @@ mod sqlite_tests {
         assert!(
             a.iter()
                 .any(|r| r.metric_type == MetricType::Cpu && r.threshold == 75.0)
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_upsert_rolls_back_successful_chunks_on_later_failure() {
+        let pool = fresh_pool().await;
+        let hosts = vec!["a:9101".to_string()];
+        let mut requests = Vec::with_capacity(4_001);
+
+        for _ in 0..4_000 {
+            requests.push(req(MetricType::Cpu, 70.0));
+        }
+        requests.push(UpsertAlertRequest {
+            sustained_secs: 3_601,
+            ..req(MetricType::Cpu, 95.0)
+        });
+
+        let err = bulk_upsert_host_configs(&pool, &hosts, &requests)
+            .await
+            .expect_err("second chunk must fail the sustained_secs CHECK");
+        assert!(
+            err.to_string().contains("CHECK"),
+            "expected a CHECK failure, got {err:#}"
+        );
+
+        let rows = get_host_configs(&pool, "a:9101").await.unwrap();
+        assert!(
+            rows.is_empty(),
+            "successful chunks must be rolled back with the failed bulk apply"
         );
     }
 
