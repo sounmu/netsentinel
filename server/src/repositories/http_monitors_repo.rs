@@ -184,50 +184,54 @@ pub async fn get_results(
 
 /// Per-monitor latest-result + 24 h uptime summaries.
 ///
-/// Previous shape issued **8 correlated subqueries per monitor** (3 for the
-/// latest row columns, then 2×2 repeated COUNT/SUM blocks inside the CASE).
-/// At 50 monitors that was 400 index lookups per request. This version
-/// tags each recent result with a `ROW_NUMBER()` window and picks the
-/// "latest" row via `MAX(CASE WHEN rn=1 THEN col END)`, so a single scan
-/// of `http_monitor_results` feeds both the latest-row columns and the
-/// aggregates. The `LEFT JOIN` preserves monitors that have no results yet.
+/// Each scalar subquery constrains `monitor_id` and the 24 h cutoff together,
+/// so SQLite can use `idx_http_results_monitor_time` instead of scanning all
+/// monitor results just to discard rows outside the recent window.
 pub async fn get_summaries(pool: &DbPool) -> Result<Vec<HttpMonitorSummary>, sqlx::Error> {
     sqlx::query_as::<_, HttpMonitorSummary>(
         r#"
-        WITH ranked AS (
+        WITH per_monitor AS MATERIALIZED (
             SELECT
-                monitor_id,
-                status_code,
-                response_time_ms,
-                error,
-                id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY monitor_id
-                    ORDER BY created_at DESC, id DESC
-                ) AS rn
-            FROM http_monitor_results
-            WHERE created_at >= strftime('%s','now') - 86400
+                m.id AS monitor_id,
+                (
+                    SELECT r.id
+                    FROM http_monitor_results r
+                    WHERE r.monitor_id = m.id
+                      AND r.created_at >= strftime('%s','now') - 86400
+                    ORDER BY r.created_at DESC, r.id DESC
+                    LIMIT 1
+                ) AS latest_id,
+                (
+                    SELECT COUNT(*)
+                    FROM http_monitor_results r
+                    WHERE r.monitor_id = m.id
+                      AND r.created_at >= strftime('%s','now') - 86400
+                ) AS total_checks,
+                (
+                    SELECT COALESCE(SUM(CASE
+                        WHEN r.error IS NULL AND r.status_code IS NOT NULL THEN 1 ELSE 0
+                    END), 0)
+                    FROM http_monitor_results r
+                    WHERE r.monitor_id = m.id
+                      AND r.created_at >= strftime('%s','now') - 86400
+                ) AS successful_checks
+            FROM http_monitors m
         )
         SELECT
-            m.id AS monitor_id,
-            MAX(CASE WHEN r.rn = 1 THEN r.status_code END)      AS latest_status_code,
-            MAX(CASE WHEN r.rn = 1 THEN r.response_time_ms END) AS latest_response_time_ms,
-            MAX(CASE WHEN r.rn = 1 THEN r.error END)            AS latest_error,
-            COUNT(r.id)                                         AS total_checks,
-            COALESCE(SUM(CASE
-                WHEN r.error IS NULL AND r.status_code IS NOT NULL THEN 1 ELSE 0
-            END), 0) AS successful_checks,
+            pm.monitor_id,
+            latest.status_code      AS latest_status_code,
+            latest.response_time_ms AS latest_response_time_ms,
+            latest.error            AS latest_error,
+            pm.total_checks,
+            pm.successful_checks,
             CASE
-                WHEN COUNT(r.id) > 0 THEN
-                    100.0 * CAST(SUM(CASE
-                        WHEN r.error IS NULL AND r.status_code IS NOT NULL THEN 1 ELSE 0
-                    END) AS REAL) / CAST(COUNT(r.id) AS REAL)
+                WHEN pm.total_checks > 0 THEN
+                    100.0 * CAST(pm.successful_checks AS REAL) / CAST(pm.total_checks AS REAL)
                 ELSE 0.0
             END AS uptime_pct
-        FROM http_monitors m
-        LEFT JOIN ranked r ON r.monitor_id = m.id
-        GROUP BY m.id
-        ORDER BY m.id
+        FROM per_monitor pm
+        LEFT JOIN http_monitor_results latest ON latest.id = pm.latest_id
+        ORDER BY pm.monitor_id
         "#,
     )
     .fetch_all(pool)
