@@ -164,43 +164,53 @@ pub async fn get_results(
 
 /// Per-monitor latest-result + 24 h uptime summaries.
 ///
-/// Same transformation as `http_monitors_repo::get_summaries` — see that
-/// function's comment for the full rationale. Window + LEFT JOIN + single
-/// GROUP BY replaces the previous 8 correlated subqueries per monitor.
+/// Same shape as `http_monitors_repo::get_summaries`: every result lookup is
+/// scoped by `monitor_id` and the 24 h cutoff so the per-monitor time index is
+/// used predictably.
 pub async fn get_summaries(pool: &DbPool) -> Result<Vec<PingMonitorSummary>, sqlx::Error> {
     sqlx::query_as::<_, PingMonitorSummary>(
         r#"
-        WITH ranked AS (
+        WITH per_monitor AS MATERIALIZED (
             SELECT
-                monitor_id,
-                rtt_ms,
-                success,
-                error,
-                id,
-                ROW_NUMBER() OVER (
-                    PARTITION BY monitor_id
-                    ORDER BY created_at DESC, id DESC
-                ) AS rn
-            FROM ping_results
-            WHERE created_at >= strftime('%s','now') - 86400
+                m.id AS monitor_id,
+                (
+                    SELECT r.id
+                    FROM ping_results r
+                    WHERE r.monitor_id = m.id
+                      AND r.created_at >= strftime('%s','now') - 86400
+                    ORDER BY r.created_at DESC, r.id DESC
+                    LIMIT 1
+                ) AS latest_id,
+                (
+                    SELECT COUNT(*)
+                    FROM ping_results r
+                    WHERE r.monitor_id = m.id
+                      AND r.created_at >= strftime('%s','now') - 86400
+                ) AS total_checks,
+                (
+                    SELECT COALESCE(SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END), 0)
+                    FROM ping_results r
+                    WHERE r.monitor_id = m.id
+                      AND r.created_at >= strftime('%s','now') - 86400
+                ) AS successful_checks
+            FROM ping_monitors m
         )
         SELECT
-            m.id AS monitor_id,
-            MAX(CASE WHEN r.rn = 1 THEN r.rtt_ms END)   AS latest_rtt_ms,
-            MAX(CASE WHEN r.rn = 1 THEN r.success END)  AS latest_success,
-            MAX(CASE WHEN r.rn = 1 THEN r.error END)    AS latest_error,
-            COUNT(r.id)                                 AS total_checks,
-            COALESCE(SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END), 0) AS successful_checks,
+            pm.monitor_id,
+            latest.rtt_ms  AS latest_rtt_ms,
+            latest.success AS latest_success,
+            latest.error   AS latest_error,
+            pm.total_checks,
+            pm.successful_checks,
             CASE
-                WHEN COUNT(r.id) > 0 THEN
-                    100.0 * CAST(SUM(CASE WHEN r.success = 1 THEN 1 ELSE 0 END) AS REAL)
-                          / CAST(COUNT(r.id) AS REAL)
+                WHEN pm.total_checks > 0 THEN
+                    100.0 * CAST(pm.successful_checks AS REAL)
+                          / CAST(pm.total_checks AS REAL)
                 ELSE 0.0
             END AS uptime_pct
-        FROM ping_monitors m
-        LEFT JOIN ranked r ON r.monitor_id = m.id
-        GROUP BY m.id
-        ORDER BY m.id
+        FROM per_monitor pm
+        LEFT JOIN ping_results latest ON latest.id = pm.latest_id
+        ORDER BY pm.monitor_id
         "#,
     )
     .fetch_all(pool)
