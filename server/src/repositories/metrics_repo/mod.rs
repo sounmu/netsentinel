@@ -407,11 +407,13 @@ mod sqlite_tests {
     #[tokio::test]
     async fn uptime_returns_empty_until_rollup_worker_runs() {
         // Without the rollup worker running, uptime queries see an empty
-        // aggregate — this test pins that expectation so nobody
-        // accidentally turns the dashboard silent.
+        // aggregate. Batch uptime still returns known hosts with 0.0 so
+        // public status does not need to special-case missing map entries.
         let pool = fresh_pool().await;
         let batch = fetch_batch_uptime_pct(&pool, 7).await.unwrap();
-        assert!(batch.is_empty());
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch.get("h1:9101"), Some(&0.0));
+        assert_eq!(batch.get("h2:9101"), Some(&0.0));
 
         let summary = fetch_uptime(&pool, "h1:9101", 7, chrono_tz::Tz::UTC)
             .await
