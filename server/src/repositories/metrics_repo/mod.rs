@@ -167,6 +167,40 @@ mod sqlite_tests {
     }
 
     #[tokio::test]
+    async fn host_summaries_respects_per_host_scrape_interval() {
+        let pool = fresh_pool().await;
+        sqlx::query("UPDATE hosts SET scrape_interval_secs = 120 WHERE host_key = 'h2:9101'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let m = synthetic_metrics();
+        insert_metrics_batch(&pool, &[("h1:9101", &m), ("h2:9101", &m)])
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE metrics SET timestamp = strftime('%s','now') - 180 \
+             WHERE host_key IN ('h1:9101', 'h2:9101')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let summaries = fetch_host_summaries(&pool).await.unwrap();
+        let h1 = summaries
+            .iter()
+            .find(|s| s.host_key == "h1:9101")
+            .expect("h1 present");
+        let h2 = summaries
+            .iter()
+            .find(|s| s.host_key == "h2:9101")
+            .expect("h2 present");
+
+        assert!(!h1.is_online, "default 10s scrape is stale after 180s");
+        assert!(h2.is_online, "120s scrape remains fresh for 3 intervals");
+    }
+
+    #[tokio::test]
     async fn metrics_range_raw_tier_returns_rows_within_window() {
         let pool = fresh_pool().await;
         let m = synthetic_metrics();

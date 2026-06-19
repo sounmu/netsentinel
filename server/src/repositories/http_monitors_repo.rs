@@ -174,7 +174,7 @@ pub async fn get_results(
 ) -> Result<Vec<HttpMonitorResult>, sqlx::Error> {
     sqlx::query_as::<_, HttpMonitorResult>(
         "SELECT id, monitor_id, status_code, response_time_ms, error, created_at \
-         FROM http_monitor_results WHERE monitor_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+         FROM http_monitor_results WHERE monitor_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2",
     )
     .bind(monitor_id)
     .bind(limit)
@@ -327,6 +327,13 @@ mod sqlite_tests {
         insert_result(&pool, m.id, Some(503), Some(10), Some("bad gateway"))
             .await
             .unwrap();
+        sqlx::query(
+            "UPDATE http_monitor_results SET created_at = strftime('%s','now') WHERE monitor_id = ?1",
+        )
+        .bind(m.id)
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let summaries = get_summaries(&pool).await.unwrap();
         assert_eq!(summaries.len(), 1);
@@ -345,6 +352,10 @@ mod sqlite_tests {
 
         let results = get_results(&pool, m.id, 100).await.unwrap();
         assert_eq!(results.len(), 4);
+        assert!(
+            results.windows(2).all(|pair| pair[0].id > pair[1].id),
+            "same-second result history should use id DESC as a stable tie-breaker"
+        );
     }
 
     #[tokio::test]

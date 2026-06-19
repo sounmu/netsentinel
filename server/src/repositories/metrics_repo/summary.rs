@@ -6,7 +6,10 @@ use super::rows::HostSummary;
 
 /// Fetch all monitored hosts with their latest online status.
 ///
-/// A host is online iff its most recent metric landed in the past 60 s.
+/// A host is online iff its most recent online metric is still fresh for that
+/// host's configured scrape cadence. The default 10 s scrape keeps the old
+/// 60 s grace window; slower per-host scrapes get a 3-interval window so they
+/// do not appear offline between expected samples.
 /// The query probes the latest recent row per host through
 /// `idx_metrics_host_time_id_online`. That keeps the hot dashboard/status
 /// path bounded by host count and the 5-minute window instead of materialising
@@ -17,14 +20,18 @@ pub async fn fetch_host_summaries(pool: &DbPool) -> Result<Vec<HostSummary>, sql
         SELECT
             h.host_key,
             h.display_name,
-            COALESCE(m.is_online = 1 AND m.timestamp > strftime('%s','now') - 60, 0) AS is_online,
+            COALESCE(
+                m.is_online = 1
+                AND m.timestamp > strftime('%s','now') - max(60, h.scrape_interval_secs * 3),
+                0
+            ) AS is_online,
             m.timestamp AS last_seen
         FROM hosts h
         LEFT JOIN metrics m ON m.id = (
             SELECT x.id
             FROM metrics x
             WHERE x.host_key = h.host_key
-              AND x.timestamp > strftime('%s','now') - 300
+              AND x.timestamp > strftime('%s','now') - max(300, h.scrape_interval_secs * 3)
             ORDER BY x.timestamp DESC, x.id DESC
             LIMIT 1
         )
