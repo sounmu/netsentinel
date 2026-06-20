@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useSSE } from "@/app/lib/sse-context";
+import {
+  useSSEConnection,
+  useSSEMetricsMap,
+  useSSEStatusMap,
+} from "@/app/lib/sse-context";
 import {
   getHostStatus,
   STATUS_DOT_CLASS,
@@ -53,7 +57,9 @@ interface HostRow {
 }
 
 export default function HomePage() {
-  const { metricsMap, statusMap, isConnected } = useSSE();
+  const metricsMap = useSSEMetricsMap();
+  const statusMap = useSSEStatusMap();
+  const isConnected = useSSEConnection();
   const { t } = useI18n();
 
   const { hosts, onlineCount, offlineCount } = useMemo(() => {

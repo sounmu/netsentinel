@@ -14,7 +14,7 @@ import {
 } from "recharts";
 import { fetcher, getMetricsRangeUrl } from "@/app/lib/api";
 import { MetricsRow, DockerContainerStats } from "@/app/types/metrics";
-import { useSSE } from "@/app/lib/sse-context";
+import { useSSEStatusMap } from "@/app/lib/sse-context";
 import { useI18n } from "@/app/i18n/I18nContext";
 
 // ─── Chart palette (per-container colors, cycling) ──────
@@ -54,7 +54,7 @@ function formatAxisTime(ts: string, locale: string): string {
 
 export default function DockerCharts({ hostKey }: DockerChartsProps) {
   const { t, locale } = useI18n();
-  const { statusMap } = useSSE();
+  const statusMap = useSSEStatusMap();
   const [mode, setMode] = useState<MetricMode>("cpu");
 
   // Fetch last 1 hour of data (SWR deduplicates with TimeSeriesChart if same range)

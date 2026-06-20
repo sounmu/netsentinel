@@ -46,7 +46,23 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Network-first strategy: try network, fall back to cache
+  if (url.pathname.startsWith("/_next/static/")) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok && response.type === "basic") {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Network-first strategy for non-hashed static assets: try network, fall back to cache.
   event.respondWith(
     fetch(request)
       .then((response) => {

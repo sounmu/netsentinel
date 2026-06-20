@@ -4,7 +4,11 @@ import dynamic from "next/dynamic";
 import { notFound, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
-import { useSSE } from "@/app/lib/sse-context";
+import {
+  useSSEConnection,
+  useSSEMetricsMap,
+  useSSEStatusMap,
+} from "@/app/lib/sse-context";
 import { fetcher, getHostsUrl } from "@/app/lib/api";
 import DockerGrid from "@/app/components/DockerGrid";
 const TimeSeriesChart = dynamic(
@@ -102,7 +106,9 @@ export default function HostPageClient() {
   const decodedHostKey = searchParams.get("key") ?? "";
   const router = useRouter();
 
-  const { metricsMap, statusMap, isConnected } = useSSE();
+  const metricsMap = useSSEMetricsMap();
+  const statusMap = useSSEStatusMap();
+  const isConnected = useSSEConnection();
   const { t } = useI18n();
   const nowSecs = useNowSeconds();
 
