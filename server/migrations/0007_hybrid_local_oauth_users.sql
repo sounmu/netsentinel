@@ -1,70 +1,38 @@
 -- Hybrid auth: local username/password + optional Google OAuth linkage.
 --
--- Rebuilds the 0001 `users` table to:
---   * make password_hash nullable (OAuth-only accounts have no local password),
---   * add oauth_provider / oauth_subject / email / display_name / picture_url,
---   * enforce UNIQUE (oauth_provider, oauth_subject) for OAuth identity,
---   * keep username UNIQUE so existing local accounts log in unchanged.
+-- Adds Google OAuth profile/linkage columns while preserving the original
+-- `users` table identity. Keeping the table in place is intentional:
+-- `refresh_tokens.user_id` has `ON DELETE CASCADE`, and SQLx runs SQLite
+-- migrations in a transaction. A DROP/RENAME table rebuild would therefore
+-- delete existing refresh-token sessions before PRAGMA foreign_keys=OFF could
+-- take effect.
 --
--- Existing rows from 0001 keep their password_hash and get email := username
--- as a placeholder; operators backfill real emails afterwards. Refresh tokens
--- carry over via the FK rebind below.
+-- `password_hash` remains NOT NULL for existing SQLite installs. OAuth-only
+-- users store an internal sentinel hash value; repository SELECTs expose that
+-- sentinel as NULL so application code still treats the account as having no
+-- local password until one is set.
 
-PRAGMA foreign_keys=OFF;
+ALTER TABLE users
+    ADD COLUMN oauth_provider TEXT;
 
-CREATE TABLE IF NOT EXISTS users_new (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    username              TEXT NOT NULL UNIQUE,
-    password_hash         TEXT,
-    oauth_provider        TEXT,
-    oauth_subject         TEXT,
-    email                 TEXT NOT NULL,
-    display_name          TEXT,
-    picture_url           TEXT,
-    role                  TEXT NOT NULL DEFAULT 'viewer'
-                          CHECK (role IN ('admin','viewer')),
-    password_changed_at   INTEGER,
-    tokens_revoked_at     INTEGER,
-    created_at            INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    updated_at            INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-    UNIQUE (oauth_provider, oauth_subject)
-) STRICT;
+ALTER TABLE users
+    ADD COLUMN oauth_subject TEXT;
 
-INSERT INTO users_new (
-    id,
-    username,
-    password_hash,
-    oauth_provider,
-    oauth_subject,
-    email,
-    display_name,
-    picture_url,
-    role,
-    password_changed_at,
-    tokens_revoked_at,
-    created_at,
-    updated_at
-)
-SELECT
-    id,
-    username,
-    password_hash,
-    NULL,
-    NULL,
-    username,
-    NULL,
-    NULL,
-    role,
-    password_changed_at,
-    tokens_revoked_at,
-    created_at,
-    updated_at
-FROM users;
+ALTER TABLE users
+    ADD COLUMN email TEXT NOT NULL DEFAULT '';
 
-DROP TABLE users;
-ALTER TABLE users_new RENAME TO users;
+ALTER TABLE users
+    ADD COLUMN display_name TEXT;
+
+ALTER TABLE users
+    ADD COLUMN picture_url TEXT;
+
+UPDATE users
+SET email = username
+WHERE email = '';
 
 CREATE INDEX IF NOT EXISTS idx_users_email
     ON users(email);
 
-PRAGMA foreign_keys=ON;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth_subject
+    ON users(oauth_provider, oauth_subject);
