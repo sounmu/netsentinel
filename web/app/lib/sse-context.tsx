@@ -39,15 +39,25 @@ interface SSEContextValue {
   removeHost: (hostKey: string) => void;
 }
 
-const SSEContext = createContext<SSEContextValue>({
-  metricsMap: {},
-  statusMap: {},
-  isConnected: false,
+interface SSEHostListValue {
+  hostList: HostStatusPayload[];
+  onlineCount: number;
+  offlineCount: number;
+}
+
+const emptyMetricsMap: Record<string, HostMetricsPayload> = {};
+const emptyStatusMap: Record<string, HostStatusPayload> = {};
+const noopRemoveHost = () => {};
+
+const SSEMetricsContext = createContext<Record<string, HostMetricsPayload>>(emptyMetricsMap);
+const SSEStatusContext = createContext<Record<string, HostStatusPayload>>(emptyStatusMap);
+const SSEConnectionContext = createContext(false);
+const SSEHostListContext = createContext<SSEHostListValue>({
   hostList: [],
   onlineCount: 0,
   offlineCount: 0,
-  removeHost: () => {},
 });
+const SSERemoveHostContext = createContext<(hostKey: string) => void>(noopRemoveHost);
 
 // ──────────────────────────────────────────
 // Reconnection settings
@@ -304,7 +314,39 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
     return { hostList: list, onlineCount: online, offlineCount: offline };
   }, [statusMap]);
 
-  const contextValue = useMemo(
+  const hostListValue = useMemo(
+    () => ({ hostList, onlineCount, offlineCount }),
+    [hostList, onlineCount, offlineCount],
+  );
+
+  return (
+    <SSEConnectionContext.Provider value={isConnected}>
+      <SSERemoveHostContext.Provider value={removeHost}>
+        <SSEStatusContext.Provider value={statusMap}>
+          <SSEHostListContext.Provider value={hostListValue}>
+            <SSEMetricsContext.Provider value={metricsMap}>
+              {children}
+            </SSEMetricsContext.Provider>
+          </SSEHostListContext.Provider>
+        </SSEStatusContext.Provider>
+      </SSERemoveHostContext.Provider>
+    </SSEConnectionContext.Provider>
+  );
+}
+
+// ──────────────────────────────────────────
+// Hook
+// ──────────────────────────────────────────
+
+/** Custom hook to access SSE data */
+export function useSSE(): SSEContextValue {
+  const metricsMap = useSSEMetricsMap();
+  const statusMap = useSSEStatusMap();
+  const isConnected = useSSEConnection();
+  const { hostList, onlineCount, offlineCount } = useSSEHostList();
+  const removeHost = useRemoveHost();
+
+  return useMemo(
     () => ({
       metricsMap,
       statusMap,
@@ -316,19 +358,24 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
     }),
     [metricsMap, statusMap, isConnected, hostList, onlineCount, offlineCount, removeHost],
   );
-
-  return (
-    <SSEContext.Provider value={contextValue}>
-      {children}
-    </SSEContext.Provider>
-  );
 }
 
-// ──────────────────────────────────────────
-// Hook
-// ──────────────────────────────────────────
+export function useSSEMetricsMap(): Record<string, HostMetricsPayload> {
+  return useContext(SSEMetricsContext);
+}
 
-/** Custom hook to access SSE data */
-export function useSSE(): SSEContextValue {
-  return useContext(SSEContext);
+export function useSSEStatusMap(): Record<string, HostStatusPayload> {
+  return useContext(SSEStatusContext);
+}
+
+export function useSSEConnection(): boolean {
+  return useContext(SSEConnectionContext);
+}
+
+export function useSSEHostList(): SSEHostListValue {
+  return useContext(SSEHostListContext);
+}
+
+export function useRemoveHost(): (hostKey: string) => void {
+  return useContext(SSERemoveHostContext);
 }

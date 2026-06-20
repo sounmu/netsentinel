@@ -5,7 +5,11 @@ import { useMemo, useState } from "react";
 import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Box, Server } from "lucide-react";
 import { PageHeader } from "@/app/components/PageHeader";
 import { useI18n } from "@/app/i18n/I18nContext";
-import { useSSE } from "@/app/lib/sse-context";
+import {
+  useSSEConnection,
+  useSSEMetricsMap,
+  useSSEStatusMap,
+} from "@/app/lib/sse-context";
 import { formatBytes } from "@/app/lib/formatters";
 import {
   getHostStatus,
@@ -216,7 +220,9 @@ function SortHeader({
 
 export default function ContainersPage() {
   const { t } = useI18n();
-  const { metricsMap, statusMap, isConnected } = useSSE();
+  const metricsMap = useSSEMetricsMap();
+  const statusMap = useSSEStatusMap();
+  const isConnected = useSSEConnection();
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 

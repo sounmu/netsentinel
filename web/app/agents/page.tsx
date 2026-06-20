@@ -10,7 +10,7 @@ import {
 } from "@/app/lib/api";
 import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
-import { useSSE } from "@/app/lib/sse-context";
+import { useRemoveHost } from "@/app/lib/sse-context";
 import { toast } from "sonner";
 import { PageHeader } from "@/app/components/PageHeader";
 
@@ -54,7 +54,7 @@ function parseContainers(s: string): string[] {
 
 export default function AgentsPage() {
   const { t } = useI18n();
-  const { removeHost } = useSSE();
+  const removeHost = useRemoveHost();
   const { data: hosts, isLoading, error, mutate } = useSWR<HostSummary[]>(
     getHostsUrl(), fetcher, { revalidateOnFocus: false }
   );

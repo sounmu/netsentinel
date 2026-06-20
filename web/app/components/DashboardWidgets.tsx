@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import { Settings2, Plus, X, Grip } from "lucide-react";
-import { useSSE } from "@/app/lib/sse-context";
+import { useSSEMetricsMap, useSSEStatusMap } from "@/app/lib/sse-context";
 import { useI18n } from "@/app/i18n/I18nContext";
 import {
   DashboardWidget,
@@ -17,7 +17,8 @@ import {
 
 export default function DashboardWidgets() {
   const { t, locale } = useI18n();
-  const { metricsMap, statusMap } = useSSE();
+  const metricsMap = useSSEMetricsMap();
+  const statusMap = useSSEStatusMap();
   const { data: savedWidgets, mutate } = useSWR<DashboardWidget[]>(
     getDashboardUrl(), fetcher, { revalidateOnFocus: false }
   );

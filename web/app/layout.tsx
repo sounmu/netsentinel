@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { IBM_Plex_Sans_KR, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
-import { Toaster } from "sonner";
 import { Providers } from "./providers";
 
 /// Inline FOUC-killer for the dark/light theme. Runs synchronously in
@@ -16,7 +15,7 @@ const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('theme');if(
 
 const ibmPlexSans = IBM_Plex_Sans_KR({
   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["400", "500", "600"],
   variable: "--font-ibm-plex-sans",
   display: "swap",
 });
@@ -63,7 +62,6 @@ export default function RootLayout({
       </head>
       <body>
         <a href="#main-content" className="skip-to-content">Skip to content</a>
-        <Toaster position="top-right" theme="system" richColors duration={4000} />
         <Providers>{children}</Providers>
       </body>
     </html>
