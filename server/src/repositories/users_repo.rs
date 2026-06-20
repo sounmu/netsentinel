@@ -3,6 +3,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::DbPool;
 
+/// Stored in `users.password_hash` for OAuth-only accounts (the column is
+/// NOT NULL on existing installs). Every SELECT/RETURNING in this module maps
+/// it back to NULL via `NULLIF(password_hash, '…')`, so application code sees
+/// `password_hash = None` and treats the account as having no local password.
+///
+/// NOTE: this literal is also hardcoded inside the `NULLIF(...)` clauses of the
+/// queries below (sqlx can't bind a parameter into every RETURNING reliably).
+/// If you change this value, update those clauses in lock-step.
+const OAUTH_PASSWORD_SENTINEL: &str = "__netsentinel_oauth_no_local_password__";
+
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct UserRow {
     pub id: i32,
@@ -55,7 +65,9 @@ pub async fn count_users(pool: &DbPool) -> Result<i64, sqlx::Error> {
 pub async fn find_by_id(pool: &DbPool, user_id: i32) -> Result<Option<UserRow>, sqlx::Error> {
     sqlx::query_as::<_, UserRow>(
         r#"
-        SELECT id, username, password_hash, oauth_provider, oauth_subject,
+        SELECT id, username,
+               NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
+               oauth_provider, oauth_subject,
                email, display_name, picture_url,
                role, created_at, updated_at
         FROM users
@@ -73,7 +85,9 @@ pub async fn find_by_username(
 ) -> Result<Option<UserRow>, sqlx::Error> {
     sqlx::query_as::<_, UserRow>(
         r#"
-        SELECT id, username, password_hash, oauth_provider, oauth_subject,
+        SELECT id, username,
+               NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
+               oauth_provider, oauth_subject,
                email, display_name, picture_url,
                role, created_at, updated_at
         FROM users
@@ -92,7 +106,9 @@ pub async fn find_by_oauth_subject(
 ) -> Result<Option<UserRow>, sqlx::Error> {
     sqlx::query_as::<_, UserRow>(
         r#"
-        SELECT id, username, password_hash, oauth_provider, oauth_subject,
+        SELECT id, username,
+               NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
+               oauth_provider, oauth_subject,
                email, display_name, picture_url,
                role, created_at, updated_at
         FROM users
@@ -115,7 +131,9 @@ pub async fn create_user<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
         r#"
         INSERT INTO users (username, password_hash, email, role)
         VALUES (?1, ?2, ?1, ?3)
-        RETURNING id, username, password_hash, oauth_provider, oauth_subject,
+        RETURNING id, username,
+                  NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
+                  oauth_provider, oauth_subject,
                   email, display_name, picture_url, role, created_at, updated_at
         "#,
     )
@@ -139,15 +157,20 @@ pub async fn upsert_oauth_user<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite
 ) -> Result<UserRow, sqlx::Error> {
     sqlx::query_as::<_, UserRow>(
         r#"
-        INSERT INTO users (username, oauth_provider, oauth_subject, email, display_name, picture_url, role)
-        VALUES (?3, ?1, ?2, ?3, ?4, ?5, ?6)
+        INSERT INTO users (
+            username, password_hash, oauth_provider, oauth_subject,
+            email, display_name, picture_url, role
+        )
+        VALUES (?3, ?7, ?1, ?2, ?3, ?4, ?5, ?6)
         ON CONFLICT(oauth_provider, oauth_subject) DO UPDATE SET
             email = excluded.email,
             display_name = excluded.display_name,
             picture_url = excluded.picture_url,
             role = excluded.role,
             updated_at = strftime('%s','now')
-        RETURNING id, username, password_hash, oauth_provider, oauth_subject,
+        RETURNING id, username,
+                  NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
+                  oauth_provider, oauth_subject,
                   email, display_name, picture_url, role, created_at, updated_at
         "#,
     )
@@ -157,6 +180,7 @@ pub async fn upsert_oauth_user<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite
     .bind(display_name)
     .bind(picture_url)
     .bind(role)
+    .bind(OAUTH_PASSWORD_SENTINEL)
     .fetch_one(executor)
     .await
 }
@@ -186,7 +210,9 @@ pub async fn link_google_user(
             role = ?7,
             updated_at = strftime('%s','now')
         WHERE id = ?1
-        RETURNING id, username, password_hash, oauth_provider, oauth_subject,
+        RETURNING id, username,
+                  NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
+                  oauth_provider, oauth_subject,
                   email, display_name, picture_url, role, created_at, updated_at
         "#,
     )
@@ -319,10 +345,14 @@ mod sqlite_tests {
         assert_eq!(user.display_name.as_deref(), Some("Alice"));
         assert_eq!(user.role, "admin");
         assert!(user.id >= 1);
+        // OAuth-only accounts store the sentinel hash, which every read path
+        // must surface as None so local-password login stays disabled.
+        assert!(user.password_hash.is_none());
 
         assert_eq!(count_users(&pool).await.unwrap(), 1);
 
         let by_id = find_by_id(&pool, user.id).await.unwrap().unwrap();
+        assert!(by_id.password_hash.is_none());
         assert_eq!(by_id.email, "alice@example.com");
         assert_eq!(
             by_id.picture_url.as_deref(),
