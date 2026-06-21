@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Activity, ArrowDown, ArrowUp, ArrowUpDown, Box, Server } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Box, Server } from "lucide-react";
 import { PageHeader } from "@/app/components/PageHeader";
 import { useI18n } from "@/app/i18n/I18nContext";
 import {
@@ -332,17 +332,25 @@ export default function ContainersPage() {
         )}
 
         {!isLoading && rows.length === 0 && (
-          <div className="px-6 py-12 text-center text-[var(--md-sys-color-on-surface-variant)]">
-            <Activity size={36} className="mx-auto mb-3 opacity-30" />
+          <div
+            style={{
+              padding: "48px 24px",
+              textAlign: "center",
+              color: "var(--text-muted)",
+            }}
+          >
+            <Box size={40} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
             <div
-              className="mb-1.5 text-[var(--md-sys-color-on-surface)]"
-              style={{ font: "var(--md-sys-typescale-title-medium)" }}
+              style={{
+                fontSize: 15,
+                fontWeight: 600,
+                marginBottom: 6,
+                color: "var(--text-primary)",
+              }}
             >
               {t.containers.noContainers}
             </div>
-            <div style={{ font: "var(--md-sys-typescale-body-medium)" }}>
-              {t.containers.noContainersHint}
-            </div>
+            <div style={{ fontSize: 13 }}>{t.containers.noContainersHint}</div>
           </div>
         )}
 

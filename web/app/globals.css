@@ -1200,6 +1200,18 @@ body {
   flex-shrink: 0;
 }
 
+.host-detail-half-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--md-sys-spacing-lg);
+  align-items: stretch;
+  margin-bottom: 16px;
+}
+
+.host-detail-half-grid > .glass-card {
+  min-width: 0;
+}
+
 /* ── Toggle Switch (Material Design 3) ────────────
    Track: 52×32 with a 2px outline in the off state, filled with primary
    in the on state. Thumb grows from 16dp (off) → 24dp (on) → 28dp
@@ -1335,6 +1347,10 @@ body {
   }
 
   .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .host-detail-half-grid {
     grid-template-columns: 1fr;
   }
 
