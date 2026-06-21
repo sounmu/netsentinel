@@ -170,19 +170,35 @@ pub async fn sse_handler(
 /// recovery path: a slow consumer that triggers resync must not stall the
 /// scraper's `last_known_status.write()` while `serde_json` walks every host.
 fn build_initial_events(state: &AppState) -> Result<Vec<Event>, AppError> {
-    let snapshot: Vec<Arc<crate::models::sse_payloads::HostStatusPayload>> = {
+    let status_snapshot: Vec<Arc<crate::models::sse_payloads::HostStatusPayload>> = {
         let lks = state
             .last_known_status
             .read()
             .map_err(|e| AppError::Internal(format!("last_known_status lock: {e}")))?;
         lks.values().map(Arc::clone).collect()
     };
-    Ok(snapshot
-        .into_iter()
-        .filter_map(|payload| {
-            serde_json::to_string(&*payload)
-                .ok()
-                .map(|json| Event::default().event("status").data(json))
-        })
-        .collect())
+    // Replay the last metrics too so the dashboard's live columns
+    // (CPU/RAM/load/network) fill in on connect instead of waiting a full
+    // scrape cycle for the first `metrics` broadcast. Drained the same way:
+    // cheap refcount bumps under the read lock, JSON encode outside it.
+    let metrics_snapshot: Vec<Arc<crate::models::sse_payloads::HostMetricsPayload>> = {
+        let lkm = state
+            .last_known_metrics
+            .read()
+            .map_err(|e| AppError::Internal(format!("last_known_metrics lock: {e}")))?;
+        lkm.values().map(Arc::clone).collect()
+    };
+
+    let status_events = status_snapshot.into_iter().filter_map(|payload| {
+        serde_json::to_string(&*payload)
+            .ok()
+            .map(|json| Event::default().event("status").data(json))
+    });
+    let metrics_events = metrics_snapshot.into_iter().filter_map(|payload| {
+        serde_json::to_string(&*payload)
+            .ok()
+            .map(|json| Event::default().event("metrics").data(json))
+    });
+    // Status first (builds the rows), then metrics (fills the values).
+    Ok(status_events.chain(metrics_events).collect())
 }

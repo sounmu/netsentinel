@@ -522,8 +522,16 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
             // Pre-serialize once at the producer; every subscriber gets a
             // cheap `Arc<str>` clone instead of paying for its own
             // `serde_json::to_string` (see `SseBroadcast` docs).
-            if let Some(ev) = SseBroadcast::metrics(&result.metrics_payload) {
+            let metrics_arc = Arc::new(result.metrics_payload);
+            if let Some(ev) = SseBroadcast::metrics(&metrics_arc) {
                 let _ = ctx.state.sse_tx.send(ev);
+            }
+            // Cache the latest metrics so the SSE handshake can replay the
+            // live scalars (CPU/RAM/load/network) immediately — without this
+            // a freshly-connected dashboard waits a full scrape cycle for the
+            // first `metrics` broadcast. SAFETY: no .await while lock is held.
+            if let Ok(mut lkm) = ctx.state.last_known_metrics.write() {
+                lkm.insert(ctx.target.clone(), Arc::clone(&metrics_arc));
             }
 
             if let Some(status_payload) = result.status_payload {

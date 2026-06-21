@@ -229,6 +229,7 @@ async fn main() -> anyhow::Result<()> {
         max_db_connections,
         sse_tx,
         last_known_status: Arc::new(RwLock::new(HashMap::new())),
+        last_known_metrics: Arc::new(RwLock::new(HashMap::new())),
         metrics_query_cache: metrics_query_cache.clone(),
         chart_metrics_query_cache: chart_metrics_query_cache.clone(),
         // Per-IP OAuth bucket. Google owns credential verification; this
