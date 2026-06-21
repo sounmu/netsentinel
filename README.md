@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 ![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)
-![Next.js](https://img.shields.io/badge/next.js-16-black.svg)
+![Next.js](https://img.shields.io/badge/next.js-16.2.9-black.svg)
 
 ---
 
@@ -383,7 +383,7 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 | Component | Technology |
 |---|---|
 | Backend | Rust, Axum 0.8, sqlx 0.8 (bundled SQLite), lettre (SMTP) |
-| Frontend | Next.js 16, React 19, Recharts, SWR, sonner (toast) |
+| Frontend | Next.js 16.2.9, React 19, Recharts, SWR, sonner (toast) |
 | Agent | Rust, tokio, sysinfo, bollard (Docker), nvml-wrapper (NVIDIA GPU) |
 | Database | Embedded SQLite (WAL mode) — one file under `data/` |
 | Deployment | Docker Compose (single container), Cloudflare Tunnel |
