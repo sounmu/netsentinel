@@ -114,6 +114,8 @@ cp .env.example .env          # edit AGENT_AUTH_SECRET, AGENT_PORT, AGENT_BIND
 cargo run
 ```
 
+Docker metrics default to `DOCKER_METRICS_MODE=auto`: the agent collects container data when Docker is reachable and keeps serving OS metrics quietly when Docker Desktop, OrbStack, or the Linux daemon is stopped. Use `enabled` when Docker is expected on that host and connection failures should stay visible, or `disabled` to skip Docker entirely.
+
 ### Web (Next.js)
 
 ```bash

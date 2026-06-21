@@ -10,6 +10,7 @@ use bollard::models::{ContainerInspectResponse, EventMessage};
 use bollard::query_parameters::{EventsOptions, ListContainersOptions, StatsOptions};
 use futures_util::{StreamExt, stream};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -24,6 +25,51 @@ pub(crate) type DockerCache = Arc<RwLock<Vec<DockerContainer>>>;
 pub(crate) type DockerStatsCache = Arc<RwLock<HashMap<String, DockerContainerStats>>>;
 
 const DOCKER_INSPECT_CONCURRENCY: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DockerMetricsMode {
+    /// Collect Docker metrics when a daemon is available. Missing Docker is treated as optional.
+    Auto,
+    /// Treat Docker as expected and keep warning when the daemon cannot be reached.
+    Enabled,
+    /// Do not touch Docker at all.
+    Disabled,
+}
+
+impl DockerMetricsMode {
+    pub(crate) fn from_env() -> anyhow::Result<Self> {
+        std::env::var("DOCKER_METRICS_MODE")
+            .map(|value| value.parse())
+            .unwrap_or(Ok(Self::Auto))
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    fn is_auto(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+}
+
+impl FromStr for DockerMetricsMode {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" => Ok(Self::Auto),
+            "enabled" | "enable" | "on" | "true" | "1" => Ok(Self::Enabled),
+            "disabled" | "disable" | "off" | "false" | "0" => Ok(Self::Disabled),
+            other => anyhow::bail!(
+                "DOCKER_METRICS_MODE must be one of auto, enabled, or disabled; got '{other}'"
+            ),
+        }
+    }
+}
 
 /// Performs a one-time full container list fetch at agent startup to seed the cache.
 /// Subsequent updates are incremental via the Docker Events stream — no need to call
@@ -161,7 +207,7 @@ fn status_from_state(state: Option<&bollard::models::ContainerState>) -> String 
 /// Subscribes to the Docker Events API and applies incremental cache updates on container
 /// lifecycle changes. Instead of polling the full container list every 15 seconds, I/O only
 /// happens when an event fires — significantly reducing Docker daemon load and network I/O.
-pub(crate) async fn docker_event_listener(cache: DockerCache) {
+pub(crate) async fn docker_event_listener(cache: DockerCache, mode: DockerMetricsMode) {
     let mut backoff = Duration::from_secs(5);
     const MAX_BACKOFF: Duration = Duration::from_secs(300);
     /// Mirrors `docker_stats_poller::HEALTHY_DURATION_FOR_RESET` — the
@@ -172,16 +218,34 @@ pub(crate) async fn docker_event_listener(cache: DockerCache) {
     /// above any realistic startup race.
     const HEALTHY_DURATION_FOR_RESET: Duration = Duration::from_secs(60);
 
+    let mut was_connected = false;
+
     loop {
         let docker = match Docker::connect_with_local_defaults() {
             Ok(d) => d,
             Err(e) => {
-                tracing::error!(err = ?e, "⚠️  [Docker Events] Connection failed, retrying in {}s", backoff.as_secs());
+                if mode.is_auto() {
+                    if was_connected {
+                        tracing::warn!(
+                            err = ?e,
+                            "Docker daemon became unavailable; Docker lifecycle metrics paused"
+                        );
+                        was_connected = false;
+                        cache.write().await.clear();
+                    }
+                } else {
+                    tracing::error!(err = ?e, "⚠️  [Docker Events] Connection failed, retrying in {}s", backoff.as_secs());
+                }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(MAX_BACKOFF);
                 continue;
             }
         };
+
+        if mode.is_auto() && !was_connected {
+            tracing::info!("Docker daemon is available; starting Docker lifecycle metrics");
+        }
+        was_connected = true;
 
         // On reconnect, reload the full state to catch any events missed while the stream was down.
         let refreshed = initial_docker_load(&docker).await;
@@ -491,6 +555,7 @@ mod image_match_tests {
 pub(crate) async fn docker_stats_poller(
     lifecycle_cache: DockerCache,
     stats_cache: DockerStatsCache,
+    mode: DockerMetricsMode,
 ) {
     let mut interval = tokio::time::interval(Duration::from_secs(10));
     // If the Docker daemon pauses responding for minutes, `tokio::interval`
@@ -510,17 +575,35 @@ pub(crate) async fn docker_stats_poller(
     /// 10 s backoff, hammering the recovering daemon with reconnects.
     const HEALTHY_DURATION_FOR_RESET: Duration = Duration::from_secs(60);
 
+    let mut was_connected = false;
+
     loop {
         // Connect once, reuse across multiple poll cycles
         let docker = match Docker::connect_with_local_defaults() {
             Ok(d) => d,
             Err(e) => {
-                tracing::warn!(err = ?e, "Docker stats connection failed, retrying in {}s", backoff.as_secs());
+                if mode.is_auto() {
+                    if was_connected {
+                        tracing::warn!(
+                            err = ?e,
+                            "Docker daemon became unavailable; Docker resource metrics paused"
+                        );
+                        was_connected = false;
+                        stats_cache.write().await.clear();
+                    }
+                } else {
+                    tracing::warn!(err = ?e, "Docker stats connection failed, retrying in {}s", backoff.as_secs());
+                }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(MAX_BACKOFF);
                 continue;
             }
         };
+
+        if mode.is_auto() && !was_connected {
+            tracing::info!("Docker daemon is available; starting Docker resource metrics");
+        }
+        was_connected = true;
         let connected_at = std::time::Instant::now();
 
         // Inner loop: reuse this docker client until an error forces reconnect

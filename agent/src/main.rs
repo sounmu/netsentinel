@@ -26,7 +26,8 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
 use crate::docker_cache::{
-    DockerCache, DockerStatsCache, docker_event_listener, docker_stats_poller, initial_docker_load,
+    DockerCache, DockerMetricsMode, DockerStatsCache, docker_event_listener, docker_stats_poller,
+    initial_docker_load,
 };
 use crate::handler::{metrics_handler, system_info_handler};
 use crate::models::MetricsQuery;
@@ -63,13 +64,34 @@ async fn main() -> anyhow::Result<()> {
     let hostname = System::host_name().unwrap_or_else(|| "unknown".to_string());
     tracing::info!(hostname = %hostname, "Node configuration");
 
+    let docker_metrics_mode = DockerMetricsMode::from_env()?;
+    tracing::info!(
+        mode = docker_metrics_mode.as_str(),
+        "Docker metrics mode configured"
+    );
+
     // Initialise the Docker in-memory cache with a one-time full container list fetch at startup.
     let docker_cache: DockerCache = Arc::new(RwLock::new(
-        match Docker::connect_with_local_defaults() {
-            Ok(docker) => initial_docker_load(&docker).await,
-            Err(e) => {
-                tracing::warn!(err = ?e, "⚠️  [Docker] Initial connection failed, cache starts empty");
-                vec![]
+        if docker_metrics_mode == DockerMetricsMode::Disabled {
+            tracing::info!("Docker metrics disabled by DOCKER_METRICS_MODE");
+            vec![]
+        } else {
+            match Docker::connect_with_local_defaults() {
+                Ok(docker) => initial_docker_load(&docker).await,
+                Err(e) => {
+                    if docker_metrics_mode == DockerMetricsMode::Auto {
+                        tracing::info!(
+                            err = ?e,
+                            "Docker daemon unavailable; Docker metrics paused until it becomes reachable"
+                        );
+                    } else {
+                        tracing::warn!(
+                            err = ?e,
+                            "⚠️  [Docker] Initial connection failed, cache starts empty"
+                        );
+                    }
+                    vec![]
+                }
             }
         },
     ));
@@ -78,16 +100,26 @@ async fn main() -> anyhow::Result<()> {
     let docker_stats_cache: DockerStatsCache =
         Arc::new(RwLock::new(std::collections::HashMap::new()));
 
-    // Spawn the Docker Events API listener as a background task.
-    // Incrementally updates the cache only when container lifecycle events fire —
-    // far cheaper than periodic polling.
-    let docker_handle = tokio::spawn(docker_event_listener(docker_cache.clone()));
+    let docker_tasks = if docker_metrics_mode == DockerMetricsMode::Disabled {
+        None
+    } else {
+        // Spawn the Docker Events API listener as a background task.
+        // Incrementally updates the cache only when container lifecycle events fire —
+        // far cheaper than periodic polling.
+        let docker_handle = tokio::spawn(docker_event_listener(
+            docker_cache.clone(),
+            docker_metrics_mode,
+        ));
 
-    // Spawn the container stats poller — polls resource usage every 10s via one-shot stats API.
-    let stats_handle = tokio::spawn(docker_stats_poller(
-        docker_cache.clone(),
-        docker_stats_cache.clone(),
-    ));
+        // Spawn the container stats poller — polls resource usage every 10s via one-shot stats API.
+        let stats_handle = tokio::spawn(docker_stats_poller(
+            docker_cache.clone(),
+            docker_stats_cache.clone(),
+            docker_metrics_mode,
+        ));
+
+        Some((docker_handle, stats_handle))
+    };
 
     // Compress /metrics responses when the caller advertises Accept-Encoding: gzip.
     // bincode is already binary but repeated strings (process names, container images,
@@ -165,22 +197,28 @@ async fn main() -> anyhow::Result<()> {
         .context("Agent server encountered a fatal error")?;
 
     tracing::info!("🛑 Shutting down agent...");
-    docker_handle.abort();
-    stats_handle.abort();
-    // Wait briefly for the aborted tasks to actually drop their resources.
-    // `abort()` only sends a cancellation signal — drop of `bollard::Docker`
-    // and the in-flight HTTP/Unix socket handles happens during the next
-    // `.await` of the task, which can take a few hundred ms on a busy
-    // host. A 2 s timeout is plenty for clean teardown but bounds the
-    // worst-case shutdown latency for `launchctl unload` /
-    // `systemctl stop` callers; if the join overruns we log + exit so
-    // the process supervisor doesn't escalate to SIGKILL.
-    let drain = async {
-        let _ = tokio::join!(docker_handle, stats_handle);
-    };
-    match tokio::time::timeout(std::time::Duration::from_secs(2), drain).await {
-        Ok(_) => tracing::info!("✅ Agent shutdown complete."),
-        Err(_) => tracing::warn!("⚠️ Background tasks did not drain within 2 s; exiting anyway."),
+    if let Some((docker_handle, stats_handle)) = docker_tasks {
+        docker_handle.abort();
+        stats_handle.abort();
+        // Wait briefly for the aborted tasks to actually drop their resources.
+        // `abort()` only sends a cancellation signal — drop of `bollard::Docker`
+        // and the in-flight HTTP/Unix socket handles happens during the next
+        // `.await` of the task, which can take a few hundred ms on a busy
+        // host. A 2 s timeout is plenty for clean teardown but bounds the
+        // worst-case shutdown latency for `launchctl unload` /
+        // `systemctl stop` callers; if the join overruns we log + exit so
+        // the process supervisor doesn't escalate to SIGKILL.
+        let drain = async {
+            let _ = tokio::join!(docker_handle, stats_handle);
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(2), drain).await {
+            Ok(_) => tracing::info!("✅ Agent shutdown complete."),
+            Err(_) => {
+                tracing::warn!("⚠️ Background tasks did not drain within 2 s; exiting anyway.");
+            }
+        }
+    } else {
+        tracing::info!("✅ Agent shutdown complete.");
     }
 
     Ok(())
