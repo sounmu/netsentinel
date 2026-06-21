@@ -58,7 +58,7 @@ const JWT_ROTATE_AFTER_SECS: u64 = 40;
 /// Cap the decoded agent response body before deserialization.
 const MAX_AGENT_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
 
-/// Cached agent JWT shared across all hosts in a scrape cycle.
+/// Cached legacy agent JWT shared across hosts without per-agent secrets.
 struct JwtCache {
     token: String,
     minted_at: Instant,
@@ -155,16 +155,6 @@ async fn scrape_all(
     // Pre-register any newly added hosts in last_known_status
     state.pre_populate_status(&snapshot.hosts);
 
-    // Mint (or reuse) a single agent JWT for this entire cycle — agents accept
-    // any token that is unexpired, so all hosts share the same one.
-    let jwt_token = match JwtCache::get_or_refresh(jwt_cache) {
-        Ok(t) => t.to_string(),
-        Err(e) => {
-            tracing::error!(err = %e, "❌ [Scraper] Failed to mint agent JWT");
-            return;
-        }
-    };
-
     last_scrape_attempt
         .retain(|host_key, _| snapshot.hosts.iter().any(|host| host.host_key == *host_key));
     backoff_map.retain(|host_key, _| snapshot.hosts.iter().any(|host| host.host_key == *host_key));
@@ -208,6 +198,31 @@ async fn scrape_all(
                 continue;
             }
         }
+
+        let jwt_token = match host.agent_auth_secret.as_deref() {
+            Some(secret) => match crate::services::auth::generate_agent_jwt_with_secret(secret) {
+                Ok(token) => token,
+                Err(e) => {
+                    tracing::error!(
+                        host_key = %host.host_key,
+                        err = %e,
+                        "❌ [Scraper] Failed to mint per-agent JWT"
+                    );
+                    continue;
+                }
+            },
+            None => match JwtCache::get_or_refresh(jwt_cache) {
+                Ok(t) => t.to_string(),
+                Err(e) => {
+                    tracing::error!(
+                        host_key = %host.host_key,
+                        err = %e,
+                        "❌ [Scraper] Failed to mint legacy agent JWT"
+                    );
+                    continue;
+                }
+            },
+        };
 
         last_scrape_attempt.insert(host.host_key.clone(), Instant::now());
         due_contexts.push(ScrapeContext {

@@ -2,10 +2,11 @@
 # ─────────────────────────────────────────────────────────────────────
 # NetSentinel agent — updater
 #
-# Re-runs `install-agent.sh` using the JWT_SECRET, AGENT_PORT, and
-# AGENT_BIND already saved in /etc/netsentinel/agent.env. This is the
-# same install-is-update path the agent has always supported, but
-# without making the operator paste the JWT_SECRET again on every host.
+# Re-runs `install-agent.sh` using the AGENT_AUTH_SECRET (or legacy
+# JWT_SECRET), AGENT_PORT, and AGENT_BIND already saved in
+# /etc/netsentinel/agent.env. This is the same install-is-update path
+# the agent has always supported, without making the operator paste
+# credentials again on every host.
 #
 # Typical usage on each agent host:
 #
@@ -32,7 +33,7 @@ NetSentinel agent updater
 
 Refreshes the agent binary (and unit file) using the credentials
 already written to ${CONFIG_FILE} by install-agent.sh. You almost
-never need to pass --jwt-secret or --port again.
+never need to pass auth secrets or --port again.
 
 Usage:
   sudo bash update-agent.sh [options]
@@ -95,25 +96,30 @@ Looks like the agent was never installed via install-agent.sh on this
 host (or the config lives elsewhere — pass --config-file).
 
 To bootstrap from scratch instead:
+    Open NetSentinel → Agents → Add Agent and copy the generated command.
+
+Legacy/manual fallback:
     curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \\
-      | sudo bash -s -- --jwt-secret "<paste-the-hub-secret>"
+      | sudo bash -s -- --jwt-secret "<agent-auth-secret>"
 EOM
   exit 1
 fi
 
 # Load saved credentials. CONFIG_FILE format is plain KEY=VALUE.
+AGENT_AUTH_SECRET=""
 JWT_SECRET=""
 AGENT_PORT=""
 AGENT_BIND=""
 # shellcheck disable=SC1090
 . "$CONFIG_FILE"
 
-if [[ -z "${JWT_SECRET}" ]]; then
-  echo "❌ JWT_SECRET missing from ${CONFIG_FILE}." >&2
+AUTH_SECRET="${AGENT_AUTH_SECRET:-${JWT_SECRET:-}}"
+if [[ -z "${AUTH_SECRET}" ]]; then
+  echo "❌ AGENT_AUTH_SECRET missing from ${CONFIG_FILE}." >&2
   exit 1
 fi
 
-cmd=(--jwt-secret "$JWT_SECRET" --ref "$REF")
+cmd=(--jwt-secret "$AUTH_SECRET" --ref "$REF")
 [[ -n "${AGENT_PORT}" ]] && cmd+=(--port "$AGENT_PORT")
 [[ -n "${AGENT_BIND}" ]] && cmd+=(--bind "$AGENT_BIND")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then

@@ -113,7 +113,7 @@ Iteration on top of beta.1 focused on lifecycle UX, repository layout, and relea
 
 - **Update / remove one-liners.** Four new scripts mirror the install path and complete the documented lifecycle:
   - `scripts/update-hub.sh` — `git pull` + `docker compose pull/up server` + smoke test, with `--version <tag>` to pin a release and `--skip-git-pull` for image-only refreshes (CI / cron friendly).
-  - `scripts/update-agent.sh` — re-runs the installer using the JWT/port/bind already saved in `/etc/netsentinel/agent.env`, so operators do not paste the JWT secret again on every host.
+  - `scripts/update-agent.sh` — re-runs the installer using the saved agent auth secret, port, and bind address in `/etc/netsentinel/agent.env`, so operators do not re-enter credentials during updates.
   - `scripts/remove-hub.sh` — default-safe stop of the stack (keeps SQLite data + `.env` so re-installs resume cleanly); `--purge` wipes data + config + repo, `--remove-image` also `docker rmi`s the pulled server image.
   - `scripts/remove-agent.sh` — curl-able standalone uninstaller that tears down the systemd unit / launchd plist, binary, config, and log dir. Functional parity with `install-agent.sh --uninstall` for operators who do not have the installer on hand.
   README now documents both flows under dedicated **Update** and **Remove** sections.

@@ -49,12 +49,15 @@ async fn main() -> anyhow::Result<()> {
         .parse::<IpAddr>()
         .with_context(|| format!("AGENT_BIND must be an IP address, got '{bind_addr}'"))?;
 
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .context("JWT_SECRET environment variable is not set. Please check your .env file.")?;
-    if jwt_secret.len() < 32 {
-        anyhow::bail!("JWT_SECRET must be at least 32 characters");
+    let auth_secret = std::env::var("AGENT_AUTH_SECRET")
+        .or_else(|_| std::env::var("JWT_SECRET"))
+        .context(
+            "AGENT_AUTH_SECRET environment variable is not set. Please check your .env file.",
+        )?;
+    if auth_secret.len() < 32 {
+        anyhow::bail!("AGENT_AUTH_SECRET must be at least 32 characters");
     }
-    auth::init_decoding_key(jwt_secret.as_bytes())
+    auth::init_decoding_key(auth_secret.as_bytes())
         .map_err(|e| anyhow::anyhow!("{e} — this should not happen"))?;
 
     let hostname = System::host_name().unwrap_or_else(|| "unknown".to_string());

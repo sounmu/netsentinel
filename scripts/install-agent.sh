@@ -5,22 +5,22 @@
 # Pipes cleanly from curl + bash. Typical usage, on a fresh host:
 #
 #     curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
-#       | sudo bash -s -- --jwt-secret "$JWT"
+#       | sudo bash -s -- --server-url "$HUB_URL" --enroll-token "$TOKEN"
 #
-# The agent is pull-scraped by the hub, so the install does NOT need
-# to know the hub's URL. It only needs the shared JWT_SECRET and the
-# port to listen on. The installer:
+# The agent is pull-scraped by the hub. New installs exchange a short-lived
+# enrollment token for an agent-scoped auth secret; legacy/manual installs
+# can still pass --jwt-secret directly. The installer:
 #
 #   1. Detects OS / CPU architecture.
 #   2. Downloads the matching prebuilt binary from GitHub Releases,
 #      verifies it with SHA256SUMS, and installs it into
 #      ${PREFIX:-/usr/local}/bin.
-#   3. Writes /etc/netsentinel/agent.env (chmod 600) with JWT_SECRET
+#   3. Claims the enrollment token against the hub when provided.
+#   4. Writes /etc/netsentinel/agent.env (chmod 600) with AGENT_AUTH_SECRET
 #      and AGENT_PORT.
-#   4. On Linux, drops /etc/systemd/system/netsentinel-agent.service
+#   5. On Linux, drops /etc/systemd/system/netsentinel-agent.service
 #      and enables it. On macOS, drops a LaunchDaemon plist.
-#   5. Prints the exact host_key you should paste into the hub UI
-#      (LAN IP : port).
+#   6. Prints the registered host_key.
 #
 # Safe to re-run; existing binary/config/unit are replaced and the
 # service is restarted, so the same command is also the update path.
@@ -31,8 +31,12 @@ set -euo pipefail
 
 # ── defaults ────────────────────────────────────────────────────────
 JWT_SECRET=""
+SERVER_URL=""
+ENROLL_TOKEN=""
 AGENT_PORT="9101"
 BIND_ADDR="0.0.0.0"
+BIND_EXPLICIT=0
+NETWORK_MODE="lan"
 PREFIX="/usr/local"
 REPO_URL="https://github.com/sounmu/netsentinel.git"
 REF="latest"
@@ -54,28 +58,38 @@ Usage:
   sudo bash install-agent.sh [options]
 
 Options:
-  --jwt-secret VALUE    shared JWT secret (required)     env: NS_JWT_SECRET
-  --port N              port the agent listens on [9101] env: NS_AGENT_PORT
-  --bind ADDR           bind address [0.0.0.0]            env: NS_BIND_ADDR
-  --prefix DIR          install prefix [/usr/local]       env: NS_PREFIX
-  --repo URL            git repo to build from            env: NS_REPO_URL
-  --ref TAG             release tag to install [latest]   env: NS_REF
-                        use with --build-from-source for branches
+  --server-url URL      NetSentinel hub URL               env: NS_SERVER_URL
+  --enroll-token VALUE  one-time enrollment token          env: NS_ENROLL_TOKEN
+  --jwt-secret VALUE    legacy/manual agent auth secret    env: NS_JWT_SECRET
+  --network MODE        lan or tailscale [lan]             env: NS_NETWORK_MODE
+  --port N              port the agent listens on [9101]   env: NS_AGENT_PORT
+  --bind ADDR           bind address [0.0.0.0]             env: NS_BIND_ADDR
+  --prefix DIR          install prefix [/usr/local]        env: NS_PREFIX
+  --repo URL            git repo to build from             env: NS_REPO_URL
+  --ref TAG             release tag to install [latest]    env: NS_REF
+                         use with --build-from-source for branches
   --build-from-source   build via cargo from --repo/--ref
   --uninstall           stop service + remove binary / unit / config
   --help
 
-On a host where $JWT is already exported in the env:
+Recommended path from the NetSentinel UI:
   curl -fsSL .../install-agent.sh | sudo -E bash -s -- \
-    --jwt-secret "$JWT" --bind 0.0.0.0 --port 9101 --ref latest
+    --server-url "https://hub.example.com" \
+    --enroll-token "nsenr_..." \
+    --network lan \
+    --port 9101
 
 Tailscale-only exposure example:
   curl -fsSL .../install-agent.sh | sudo -E bash -s -- \
-    --jwt-secret "$JWT" --bind 100.x.y.z --port 9101 --ref latest
+    --server-url "https://hub.example.com" \
+    --enroll-token "nsenr_..." \
+    --network tailscale \
+    --port 9101
 
 Build an unreleased branch from source:
   curl -fsSL .../install-agent.sh | sudo -E bash -s -- \
-    --jwt-secret "$JWT" --build-from-source --ref main
+    --server-url "http://hub:3000" --enroll-token "nsenr_..." \
+    --build-from-source --ref main
 
 Without sudo, the script can only run as root or will refuse.
 HLP
@@ -83,8 +97,14 @@ HLP
 
 # env var fallbacks (lets operators pass values through `sudo -E`)
 [[ -n "${NS_JWT_SECRET:-}" ]] && JWT_SECRET="$NS_JWT_SECRET"
+[[ -n "${NS_SERVER_URL:-}" ]] && SERVER_URL="$NS_SERVER_URL"
+[[ -n "${NS_ENROLL_TOKEN:-}" ]] && ENROLL_TOKEN="$NS_ENROLL_TOKEN"
 [[ -n "${NS_AGENT_PORT:-}" ]] && AGENT_PORT="$NS_AGENT_PORT"
-[[ -n "${NS_BIND_ADDR:-}"  ]] && BIND_ADDR="$NS_BIND_ADDR"
+if [[ -n "${NS_BIND_ADDR:-}" ]]; then
+  BIND_ADDR="$NS_BIND_ADDR"
+  BIND_EXPLICIT=1
+fi
+[[ -n "${NS_NETWORK_MODE:-}" ]] && NETWORK_MODE="$NS_NETWORK_MODE"
 [[ -n "${NS_PREFIX:-}"     ]] && PREFIX="$NS_PREFIX"
 [[ -n "${NS_REPO_URL:-}"   ]] && REPO_URL="$NS_REPO_URL"
 [[ -n "${NS_REF:-}"        ]] && REF="$NS_REF"
@@ -96,10 +116,16 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --jwt-secret) JWT_SECRET="${2:-}"; shift 2 ;;
     --jwt-secret=*) JWT_SECRET="${1#*=}"; shift ;;
+    --server-url) SERVER_URL="${2:-}"; shift 2 ;;
+    --server-url=*) SERVER_URL="${1#*=}"; shift ;;
+    --enroll-token) ENROLL_TOKEN="${2:-}"; shift 2 ;;
+    --enroll-token=*) ENROLL_TOKEN="${1#*=}"; shift ;;
+    --network)    NETWORK_MODE="${2:-}"; shift 2 ;;
+    --network=*)  NETWORK_MODE="${1#*=}"; shift ;;
     --port)       AGENT_PORT="${2:-}"; shift 2 ;;
     --port=*)     AGENT_PORT="${1#*=}"; shift ;;
-    --bind)       BIND_ADDR="${2:-}"; shift 2 ;;
-    --bind=*)     BIND_ADDR="${1#*=}"; shift ;;
+    --bind)       BIND_ADDR="${2:-}"; BIND_EXPLICIT=1; shift 2 ;;
+    --bind=*)     BIND_ADDR="${1#*=}"; BIND_EXPLICIT=1; shift ;;
     --prefix)     PREFIX="${2:-}"; shift 2 ;;
     --prefix=*)   PREFIX="${1#*=}"; shift ;;
     --repo)       REPO_URL="${2:-}"; shift 2 ;;
@@ -116,7 +142,7 @@ done
 # ── must run as root (systemctl / /usr/local writes) ────────────────
 if [[ $EUID -ne 0 ]]; then
   echo "❌ This installer must run as root (use sudo)." >&2
-  echo "    Example: curl -fsSL .../install-agent.sh | sudo bash -s -- --jwt-secret XXX" >&2
+  echo "    Example: curl -fsSL .../install-agent.sh | sudo bash -s -- --server-url URL --enroll-token TOKEN" >&2
   exit 1
 fi
 
@@ -147,15 +173,72 @@ if [[ $UNINSTALL -eq 1 ]]; then
   exit 0
 fi
 
+# ── network helpers ─────────────────────────────────────────────────
+detect_lan_ip() {
+  local ip=""
+  if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
+    ip="$(hostname -I | awk '{print $1}')"
+  fi
+  if [[ -z "${ip}" ]] && command -v ipconfig >/dev/null 2>&1; then
+    ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  fi
+  [[ -z "${ip}" ]] && ip="127.0.0.1"
+  echo "$ip"
+}
+
+detect_tailscale_ip() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    echo "❌ --network tailscale requires the tailscale CLI on this host." >&2
+    echo "    Install and log in to Tailscale first, then re-run this command." >&2
+    exit 1
+  fi
+  local ip
+  ip="$(tailscale ip -4 2>/dev/null | awk 'NR == 1 { print }')"
+  if [[ -z "$ip" ]]; then
+    echo "❌ Tailscale is installed but this host has no Tailscale IPv4 address." >&2
+    echo "    Run 'tailscale up' and confirm the hub can reach this node." >&2
+    exit 1
+  fi
+  echo "$ip"
+}
+
+json_escape() {
+  sed 's/\\/\\\\/g; s/"/\\"/g' <<<"$1" | tr -d '\n'
+}
+
+extract_json_string() {
+  local key="$1"
+  sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
+}
+
 # ── validate required args ──────────────────────────────────────────
-if [[ -z "$JWT_SECRET" ]]; then
-  echo "❌ --jwt-secret is required." >&2
-  echo "    Copy it from the hub's .env:" >&2
-  echo "        grep ^JWT_SECRET= .env | cut -d= -f2-" >&2
+case "$NETWORK_MODE" in
+  lan|tailscale) ;;
+  *)
+    echo "❌ Invalid --network '$NETWORK_MODE'. Use 'lan' or 'tailscale'." >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$NETWORK_MODE" == "tailscale" && "$BIND_EXPLICIT" -eq 0 ]]; then
+  BIND_ADDR="$(detect_tailscale_ip)"
+fi
+
+SERVER_URL="${SERVER_URL%/}"
+if [[ -n "$ENROLL_TOKEN" || -n "$SERVER_URL" ]]; then
+  if [[ -z "$ENROLL_TOKEN" || -z "$SERVER_URL" ]]; then
+    echo "❌ --server-url and --enroll-token must be provided together." >&2
+    exit 1
+  fi
+elif [[ -z "$JWT_SECRET" ]]; then
+  echo "❌ --enroll-token is required for new installs." >&2
+  echo "    Open NetSentinel → Agents → Add Agent and copy the generated command." >&2
+  echo "    Legacy/manual installs may pass --jwt-secret directly." >&2
   exit 1
 fi
-if [[ ${#JWT_SECRET} -lt 32 ]]; then
-  echo "❌ JWT_SECRET is only ${#JWT_SECRET} chars; server requires ≥ 32." >&2
+
+if [[ -n "$JWT_SECRET" && ${#JWT_SECRET} -lt 32 ]]; then
+  echo "❌ Agent auth secret is only ${#JWT_SECRET} chars; it must be ≥ 32." >&2
   exit 1
 fi
 if ! [[ "$AGENT_PORT" =~ ^[0-9]+$ ]] || (( AGENT_PORT < 1 || AGENT_PORT > 65535 )); then
@@ -333,9 +416,47 @@ else
   install_prebuilt_binary
 fi
 
+# ── claim enrollment token ──────────────────────────────────────────
+advertise_addr="$BIND_ADDR"
+if [[ "$advertise_addr" == "0.0.0.0" || "$advertise_addr" == "::" ]]; then
+  if [[ "$NETWORK_MODE" == "tailscale" ]]; then
+    advertise_addr="$(detect_tailscale_ip)"
+  else
+    advertise_addr="$(detect_lan_ip)"
+  fi
+fi
+HOST_KEY="${advertise_addr}:${AGENT_PORT}"
+DISPLAY_NAME="$(hostname 2>/dev/null || echo "$HOST_KEY")"
+ENROLLED_HOST_KEY=""
+
+if [[ -n "$ENROLL_TOKEN" ]]; then
+  echo "▶ Claiming enrollment token with ${SERVER_URL}…"
+  host_key_json="$(json_escape "$HOST_KEY")"
+  display_name_json="$(json_escape "$DISPLAY_NAME")"
+  token_json="$(json_escape "$ENROLL_TOKEN")"
+  network_json="$(json_escape "$NETWORK_MODE")"
+  claim_payload="{\"token\":\"${token_json}\",\"host_key\":\"${host_key_json}\",\"display_name\":\"${display_name_json}\",\"network_mode\":\"${network_json}\"}"
+  claim_response="$(curl -fsSL --retry 3 \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$claim_payload" \
+    "${SERVER_URL}/api/agent-enrollments/claim")"
+  JWT_SECRET="$(printf '%s' "$claim_response" | extract_json_string "agent_auth_secret")"
+  ENROLLED_HOST_KEY="$(printf '%s' "$claim_response" | extract_json_string "host_key")"
+  if [[ -z "$JWT_SECRET" || ${#JWT_SECRET} -lt 32 ]]; then
+    echo "❌ Enrollment claim succeeded but did not return a valid agent auth secret." >&2
+    exit 1
+  fi
+  [[ -n "$ENROLLED_HOST_KEY" ]] && HOST_KEY="$ENROLLED_HOST_KEY"
+  echo "✅ Enrollment claimed for ${HOST_KEY}"
+fi
+
 # ── write agent config ──────────────────────────────────────────────
 cat > "${CONFIG_FILE}" <<EOF
 # Managed by scripts/install-agent.sh — re-run with different flags to replace.
+# AGENT_AUTH_SECRET is the preferred key. JWT_SECRET is kept as a compatibility
+# alias for older pinned agent binaries.
+AGENT_AUTH_SECRET=${JWT_SECRET}
 JWT_SECRET=${JWT_SECRET}
 AGENT_PORT=${AGENT_PORT}
 AGENT_BIND=${BIND_ADDR}
@@ -348,7 +469,7 @@ case "$os" in
   Linux)
     if ! command -v systemctl >/dev/null 2>&1; then
       echo "⚠️  systemd not found — the binary is installed at ${PREFIX}/bin/${BIN_NAME}"
-      echo "    Run it manually: JWT_SECRET=… ${PREFIX}/bin/${BIN_NAME}"
+      echo "    Run it manually: AGENT_AUTH_SECRET=… ${PREFIX}/bin/${BIN_NAME}"
     else
       unit_path="/etc/systemd/system/${SERVICE_NAME}.service"
       cat > "$unit_path" <<EOF
@@ -427,35 +548,23 @@ EOF
     echo "⚠️  OS '$os' is not wired for automatic service management."
     echo "    Binary: ${PREFIX}/bin/${BIN_NAME}"
     echo "    Run manually with:"
-    echo "        JWT_SECRET=… AGENT_PORT=${AGENT_PORT} ${PREFIX}/bin/${BIN_NAME}"
+    echo "        AGENT_AUTH_SECRET=… AGENT_PORT=${AGENT_PORT} ${PREFIX}/bin/${BIN_NAME}"
     ;;
 esac
 
 # ── print pairing info ──────────────────────────────────────────────
-# Pick a reasonable LAN IP. Prefer `hostname -I` (Linux), fall back
-# to `ipconfig getifaddr en0` (macOS), fall back to 127.0.0.1.
-lan_ip=""
-if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
-  lan_ip="$(hostname -I | awk '{print $1}')"
+if [[ -n "$ENROLL_TOKEN" ]]; then
+  next_step="The hub has registered ${HOST_KEY}; it should flip to 'online' within one scrape cycle."
+else
+  next_step="Legacy/manual install: open Agents → + Add Agent on the hub and enter host_key ${HOST_KEY}."
 fi
-if [[ -z "${lan_ip}" ]] && command -v ipconfig >/dev/null 2>&1; then
-  lan_ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
-fi
-[[ -z "${lan_ip}" ]] && lan_ip="127.0.0.1"
 
 cat <<EOM
 
 ─────────────────────────────────────────────────────────────────────
 ✅ Agent installed and running.
 
-👉 Next, on the hub machine, open Agents → + Add Agent and enter:
-
-       host_key:       ${lan_ip}:${AGENT_PORT}
-       display_name:   $(hostname 2>/dev/null || echo this-host)
-       scrape_interval_secs: 10
-       (leave the rest at defaults)
-
-The hub will flip the host to 'online' within one scrape cycle.
+${next_step}
 
 Manage this agent:
     sudo systemctl status  ${SERVICE_NAME}      # (Linux)

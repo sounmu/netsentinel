@@ -106,17 +106,26 @@ pub(crate) fn is_token_iat_still_valid(user_id: i32, iat: usize) -> bool {
     }
 }
 
-pub fn generate_jwt() -> Result<String, AppError> {
+fn encode_agent_jwt(key: &EncodingKey) -> Result<String, AppError> {
     let exp = Utc::now().timestamp() as usize + 60;
     let claims = Claims {
         exp,
         aud: "agent".to_string(),
     };
+    encode(&Header::new(Algorithm::HS256), &claims, key)
+        .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
+}
+
+pub fn generate_jwt() -> Result<String, AppError> {
     let key = ENCODING_KEY
         .get()
         .ok_or_else(|| AppError::Internal("JWT encoding key not initialized".into()))?;
-    encode(&Header::new(Algorithm::HS256), &claims, key)
-        .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
+    encode_agent_jwt(key)
+}
+
+pub fn generate_agent_jwt_with_secret(secret: &str) -> Result<String, AppError> {
+    let key = EncodingKey::from_secret(secret.as_bytes());
+    encode_agent_jwt(&key)
 }
 
 /// Axum extractor that only accepts **user** JWTs (aud: "user").

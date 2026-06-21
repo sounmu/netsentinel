@@ -28,7 +28,7 @@ print_help() {
 NetSentinel agent uninstaller
 
 Stops the agent service (systemd on Linux, launchd on macOS) and
-removes its binary, config (chmod 600 JWT_SECRET), service unit, and
+removes its binary, config (chmod 600 auth secret), service unit, and
 log dir.
 
 Usage:
@@ -71,7 +71,7 @@ About to remove the NetSentinel agent:
   • stop ${SERVICE_NAME} (systemd or launchd)
   • rm ${PREFIX}/bin/${BIN_NAME}
   • rm ${PREFIX}/bin/${WRAPPER_NAME}        (macOS only)
-  • rm -rf ${CONFIG_DIR}                    (contains JWT_SECRET)
+  • rm -rf ${CONFIG_DIR}                    (contains the agent auth secret)
   • rm -rf ${LOG_DIR}
 EOM
 if [[ $ASSUME_YES -ne 1 ]]; then

@@ -5,8 +5,9 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 
 use crate::handlers::{
-    alert_configs_handler, alert_history_handler, auth_handler, dashboard_handler, hosts_handler,
-    metrics_handler, monitors_handler, notification_channels_handler, oauth_handler, sse_handler,
+    agent_enrollments_handler, alert_configs_handler, alert_history_handler, auth_handler,
+    dashboard_handler, hosts_handler, metrics_handler, monitors_handler,
+    notification_channels_handler, oauth_handler, sse_handler,
 };
 use crate::models::app_state::AppState;
 
@@ -78,6 +79,15 @@ pub fn create_router(state: Arc<AppState>) -> Router {
             get(hosts_handler::get_host)
                 .put(hosts_handler::update_host)
                 .delete(hosts_handler::delete_host),
+        )
+        // Agent enrollment bootstrap
+        .route(
+            "/api/agent-enrollments",
+            post(agent_enrollments_handler::create_enrollment),
+        )
+        .route(
+            "/api/agent-enrollments/claim",
+            post(agent_enrollments_handler::claim_enrollment),
         )
         // Alert config CRUD
         .route(

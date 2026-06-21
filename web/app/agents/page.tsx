@@ -3,10 +3,12 @@
 import { useState, useCallback } from "react";
 import useSWR from "swr";
 import {
-  Settings, Plus, Pencil, Trash2, Server, Save, X, AlertTriangle,
+  Settings, Plus, Pencil, Trash2, Server, Save, X, AlertTriangle, Copy, RefreshCw,
+  Terminal,
 } from "lucide-react";
 import {
-  HostConfig, getHostsUrl, fetcher, getHostConfig, createHost, updateHost, deleteHost,
+  AgentEnrollmentToken, HostConfig, createAgentEnrollment, getApiBase, getHostsUrl, fetcher,
+  getHostConfig, createHost, updateHost, deleteHost,
 } from "@/app/lib/api";
 import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
@@ -23,6 +25,8 @@ interface HostFormData {
   ports: string; // comma-separated string
   containers: string;
 }
+
+type InstallNetwork = "lan" | "tailscale";
 
 const emptyForm: HostFormData = {
   host_key: "",
@@ -52,6 +56,21 @@ function parseContainers(s: string): string[] {
   return s.split(",").map((c) => c.trim()).filter(Boolean);
 }
 
+function defaultServerUrl() {
+  const apiBase = getApiBase();
+  if (apiBase.startsWith("http://") || apiBase.startsWith("https://")) {
+    return apiBase.replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return "";
+}
+
+function shellArg(value: string) {
+  return `"${value.replace(/(["\\$`])/g, "\\$1")}"`;
+}
+
 export default function AgentsPage() {
   const { t } = useI18n();
   const removeHost = useRemoveHost();
@@ -64,8 +83,37 @@ export default function AgentsPage() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [enrollment, setEnrollment] = useState<AgentEnrollmentToken | null>(null);
+  const [enrollmentLoading, setEnrollmentLoading] = useState(false);
+  const [serverUrl, setServerUrl] = useState("");
+  const [installNetwork, setInstallNetwork] = useState<InstallNetwork>("lan");
+  const [agentPort, setAgentPort] = useState(9101);
+  const [copied, setCopied] = useState(false);
 
-  const openAdd = () => { setForm(emptyForm); setEditingKey("new"); setFormError(null); };
+  const issueEnrollment = useCallback(async () => {
+    setEnrollmentLoading(true);
+    setFormError(null);
+    try {
+      const token = await createAgentEnrollment({ label: "Agent install", ttl_secs: 900 });
+      setEnrollment(token);
+      setCopied(false);
+    } catch (e) {
+      setEnrollment(null);
+      setFormError(e instanceof Error ? e.message : t.agents.errorCreateEnrollment);
+    } finally {
+      setEnrollmentLoading(false);
+    }
+  }, [t]);
+
+  const openAdd = () => {
+    setForm(emptyForm);
+    setEditingKey("new");
+    setServerUrl(defaultServerUrl());
+    setInstallNetwork("lan");
+    setAgentPort(9101);
+    setCopied(false);
+    void issueEnrollment();
+  };
   const openEdit = async (hostKey: string) => {
     // Fetch full host config (HostSummary doesn't include config fields)
     try {
@@ -77,7 +125,11 @@ export default function AgentsPage() {
       setFormError(t.agents.errorLoadHost);
     }
   };
-  const closeForm = () => { setEditingKey(null); setFormError(null); };
+  const closeForm = () => {
+    setEditingKey(null);
+    setFormError(null);
+    setEnrollment(null);
+  };
 
   const handleSave = useCallback(async () => {
     if (!form.host_key.trim()) {
@@ -134,6 +186,29 @@ export default function AgentsPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const normalizedServerUrl = serverUrl.trim().replace(/\/+$/, "");
+  const installCommand = enrollment
+    ? [
+      "curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \\",
+      "  | sudo bash -s -- \\",
+      `      --server-url ${shellArg(normalizedServerUrl)} \\`,
+      `      --enroll-token ${shellArg(enrollment.token)} \\`,
+      `      --network ${installNetwork} \\`,
+      `      --port ${agentPort}`,
+    ].join("\n")
+    : "";
+
+  const copyInstallCommand = async () => {
+    if (!installCommand) return;
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      setCopied(true);
+      toast.success(t.agents.copied);
+    } catch {
+      toast.error(t.agents.errorCopyFailed);
+    }
+  };
+
   return (
     <div className="page-content fade-in">
       <PageHeader
@@ -160,6 +235,68 @@ export default function AgentsPage() {
               <X size={16} />
             </button>
           </div>
+
+          {editingKey === "new" && (
+            <div style={{ marginBottom: 20, padding: 16, borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <Terminal size={16} color="var(--accent-blue)" aria-hidden="true" />
+                  <h3 style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+                    {t.agents.installCommand}
+                  </h3>
+                </div>
+                <button type="button" onClick={issueEnrollment} disabled={enrollmentLoading} className="md-btn-tonal">
+                  <RefreshCw size={14} aria-hidden="true" /> {t.agents.newToken}
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 12 }}>
+                <FormField label={t.agents.serverUrl} id="agent-server-url">
+                  <input id="agent-server-url" className="date-input" style={{ width: "100%", fontFamily: "var(--font-mono), monospace" }}
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)} />
+                </FormField>
+                <FormField label={t.agents.installPort} id="agent-install-port">
+                  <input id="agent-install-port" className="date-input" style={{ width: "100%" }} type="number" min={1} max={65535}
+                    value={agentPort}
+                    onChange={(e) => setAgentPort(parseInt(e.target.value, 10) || 9101)} />
+                </FormField>
+                <FormField label={t.agents.network} id="agent-network">
+                  <div id="agent-network" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                    {(["lan", "tailscale"] as InstallNetwork[]).map((mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setInstallNetwork(mode)}
+                        style={{
+                          height: 36,
+                          borderRadius: 8,
+                          border: `1px solid ${installNetwork === mode ? "var(--accent-blue)" : "var(--border-subtle)"}`,
+                          background: installNetwork === mode ? "var(--status-online-bg)" : "var(--bg-tertiary)",
+                          color: installNetwork === mode ? "var(--accent-blue)" : "var(--text-secondary)",
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {mode === "lan" ? t.agents.networkLan : t.agents.networkTailscale}
+                      </button>
+                    ))}
+                  </div>
+                </FormField>
+              </div>
+
+              <pre style={{ margin: 0, minHeight: 108, overflowX: "auto", whiteSpace: "pre", padding: 14, borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--bg-primary)", color: "var(--text-primary)", fontSize: 12, lineHeight: 1.6, fontFamily: "var(--font-mono), monospace" }}>{enrollmentLoading ? t.agents.creatingToken : installCommand}</pre>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 12 }}>
+                <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                  {enrollment ? t.agents.tokenExpires.replace("{time}", new Date(enrollment.expires_at).toLocaleTimeString()) : t.agents.tokenUnavailable}
+                </div>
+                <button type="button" onClick={copyInstallCommand} disabled={!installCommand || enrollmentLoading} className="md-btn-filled">
+                  <Copy size={14} aria-hidden="true" /> {copied ? t.agents.copied : t.agents.copy}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16 }}>
             <FormField label={t.agents.hostKey} required id="agent-host-key">
