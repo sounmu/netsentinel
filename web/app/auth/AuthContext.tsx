@@ -67,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isPublic = PUBLIC_PATHS.some(
       (p) => pathname === p || pathname.startsWith(p + "/"),
     );
+    const isStatus = pathname === "/status" || pathname.startsWith("/status/");
 
     // First mount only.
     if (!initStartedRef.current.bootstrap) {
@@ -96,12 +97,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (isPublic) {
+        if (isPublic && !isStatus) {
           if (!cancelled) setIsLoading(false);
           return;
         }
 
         // Path 2: no memory token — try to refresh via httpOnly cookie.
+        // `/status` stays publicly renderable, but a logged-in user who
+        // refreshes there should still recover their authenticated chrome.
         const result = await tryRefreshSession();
         if (!cancelled) {
           if (result) setUser(result.user);
