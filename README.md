@@ -97,37 +97,38 @@ On the machine that will run the dashboard + API:
 curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-hub.sh | bash
 ```
 
-It clones the repo into `~/netsentinel`, generates `.env` with random secrets, pulls the published `ghcr.io/sounmu/netsentinel-server` image, starts the hub, verifies the install with a 5-check smoke test, and prints the URL + the JWT_SECRET you'll need for the agent step below.
+It clones the repo into `~/netsentinel`, generates `.env` with random secrets, pulls the published `ghcr.io/sounmu/netsentinel-server` image, starts the hub, verifies the install with a 5-check smoke test, and prints the URL for the web UI.
 
 Prerequisites: Docker + Compose v2, `git`, `curl`, `openssl`. Tested on Linux and macOS; Windows users should run this inside WSL2.
 
-### Install an agent on every monitored host (one line)
+### Install an agent on every monitored host (copy from the UI)
 
-On each target machine, paste the JWT_SECRET the hub printed:
+Open **Agents → Add Agent** in the dashboard. NetSentinel creates a short-lived enrollment token and shows a copy-paste install command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
   | sudo bash -s -- \
-      --jwt-secret "PASTE_THE_HUB_SECRET_HERE" \
-      --bind "0.0.0.0" \
+      --server-url "http://<hub-ip>:3000" \
+      --enroll-token "nsenr_..." \
+      --network lan \
       --port 9101
 ```
 
-Use `--bind "100.x.y.z"` to listen only on the agent's Tailscale interface, or change `--port` and register the matching `<agent-ip>:<port>` in the hub. The installer downloads the matching prebuilt agent from GitHub Releases, verifies `SHA256SUMS`, drops a systemd unit (Linux) or launchd daemon (macOS), starts the service, and prints the exact `host_key` you should paste into the hub's Agents page. Re-run the same command later with `--ref <release-tag>` to pin or update the native agent in place.
+Choose **Tailscale** in the Add Agent modal, or pass `--network tailscale`, to bind the agent to its Tailscale IPv4 address. The installer downloads the matching prebuilt agent from GitHub Releases, verifies `SHA256SUMS`, claims the token, writes an agent-scoped auth secret, drops a systemd unit (Linux) or launchd daemon (macOS), starts the service, and registers the host in the hub automatically. Re-run the installer later with `--ref <release-tag>` to pin or update the native agent in place.
 
 > Need an unreleased branch or local fork? Add `--build-from-source --ref <branch-or-tag>`; that path requires `git` and the Rust toolchain.
 
 ### Register the host in the UI
 
 1. Open `http://<hub-ip>:3000/setup` → create the first local admin account. Google OAuth is optional and can be enabled later.
-2. Navigate to **Agents → + Add Agent** and paste the `host_key` the agent installer printed (for example `192.168.1.10:9101`).
+2. Navigate to **Agents → + Add Agent**, choose LAN or Tailscale, and copy the generated install command to the target machine.
 3. The host flips from `pending` → `online` within one scrape interval (default 10 s).
 
 Full walkthrough with troubleshooting: [`docs/AFTER_INSTALL.md`](docs/AFTER_INSTALL.md).
 
 ### Update
 
-Both installers are idempotent — re-running them is the supported update path. The `update-*.sh` helpers wrap that for you so you do not have to remember image tags or paste the JWT_SECRET again.
+Both installers are idempotent — re-running them is the supported update path. The `update-*.sh` helpers wrap that for you so you do not have to remember image tags or auth secrets again.
 
 **Hub** (run on the dashboard host):
 
@@ -154,7 +155,7 @@ curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/upd
   | sudo bash -s -- --ref v0.5.1               # → pinned tag
 ```
 
-It reads `JWT_SECRET` / `AGENT_PORT` / `AGENT_BIND` back from `/etc/netsentinel/agent.env`, re-runs the installer with those values, swaps the binary in place, and restarts the systemd unit (Linux) or launchd daemon (macOS). Pass `--build-from-source --ref <branch>` to test an unreleased fix.
+It reads `AGENT_AUTH_SECRET` (or the legacy `JWT_SECRET` alias), `AGENT_PORT`, and `AGENT_BIND` back from `/etc/netsentinel/agent.env`, re-runs the installer with those values, swaps the binary in place, and restarts the systemd unit (Linux) or launchd daemon (macOS). Pass `--build-from-source --ref <branch>` to test an unreleased fix.
 
 ### Remove
 
@@ -224,7 +225,7 @@ npm run dev
 
 ```bash
 cd agent
-cp .env.example .env   # JWT_SECRET must match the server
+cp .env.example .env   # set AGENT_AUTH_SECRET for local/manual agent runs
 cargo run
 ```
 
@@ -236,7 +237,7 @@ cargo run
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 bytes). Every agent needs the same value. `bootstrap.sh` generates it via `openssl rand -hex 32`; server startup rejects empty, short, and known public example values. |
+| `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 bytes) for user JWTs and legacy agents. New agents added through the UI receive an agent-scoped secret instead of this server-wide value. `bootstrap.sh` generates it via `openssl rand -hex 32`; server startup rejects empty, short, and known public example values. |
 | `GOOGLE_OAUTH_CLIENT_ID` | No | — | Optional Google OAuth web-client id. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | No | — | Optional Google OAuth web-client secret. Server-side only. |
 | `GOOGLE_OAUTH_REDIRECT_URI` | No | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. Required only when Google OAuth is enabled. |
@@ -281,9 +282,11 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | **Yes** | — | Must match server's generated `JWT_SECRET`; do not use example/placeholder values. |
+| `AGENT_AUTH_SECRET` | **Yes** | — | Agent-scoped auth secret written by the Add Agent enrollment flow. Legacy/manual installs may still set `JWT_SECRET` as a compatibility alias. |
+| `JWT_SECRET` | Legacy | — | Compatibility alias for older pinned agent binaries. New installs should use `AGENT_AUTH_SECRET`. |
 | `AGENT_PORT` | No | `9101` | Port the agent HTTP server listens on |
 | `AGENT_BIND` | No | `0.0.0.0` | Bind address. Use a Tailscale IP such as `100.x.y.z` to expose the native agent only on that interface. |
+| `DOCKER_METRICS_MODE` | No | `auto` | Docker collection mode: `auto` collects when Docker is reachable and quietly pauses when it is not, `enabled` keeps Docker connection failures visible, `disabled` never connects to Docker. |
 
 ---
 
@@ -308,6 +311,8 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 | `POST` | `/api/hosts` | Register a new host |
 | `PUT` | `/api/hosts/{host_key}` | Update host configuration |
 | `DELETE` | `/api/hosts/{host_key}` | Delete a host |
+| `POST` | `/api/agent-enrollments` | Create a short-lived Add Agent enrollment token **(admin)** |
+| `POST` | `/api/agent-enrollments/claim` | Installer claims a token and receives an agent-scoped auth secret **(no user auth)** |
 | `GET` | `/api/metrics/{host_key}` | Recent 50 metric rows |
 | `GET` | `/api/metrics/{host_key}?start=&end=` | Metrics in a time range (ISO 8601) |
 | `GET` | `/api/metrics/{host_key}/chart?start=&end=` | Lightweight chart rows for host detail graphs (≤1h raw, >1h 5-min rollup, >14d 15-min re-aggregation) |
@@ -358,7 +363,8 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 |---|---|
 | **`metrics`** | Raw scrape rows. 3-day retention. Stores CPU, memory, load, network, disk, process, temperature, GPU, Docker, port data as JSON text columns, plus nullable scalar `rx_bytes_per_sec` / `tx_bytes_per_sec` projections for bandwidth rollups. |
 | **`metrics_5min`** | 5-minute rollup table (`STRICT, WITHOUT ROWID`, PK `(host_key, bucket)`). Populated by `services::rollup_worker` on a 60-second tick via an idempotent UPSERT from `metrics`; includes cumulative network counters, bucket-averaged bandwidth scalar columns, and last-in-bucket JSON snapshots for Docker stats/container state. 90-day retention. |
-| **`hosts`** | Agent registry (scrape interval, thresholds, monitored ports/containers, system info: OS/CPU/RAM/IP). `ports` / `containers` stored as JSON arrays in TEXT columns. |
+| **`hosts`** | Agent registry (scrape interval, thresholds, monitored ports/containers, per-agent `agent_auth_secret`, system info: OS/CPU/RAM/IP). `ports` / `containers` stored as JSON arrays in TEXT columns. |
+| **`agent_enrollment_tokens`** | Short-lived one-time Add Agent tokens. Stores only a SHA-256 token hash, expiry, creator, and used-host metadata; the plain token is shown once in the install command. |
 | **`alert_configs`** | Alert rules (`cpu`, `memory`, `disk`, `load`, `network`, `temperature`, `gpu`, `docker`); `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
 | **`notification_channels`** | Alert delivery targets (Discord, Slack, Microsoft Teams, Telegram, generic webhook, Email SMTP). Config stored as JSON text. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSON text). |

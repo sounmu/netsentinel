@@ -16,6 +16,9 @@ pub struct HostRow {
     pub load_threshold: f64,
     pub ports: Vec<i32>,
     pub containers: Vec<String>,
+    /// Per-agent scrape signing secret. Never exposed through JSON APIs.
+    #[serde(skip_serializing, skip_deserializing)]
+    pub agent_auth_secret: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     // Static system info (populated by /system-info agent endpoint)
@@ -74,6 +77,7 @@ struct HostRowRaw {
     load_threshold: f64,
     ports: String,
     containers: String,
+    agent_auth_secret: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     os_info: Option<String>,
@@ -99,6 +103,7 @@ impl TryFrom<HostRowRaw> for HostRow {
             load_threshold: raw.load_threshold,
             ports,
             containers,
+            agent_auth_secret: raw.agent_auth_secret,
             created_at: raw.created_at,
             updated_at: raw.updated_at,
             os_info: raw.os_info,
@@ -112,7 +117,7 @@ impl TryFrom<HostRowRaw> for HostRow {
 }
 
 const HOST_COLUMNS: &str = "host_key, display_name, scrape_interval_secs, load_threshold, \
-                            ports, containers, created_at, updated_at, \
+                            ports, containers, agent_auth_secret, created_at, updated_at, \
                             os_info, cpu_model, memory_total_mb, boot_time, ip_address, \
                             system_info_updated_at";
 

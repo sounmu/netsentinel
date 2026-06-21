@@ -1,3 +1,4 @@
+pub mod agent_enrollments_handler;
 pub mod alert_configs_handler;
 pub mod alert_history_handler;
 pub mod auth_handler;

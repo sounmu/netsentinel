@@ -1,7 +1,8 @@
 //! JWT-based auth middleware for the `/metrics` endpoint.
 //!
-//! The agent verifies tokens minted by the server. Both sides share
-//! the same `JWT_SECRET`; `DECODING_KEY` is a process-wide `OnceLock`
+//! The agent verifies tokens minted by the server. New installations use an
+//! agent-scoped `AGENT_AUTH_SECRET`; legacy installs can still provide
+//! `JWT_SECRET`. `DECODING_KEY` is a process-wide `OnceLock`
 //! seeded at startup and cannot be rotated without restart.
 
 use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};

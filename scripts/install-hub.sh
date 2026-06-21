@@ -13,9 +13,8 @@
 #   4. `docker compose pull && docker compose up -d` to download and
 #      start the published server+web image.
 #   5. Run scripts/smoke-test.sh to verify the install.
-#   6. Print the JWT_SECRET (so the operator can paste it into the
-#      agent installers on every host they want to monitor) and the
-#      URL of the dashboard.
+#   6. Print the dashboard URL and point the operator to the Add Agent
+#      UI, which mints one-time enrollment tokens for installers.
 #
 # Safe to re-run: step 2 pulls instead of re-cloning, step 3 skips
 # secret generation if .env already exists.
@@ -91,12 +90,11 @@ EOM
 fi
 
 # ── pairing info ───────────────────────────────────────────────────
-jwt="$(grep ^JWT_SECRET= .env | cut -d= -f2-)"
 port="$(grep ^SERVER_PORT= .env 2>/dev/null | cut -d= -f2- || true)"
 port="${port:-3000}"
-agent_ref_arg=""
+agent_ref_note=""
 if [[ "$image_ref" == v* ]]; then
-  agent_ref_arg=" --ref \"${image_ref}\""
+  agent_ref_note=" If you are pinning agents to this release too, add --ref \"${image_ref}\" to the copied command."
 fi
 lan_ip=""
 if command -v hostname >/dev/null 2>&1 && hostname -I >/dev/null 2>&1; then
@@ -112,23 +110,17 @@ cat <<EOM
 👉 Next:
     1. open http://${lan_ip}:${port}/setup   # create the first admin
 
-    2. On every machine you want to monitor, run the one-liner agent
-       installer (replace the trailing secret with the value below):
-
-       curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/${REF}/scripts/install-agent.sh \\
-         | sudo bash -s -- --jwt-secret "${jwt}"${agent_ref_arg}
-
-       The agent will print the host_key to paste into the hub's
-       Agents UI.
+    2. Open Agents → Add Agent, choose LAN or Tailscale, then copy
+       the generated one-line installer to each machine you want to
+       monitor.${agent_ref_note}
 
     3. Full walk-through (first admin, first host, first agent,
        notification channels):
            ${INSTALL_DIR}/docs/AFTER_INSTALL.md
 
-Keep this terminal output somewhere safe — the JWT_SECRET above is
-what lets each agent authenticate to this hub. It is ALSO stored
-(chmod 600) in ${INSTALL_DIR}/.env — read it back with:
-
-    grep ^JWT_SECRET= ${INSTALL_DIR}/.env | cut -d= -f2-
+The server root secret is stored in ${INSTALL_DIR}/.env (chmod 600).
+New agents receive their own auth secret through the Add Agent
+enrollment flow, so there is normally nothing to copy from this
+terminal.
 ─────────────────────────────────────────────────────────────────────
 EOM

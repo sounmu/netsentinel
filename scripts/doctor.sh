@@ -47,8 +47,8 @@ echo
 if [[ -f "$ENV_PATH" ]]; then
   ok ".env exists at repo root"
 
-  # The only long-lived secret is JWT_SECRET. SQLite deployment has
-  # no DB password.
+  # Server-side root secret for user JWTs and legacy agents. New
+  # enrollment-created agents keep per-agent secrets in SQLite.
   val="$(grep -E "^JWT_SECRET=" "$ENV_PATH" | head -n1 | cut -d= -f2- || true)"
   if [[ -z "$val" || "$val" == "change_me"* ]]; then
     bad "JWT_SECRET is unset or still the placeholder" \

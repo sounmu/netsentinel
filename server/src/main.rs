@@ -36,8 +36,8 @@ fn validate_jwt_secret(jwt_secret: &str) -> anyhow::Result<()> {
             "JWT_SECRET is {} bytes — must be ≥ 32 bytes for adequate HS256 security\n\
              (RFC 7518 §3.2 recommends ≥ 256 bits of keying material).\n\n\
              Regenerate with: `./scripts/bootstrap.sh --force` (this rotates the\n\
-             secret and invalidates every previously-issued JWT). Be sure to\n\
-             distribute the new value to every agent afterwards.",
+             secret and invalidates every previously-issued user JWT). Legacy\n\
+             agents without per-agent enrollment secrets must be updated too.",
             jwt_secret.len()
         );
     }
@@ -46,7 +46,7 @@ fn validate_jwt_secret(jwt_secret: &str) -> anyhow::Result<()> {
         anyhow::bail!(
             "JWT_SECRET uses a public example value and is not safe for HS256 signing.\n\n\
              Regenerate with: `openssl rand -hex 32` or `./scripts/bootstrap.sh --force`,\n\
-             then distribute the same value to every agent."
+             then re-enroll or update any legacy agents that still rely on it."
         );
     }
 
@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
             "JWT_SECRET is not set.\n\n\
              Run `./scripts/bootstrap.sh` from the repo root — it generates a\n\
              32-byte random secret via `openssl rand -hex 32` and writes it\n\
-             to .env. The SAME value must appear in every agent's .env."
+             to .env. New agents should be added from the web UI enrollment flow."
         )
     })?;
     validate_jwt_secret(&jwt_secret)?;

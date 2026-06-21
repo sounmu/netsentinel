@@ -11,12 +11,12 @@ use crate::services::hosts_snapshot;
 use url::Host;
 
 // ── Validation limits ────────────────────────
-const MAX_KEY_LEN: usize = 255;
-const MAX_NAME_LEN: usize = 255;
+pub(crate) const MAX_KEY_LEN: usize = 255;
+pub(crate) const MAX_NAME_LEN: usize = 255;
 
 /// Validate that `host_key` is a safe `host:port` string — no path, query, or fragment.
 /// Prevents SSRF via path/query injection when the scraper builds `http://{host_key}/metrics`.
-fn validate_host_key_format(host_key: &str) -> Result<(), AppError> {
+pub(crate) fn validate_host_key_format(host_key: &str) -> Result<(), AppError> {
     // Must not contain path separators, query, or fragment characters
     if host_key.contains('/')
         || host_key.contains('?')

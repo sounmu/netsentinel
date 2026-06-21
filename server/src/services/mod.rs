@@ -1,3 +1,4 @@
+pub mod agent_enrollment;
 pub mod alert_service;
 pub mod auth;
 pub mod hosts_snapshot;

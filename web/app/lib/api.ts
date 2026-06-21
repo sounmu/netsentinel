@@ -5,6 +5,8 @@ import { MetricsRow } from "@/app/types/metrics";
 // should set NEXT_PUBLIC_API_URL=http://localhost:3000 in .env.local.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
+export const getApiBase = () => API_BASE;
+
 // ── Access token (memory-only) ──────────────────────────────────────────
 // The short-lived access JWT lives only in a module-level variable and the
 // React context. It is never written to localStorage. On page reload, the
@@ -287,6 +289,16 @@ export const updateHost = (hostKey: string, body: UpdateHostRequest) =>
 export const deleteHost = async (hostKey: string): Promise<void> => {
   await apiCall<unknown>(`${API_BASE}/api/hosts/${encodeURIComponent(hostKey)}`, "DELETE");
 };
+
+// ── Agent enrollment ──
+
+export interface AgentEnrollmentToken {
+  token: string;
+  expires_at: string;
+}
+
+export const createAgentEnrollment = (body?: { label?: string; ttl_secs?: number }) =>
+  apiCall<AgentEnrollmentToken>(`${API_BASE}/api/agent-enrollments`, "POST", body ?? {});
 
 // ── Alert Config CRUD ──
 

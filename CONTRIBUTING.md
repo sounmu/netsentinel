@@ -110,7 +110,7 @@ When testing auth locally over plain HTTP, set `COOKIE_SECURE=false` in `server/
 
 ```bash
 cd agent
-cp .env.example .env          # edit JWT_SECRET, AGENT_PORT, AGENT_BIND
+cp .env.example .env          # edit AGENT_AUTH_SECRET, AGENT_PORT, AGENT_BIND
 cargo run
 ```
 
