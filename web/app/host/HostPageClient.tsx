@@ -353,10 +353,18 @@ export default function HostPageClient() {
 
           {/* Daily uptime breakdown — day boundaries are in the workspace
               timezone reported by the API, labelled accordingly. */}
-          <div style={{ marginBottom: 16 }}>
+          <div className="host-detail-half-grid">
             <SectionCard title={t.host.uptimeHistory} icon={<Activity size={15} />}>
               <UptimeHistory hostKey={decodedHostKey} />
             </SectionCard>
+            {ports.length > 0 && (
+              <SectionCard
+                title={`${t.host.portStatus} (${ports.length})`}
+                icon={<Network size={15} />}
+              >
+                <PortList ports={ports} />
+              </SectionCard>
+            )}
           </div>
 
           {hasDockerData && (
@@ -370,32 +378,17 @@ export default function HostPageClient() {
             </div>
           )}
 
-          {/* Ports + GPU — small info cards */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(340px, 1fr))",
-              gap: 16,
-              marginBottom: 16,
-            }}
-          >
-            {ports.length > 0 && (
-              <SectionCard
-                title={`${t.host.portStatus} (${ports.length})`}
-                icon={<Network size={15} />}
-              >
-                <PortList ports={ports} />
-              </SectionCard>
-            )}
-            {gpus.length > 0 && (
+          {/* GPU - small info card */}
+          {gpus.length > 0 && (
+            <div className="host-detail-half-grid">
               <SectionCard
                 title={`${t.host.gpu} (${gpus.length})`}
                 icon={<Monitor size={15} />}
               >
                 <GpuCard gpus={gpus} />
               </SectionCard>
-            )}
-          </div>
+            </div>
+          )}
 
         </>
       )}
