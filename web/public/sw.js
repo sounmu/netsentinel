@@ -1,8 +1,7 @@
-// Bump the suffix on every deploy that changes static assets. The
-// activate handler below drops every non-matching cache, so users pick
-// up the new bundle on next nav. Version ladder: netmonitor-v1 (pre-rename)
-// → netsentinel-v1 (post-rename, stale JS/CSS hazard fix) → future bumps.
-const CACHE_NAME = "netsentinel-v1";
+// Bump the suffix when the service worker cache strategy changes. The
+// activate handler below drops every non-matching cache so users do not keep
+// stale Next/Turbopack chunks across deploys.
+const CACHE_NAME = "netsentinel-v2";
 
 self.addEventListener("install", () => {
   // Skip pre-caching — Cloudflare Access may intercept and redirect
@@ -48,16 +47,19 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(
-      caches.match(request).then((cached) => {
-        if (cached) return cached;
-        return fetch(request).then((response) => {
+      fetch(request)
+        .then((response) => {
           if (response.ok && response.type === "basic") {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
-        });
-      })
+        })
+        .catch(() =>
+          caches.match(request).then((cached) => {
+            return cached || new Response("Offline", { status: 503, statusText: "Service Unavailable" });
+          })
+        )
     );
     return;
   }

@@ -3,25 +3,34 @@
 import { useEffect } from "react";
 import { useAuth } from "@/app/auth/AuthContext";
 
+function clearServiceWorkerState() {
+  if ("serviceWorker" in navigator) {
+    void navigator.serviceWorker.getRegistrations().then((registrations) => {
+      registrations.forEach((registration) => {
+        void registration.unregister();
+      });
+    });
+  }
+  if ("caches" in window) {
+    void caches.keys().then((keys) => {
+      keys.forEach((key) => {
+        void caches.delete(key);
+      });
+    });
+  }
+}
+
 export default function ServiceWorkerRegistration() {
   const { user } = useAuth();
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      clearServiceWorkerState();
+      return;
+    }
+
     if (!user) {
-      if ("serviceWorker" in navigator) {
-        void navigator.serviceWorker.getRegistrations().then((registrations) => {
-          registrations.forEach((registration) => {
-            void registration.unregister();
-          });
-        });
-      }
-      if ("caches" in window) {
-        void caches.keys().then((keys) => {
-          keys.forEach((key) => {
-            void caches.delete(key);
-          });
-        });
-      }
+      clearServiceWorkerState();
       return;
     }
 
