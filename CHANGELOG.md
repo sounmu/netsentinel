@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-06-21
+
+Feature release centred on a redesigned agent onboarding flow. Existing
+v0.4.x deployments upgrade in place: migration `0014` is additive (a new
+`agent_enrollment_tokens` table plus an `agent_auth_secret` column on
+`hosts`), and there are no agent ↔ server wire-format changes, so old
+agents keep scraping against the shared `JWT_SECRET` until they are
+re-enrolled.
+
+### Added
+
+- **Per-host agent enrollment.** Adding an agent no longer means copying
+  the server's `JWT_SECRET` to every host. **Agents → Add Agent** mints a
+  short-lived, one-time enrollment token (stored only as a SHA-256 hash)
+  and shows a copy-paste installer command with Server URL, port, and
+  LAN/Tailscale controls. The installer claims the token via
+  `POST /api/agent-enrollments/claim`, receives a host-scoped
+  `agent_auth_secret`, and auto-registers the host. New endpoints:
+  `POST /api/agent-enrollments` (admin) and `.../claim` (no user auth).
+- **`DOCKER_METRICS_MODE` agent setting.** `auto` (default) treats a
+  missing Docker daemon as optional — quietly serving OS metrics and
+  logging only on availability transitions; `enabled` keeps Docker
+  connection failures visible; `disabled` skips Docker entirely (the event
+  listener and stats poller are never spawned).
+- **Instant live columns on SSE connect.** The server now caches the last
+  per-host `metrics` payload and replays it on the SSE handshake, so a
+  freshly-loaded dashboard fills CPU/memory/load/network columns
+  immediately instead of waiting a full scrape cycle.
+
+### Changed
+
+- **Agent auth secret.** Agents read `AGENT_AUTH_SECRET` (the new
+  enrollment-provisioned key), falling back to `JWT_SECRET` as a
+  compatibility alias for older pinned binaries. The scraper signs each
+  host's JWT with that host's secret and only uses the shared server secret
+  for legacy hosts. `install-agent.sh` gains `--server-url` /
+  `--enroll-token` / `--network`; the hub/update/remove scripts and docs
+  follow the enrollment-first flow.
+- **Host detail layout.** Uptime history and port status share a two-column
+  row; the uptime chart renders a fixed 31-day window (empty bars for days
+  with no samples) keyed to the workspace timezone.
+- **`/status` for signed-in users.** Visiting the public status page while
+  logged in keeps the authenticated navigation shell instead of dropping to
+  the bare public page.
+
+### Fixed
+
+- **Stale Next.js chunks after deploy.** The service worker now fetches
+  `/_next/static/` chunks network-first (cache only as offline fallback)
+  and bumps its cache to `netsentinel-v2`, preventing hash-mismatch load
+  failures from a previously-cached bundle. Dev builds clear any registered
+  worker so it can't shadow local changes.
+- **Theme flash / hydration warning.** `<html>` ships a stable
+  `data-theme="light"` default with `suppressHydrationWarning`, letting the
+  pre-hydration FOUC-killer set the real theme without a React mismatch.
+
 ## [0.4.3] — 2026-04-28
 
 Stable release of the "released artefacts" install line. This promotes the
