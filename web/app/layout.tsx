@@ -6,11 +6,11 @@ import { Providers } from "./providers";
 
 /// Inline FOUC-killer for the dark/light theme. Runs synchronously in
 /// `<head>` *before* hydration so the first paint already carries the
-/// correct `data-theme` attribute — without this, `ThemeContext` reads
-/// `localStorage` only after the client hydrates and dark-mode users
-/// see a brief flash of the default light palette. The expression is
-/// kept tiny on purpose; it ships in every HTML page from the static
-/// export, so size matters more than readability.
+/// correct `data-theme` attribute. The server emits `data-theme="light"`
+/// as the stable default, then React accepts this intentional pre-hydration
+/// DOM update via `suppressHydrationWarning` on `<html>`. The expression is
+/// kept tiny on purpose; it ships in every HTML page from the static export,
+/// so size matters more than readability.
 const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(_){}})();`;
 
 const ibmPlexSans = IBM_Plex_Sans_KR({
@@ -49,7 +49,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" data-scroll-behavior="smooth" className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}>
+    <html
+      lang="en"
+      data-theme="light"
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+    >
       <head>
         {/* `beforeInteractive` ensures the snippet runs before React hydrates,
             so the `data-theme` attribute is set before the first paint and
