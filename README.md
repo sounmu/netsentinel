@@ -14,79 +14,6 @@ NetSentinel is an early self-hosted project aimed at homelab and small-server mo
 
 ---
 
-## Why NetSentinel?
-
-Most monitoring stacks are excellent once you are operating a fleet. They are not always fun when you have a NAS, a mini PC, a Raspberry Pi, a Docker host, and a few services behind Tailscale or Cloudflare Tunnel.
-
-**NetSentinel** is built for that smaller shape: a self-hosted hub that pulls metrics from native Rust agents, stores everything in an embedded SQLite database, serves the dashboard from the same container, and sends alerts without needing a separate metrics database or dashboard stack.
-
-Good fit if you want:
-
-- A single Docker Compose service for the hub: API, dashboard, auth, alerts, and SQLite in one container.
-- A native Linux/macOS agent that reports CPU, memory, load, disks, processes, network, Docker containers, temperatures, and optional GPU metrics.
-- Pull-based monitoring over LAN, Tailscale, or Cloudflare Tunnel, with JWT auth between hub and agents.
-- Simple backups: copy `data/netsentinel.db` instead of managing a database container.
-- Built-in HTTP/TCP uptime checks and Discord, Slack, or Email alerts.
-- A dashboard that works out of the box without provisioning Grafana panels.
-
-Not trying to replace:
-
-- Prometheus/Grafana for large fleets, high-cardinality metrics, PromQL, or long-term observability pipelines.
-- Full incident-management systems with on-call rotations and escalation policies.
-- Log aggregation tools like Loki, ELK, or OpenSearch.
-
-## Highlights
-
-- **One container + one file.** The hub keeps metrics, users, host config, alert rules, monitor checks, and dashboard layout in `data/netsentinel.db` using SQLite WAL mode.
-- **No exposed agent ports required.** The hub pulls from agents over private networks or tunnels. A common setup is `host_key = <tailscale-ip>:9101`.
-- **Efficient agent protocol.** Agents serve gzipped `bincode` over HTTP, which keeps scrape payloads small over tunneled links.
-- **SQLite rollups instead of TimescaleDB.** Raw 10-second metrics are retained briefly, 5-minute rollups are kept longer, and long-range charts query the smaller rollup table.
-- **Real-time dashboard.** SSE pushes status and live metrics; the client batches updates to avoid render storms.
-- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, polls resource stats separately, and the dashboard surfaces both a per-host Docker drill-down and an all-containers inventory page.
-- **Native agents first, Docker agents later.** Native installation gives the most accurate host view. Dockerized agents can be supported as a convenience mode for Linux homelabs.
-
----
-
-## Architecture
-
-```mermaid
-graph LR
-    A[Agent<br/>Rust daemon] -->|JWT / HTTP pull| S[Server<br/>Rust / Axum<br/>+ embedded Web]
-    S -->|sqlx| DB[(SQLite<br/>data/netsentinel.db)]
-    S -.->|serves static bundle| BR[Browser]
-    BR -->|SSE stream / REST| S
-    S -->|Webhook| D[Discord / Slack]
-    S -->|SMTP| E[Email Alerts]
-    BR -->|Zero Trust| CF[Cloudflare Tunnel]
-    A -->|Zero Trust| CF
-```
-
-The production hub is a **single container**: Axum serves both `/api/*` and the statically exported Next.js dashboard, while SQLite stores state under `/app/data/netsentinel.db`. Local development is still split for convenience: run the Rust server on port 3000 and the Next.js dev server on port 3001.
-
-**Frontend route contract:** the host detail page is now the static route `/host/?key=<host_key>`. Because the bundle is exported as plain HTML with `trailingSlash: true`, the canonical URL keeps the trailing slash and the `host_key` is passed as a query parameter — resolved client-side via `useSearchParams()` instead of being encoded as a dynamic path segment.
-
-**Data flow:**
-1. Server schedules each registered agent by that host's `scrape_interval_secs` (10 s by default), batch-inserts metrics in a single transaction
-2. Raw metrics stored in SQLite (3-day retention) + a 5-min rollup table (90-day retention) maintained by an in-process `rollup_worker` running on a 60-second tick. A daily `retention_worker` prunes each time-series table past its window.
-3. Browser loads the static bundle from the same origin as the API, then connects to the SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network rate + cumulative counters, disks, temperatures, and Docker stats for live chart overlay; `status` includes Docker lifecycle/Compose/health snapshots. Long-lived streams are cut when the session is revoked
-4. REST API with automatic downsampling: ≤6h raw, 6h-14d 5-min rollup, >14d 15-min re-aggregation
-5. Alerts delivered to Discord, Slack, and/or Email channels
-
----
-
-## Monorepo Structure
-
-```
-netsentinel/
-├── server/   # Rust/Axum backend — metrics API, scraper, alerts,
-│             # and (in prod) the embedded web static bundle
-├── web/      # Next.js dashboard — compiled to `output: 'export'`
-│             # and baked into the server image at build time
-└── agent/    # Rust agent daemon
-```
-
----
-
 ## Quick Start
 
 ### Install the hub (one line)
@@ -193,6 +120,79 @@ cd netsentinel
 docker compose pull server
 docker compose up -d server
 ./scripts/smoke-test.sh
+```
+
+---
+
+## Why NetSentinel?
+
+Most monitoring stacks are excellent once you are operating a fleet. They are not always fun when you have a NAS, a mini PC, a Raspberry Pi, a Docker host, and a few services behind Tailscale or Cloudflare Tunnel.
+
+**NetSentinel** is built for that smaller shape: a self-hosted hub that pulls metrics from native Rust agents, stores everything in an embedded SQLite database, serves the dashboard from the same container, and sends alerts without needing a separate metrics database or dashboard stack.
+
+Good fit if you want:
+
+- A single Docker Compose service for the hub: API, dashboard, auth, alerts, and SQLite in one container.
+- A native Linux/macOS agent that reports CPU, memory, load, disks, processes, network, Docker containers, temperatures, and optional GPU metrics.
+- Pull-based monitoring over LAN, Tailscale, or Cloudflare Tunnel, with JWT auth between hub and agents.
+- Simple backups: copy `data/netsentinel.db` instead of managing a database container.
+- Built-in HTTP/TCP uptime checks and Discord, Slack, or Email alerts.
+- A dashboard that works out of the box without provisioning Grafana panels.
+
+Not trying to replace:
+
+- Prometheus/Grafana for large fleets, high-cardinality metrics, PromQL, or long-term observability pipelines.
+- Full incident-management systems with on-call rotations and escalation policies.
+- Log aggregation tools like Loki, ELK, or OpenSearch.
+
+## Highlights
+
+- **One container + one file.** The hub keeps metrics, users, host config, alert rules, monitor checks, and dashboard layout in `data/netsentinel.db` using SQLite WAL mode.
+- **No exposed agent ports required.** The hub pulls from agents over private networks or tunnels. A common setup is `host_key = <tailscale-ip>:9101`.
+- **Efficient agent protocol.** Agents serve gzipped `bincode` over HTTP, which keeps scrape payloads small over tunneled links.
+- **SQLite rollups instead of TimescaleDB.** Raw 10-second metrics are retained briefly, 5-minute rollups are kept longer, and long-range charts query the smaller rollup table.
+- **Real-time dashboard.** SSE pushes status and live metrics; the client batches updates to avoid render storms.
+- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, polls resource stats separately, and the dashboard surfaces both a per-host Docker drill-down and an all-containers inventory page.
+- **Native agents first, Docker agents later.** Native installation gives the most accurate host view. Dockerized agents can be supported as a convenience mode for Linux homelabs.
+
+---
+
+## Architecture
+
+```mermaid
+graph LR
+    A[Agent<br/>Rust daemon] -->|JWT / HTTP pull| S[Server<br/>Rust / Axum<br/>+ embedded Web]
+    S -->|sqlx| DB[(SQLite<br/>data/netsentinel.db)]
+    S -.->|serves static bundle| BR[Browser]
+    BR -->|SSE stream / REST| S
+    S -->|Webhook| D[Discord / Slack]
+    S -->|SMTP| E[Email Alerts]
+    BR -->|Zero Trust| CF[Cloudflare Tunnel]
+    A -->|Zero Trust| CF
+```
+
+The production hub is a **single container**: Axum serves both `/api/*` and the statically exported Next.js dashboard, while SQLite stores state under `/app/data/netsentinel.db`. Local development is still split for convenience: run the Rust server on port 3000 and the Next.js dev server on port 3001.
+
+**Frontend route contract:** the host detail page is now the static route `/host/?key=<host_key>`. Because the bundle is exported as plain HTML with `trailingSlash: true`, the canonical URL keeps the trailing slash and the `host_key` is passed as a query parameter — resolved client-side via `useSearchParams()` instead of being encoded as a dynamic path segment.
+
+**Data flow:**
+1. Server schedules each registered agent by that host's `scrape_interval_secs` (10 s by default), batch-inserts metrics in a single transaction
+2. Raw metrics stored in SQLite (3-day retention) + a 5-min rollup table (90-day retention) maintained by an in-process `rollup_worker` running on a 60-second tick. A daily `retention_worker` prunes each time-series table past its window.
+3. Browser loads the static bundle from the same origin as the API, then connects to the SSE stream for real-time updates (in-memory — no DB hit, rAF-batched). SSE `metrics` event includes CPU, memory, load, network rate + cumulative counters, disks, temperatures, and Docker stats for live chart overlay; `status` includes Docker lifecycle/Compose/health snapshots. Long-lived streams are cut when the session is revoked
+4. REST API with automatic downsampling: ≤6h raw, 6h-14d 5-min rollup, >14d 15-min re-aggregation
+5. Alerts delivered to Discord, Slack, and/or Email channels
+
+---
+
+## Monorepo Structure
+
+```
+netsentinel/
+├── server/   # Rust/Axum backend — metrics API, scraper, alerts,
+│             # and (in prod) the embedded web static bundle
+├── web/      # Next.js dashboard — compiled to `output: 'export'`
+│             # and baked into the server image at build time
+└── agent/    # Rust agent daemon
 ```
 
 ---
