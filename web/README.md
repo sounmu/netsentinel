@@ -12,7 +12,7 @@ npm run dev             # http://localhost:3001
 
 ## Tech Stack
 
-- **Next.js 16** (App Router, `output: 'export'`)
+- **Next.js 16.2.9** (App Router, `output: 'export'`)
 - **Recharts** — time-series charts
 - **SWR** — data fetching with 5s polling
 - **SSE** — real-time host status via EventSource
