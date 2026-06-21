@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 
 pub use crate::models::alert_runtime::{AlertConfig, MetricAlertRule};
 pub use crate::models::metrics_store::{AlertMetricPoint, HostRecord, MetricsStore};
-use crate::models::sse_payloads::{HostStatusPayload, SseBroadcast};
+use crate::models::sse_payloads::{HostMetricsPayload, HostStatusPayload, SseBroadcast};
 use crate::repositories::hosts_repo::HostRow;
 use crate::repositories::metrics_repo::{ChartMetricsRow, MetricsRow};
 use crate::services::hosts_snapshot::SharedHostsSnapshot;
@@ -59,6 +59,27 @@ pub struct AppState {
     /// insert a freshly-built `Arc::new(...)` or swap in a new `Arc`
     /// via `Arc::make_mut` for in-place field updates.
     pub last_known_status: Arc<RwLock<HashMap<String, Arc<HostStatusPayload>>>>,
+    /// Cache of the most recently broadcast per-host **metrics** payload.
+    ///
+    /// Companion to `last_known_status`. Where the status cache carries the
+    /// semi-static shape (disks, containers, ports, system info), this one
+    /// carries the live scalars the Overview table reads — CPU%, memory%,
+    /// load, network rate. Without it, the SSE handshake only replayed
+    /// `status` events, so a freshly-connected dashboard rendered host rows
+    /// immediately but left every metric column blank until the next scrape
+    /// cycle's `metrics` broadcast (up to one `scrape_interval` of lag, ~10–20 s).
+    ///
+    /// Replaying the last metrics on handshake makes a new client converge to
+    /// the exact state an already-connected client holds: a long-lived client
+    /// keeps the last `metrics` in its map even after a host goes offline
+    /// (only `status` is re-sent on `handle_down`), and the client-side
+    /// `getHostStatus` timestamp safety-net still marks stale rows offline —
+    /// so caching the last *online* metrics never resurrects a down host.
+    ///
+    /// Same `std::sync::RwLock` + `Arc<…>` discipline as `last_known_status`:
+    /// no `.await` inside the lock scope; readers drain to a `Vec` of
+    /// refcount bumps then serialize outside the critical section.
+    pub last_known_metrics: Arc<RwLock<HashMap<String, Arc<HostMetricsPayload>>>>,
     /// TTL cache for full long-range metric queries (avoids repeated DB scans for same range)
     pub metrics_query_cache: Arc<MetricsQueryCache<MetricsRow>>,
     /// TTL cache for lightweight chart long-range queries.

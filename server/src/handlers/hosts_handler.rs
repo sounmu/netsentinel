@@ -202,6 +202,9 @@ pub async fn delete_host(
     if let Ok(mut lks) = state.last_known_status.write() {
         lks.remove(&host_key);
     }
+    if let Ok(mut lkm) = state.last_known_metrics.write() {
+        lkm.remove(&host_key);
+    }
     if let Ok(mut store) = state.store.write() {
         store.hosts.remove(&host_key);
     }
