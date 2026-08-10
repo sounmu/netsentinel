@@ -6,7 +6,7 @@ description = "Lightweight monitoring agent — collects CPU, memory, disk, GPU,
 license = "Apache-2.0"
 repository = "https://github.com/sounmu/netsentinel"
 
-# Preserve the produced binary name. Public install-agent.sh, the
+# Preserve the produced binary name. Public install-host.sh, the
 # systemd unit, the launchd plist, GitHub Release tarballs, and
 # /var/log/netsentinel-agent all reference this name.
 [[bin]]

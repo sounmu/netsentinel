@@ -28,12 +28,12 @@ It clones the repo into `~/netsentinel`, generates `.env` with random secrets, p
 
 Prerequisites: Docker + Compose v2, `git`, `curl`, `openssl`. Tested on Linux and macOS; Windows users should run this inside WSL2.
 
-### Install an agent on every monitored host (copy from the UI)
+### Install the host monitor on every monitored host (copy from the UI)
 
-Open **Agents → Add Agent** in the dashboard. NetSentinel creates a short-lived enrollment token and shows a copy-paste install command:
+Open **Hosts → Add Host** in the dashboard. NetSentinel creates a short-lived enrollment token and shows a copy-paste install command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- \
       --server-url "http://<hub-ip>:3000" \
       --enroll-token "nsenr_..." \
@@ -41,14 +41,14 @@ curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/ins
       --port 9101
 ```
 
-Choose **Tailscale** in the Add Agent modal, or pass `--network tailscale`, to bind the agent to its Tailscale IPv4 address. The installer downloads the matching prebuilt agent from GitHub Releases, verifies `SHA256SUMS`, claims the token, writes an agent-scoped auth secret, drops a systemd unit (Linux) or launchd daemon (macOS), starts the service, and registers the host in the hub automatically. Re-run the installer later with `--ref <release-tag>` to pin or update the native agent in place.
+Choose **Tailscale** in the Add Host modal, or pass `--network tailscale`, to bind the host monitor to its Tailscale IPv4 address. The installer downloads the matching prebuilt binary from GitHub Releases, verifies `SHA256SUMS`, claims the token, writes a host-scoped auth secret, drops a systemd unit (Linux) or launchd daemon (macOS), starts the service, and registers the host in the hub automatically. Re-run the installer later with `--ref <release-tag>` to pin or update it in place.
 
 > Need an unreleased branch or local fork? Add `--build-from-source --ref <branch-or-tag>`; that path requires `git` and the Rust toolchain.
 
 ### Register the host in the UI
 
 1. Open `http://<hub-ip>:3000/setup` → create the first local admin account. Google OAuth is optional and can be enabled later.
-2. Navigate to **Agents → + Add Agent**, choose LAN or Tailscale, and copy the generated install command to the target machine.
+2. Navigate to **Hosts → + Add Host**, choose LAN or Tailscale, and copy the generated install command to the target machine.
 3. The host flips from `pending` → `online` within one scrape interval (default 10 s).
 
 Full walkthrough with troubleshooting: [`docs/AFTER_INSTALL.md`](docs/AFTER_INSTALL.md).
@@ -72,13 +72,13 @@ bash ~/netsentinel/scripts/update-hub.sh --skip-git-pull
 
 It runs `git pull --ff-only`, `docker compose pull server`, recreates the container, and runs the smoke test. SQLite data, `.env`, and any `docker-compose.override.yml` are left alone (the `data/` directory is bind-mounted, so it survives container recreation).
 
-**Agent** (run on every monitored host):
+**Host monitor** (run on every monitored host):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/update-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/update-host.sh \
   | sudo bash                                  # → latest release
 
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/update-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/update-host.sh \
   | sudo bash -s -- --ref v0.5.1               # → pinned tag
 ```
 
@@ -93,14 +93,14 @@ bash ~/netsentinel/scripts/remove-hub.sh                  # stop the stack only
 bash ~/netsentinel/scripts/remove-hub.sh --purge --remove-image -y   # full wipe
 ```
 
-**Agent** — stops the service and removes the binary, config (`/etc/netsentinel/`), unit file, and log dir.
+**Host monitor** — stops the service and removes the binary, config (`/etc/netsentinel/`), unit file, and log dir.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/remove-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/remove-host.sh \
   | sudo bash
 ```
 
-Equivalent to `sudo install-agent.sh --uninstall` — pick whichever is on hand.
+Equivalent to `sudo install-host.sh --uninstall` — pick whichever is on hand.
 
 ### If something goes wrong
 
@@ -282,7 +282,7 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AGENT_AUTH_SECRET` | **Yes** | — | Agent-scoped auth secret written by the Add Agent enrollment flow. Legacy/manual installs may still set `JWT_SECRET` as a compatibility alias. |
+| `AGENT_AUTH_SECRET` | **Yes** | — | Host-scoped auth secret written by the Add Host enrollment flow. Legacy/manual installs may still set `JWT_SECRET` as a compatibility alias. |
 | `JWT_SECRET` | Legacy | — | Compatibility alias for older pinned agent binaries. New installs should use `AGENT_AUTH_SECRET`. |
 | `AGENT_PORT` | No | `9101` | Port the agent HTTP server listens on |
 | `AGENT_BIND` | No | `0.0.0.0` | Bind address. Use a Tailscale IP such as `100.x.y.z` to expose the native agent only on that interface. |
@@ -311,7 +311,7 @@ All endpoints require `Authorization: Bearer <JWT>` unless noted. Read endpoints
 | `POST` | `/api/hosts` | Register a new host |
 | `PUT` | `/api/hosts/{host_key}` | Update host configuration |
 | `DELETE` | `/api/hosts/{host_key}` | Delete a host |
-| `POST` | `/api/agent-enrollments` | Create a short-lived Add Agent enrollment token **(admin)** |
+| `POST` | `/api/agent-enrollments` | Create a short-lived Add Host enrollment token **(admin)** |
 | `POST` | `/api/agent-enrollments/claim` | Installer claims a token and receives an agent-scoped auth secret **(no user auth)** |
 | `GET` | `/api/metrics/{host_key}` | Recent 50 metric rows |
 | `GET` | `/api/metrics/{host_key}?start=&end=` | Metrics in a time range (ISO 8601) |
@@ -364,7 +364,7 @@ All tables live in a single SQLite file (`data/netsentinel.db`, WAL mode, STRICT
 | **`metrics`** | Raw scrape rows. 3-day retention. Stores CPU, memory, load, network, disk, process, temperature, GPU, Docker, port data as JSON text columns, plus nullable scalar `rx_bytes_per_sec` / `tx_bytes_per_sec` projections for bandwidth rollups. |
 | **`metrics_5min`** | 5-minute rollup table (`STRICT, WITHOUT ROWID`, PK `(host_key, bucket)`). Populated by `services::rollup_worker` on a 60-second tick via an idempotent UPSERT from `metrics`; includes cumulative network counters, bucket-averaged bandwidth scalar columns, and last-in-bucket JSON snapshots for Docker stats/container state. 90-day retention. |
 | **`hosts`** | Agent registry (scrape interval, thresholds, monitored ports/containers, per-agent `agent_auth_secret`, system info: OS/CPU/RAM/IP). `ports` / `containers` stored as JSON arrays in TEXT columns. |
-| **`agent_enrollment_tokens`** | Short-lived one-time Add Agent tokens. Stores only a SHA-256 token hash, expiry, creator, and used-host metadata; the plain token is shown once in the install command. |
+| **`agent_enrollment_tokens`** | Short-lived one-time Add Host tokens. Stores only a SHA-256 token hash, expiry, creator, and used-host metadata; the plain token is shown once in the install command. |
 | **`alert_configs`** | Alert rules (`cpu`, `memory`, `disk`, `load`, `network`, `temperature`, `gpu`, `docker`); `NULL host_key` = global default, per-host rows override. `UNIQUE NULLS NOT DISTINCT` is emulated with an expression-based UNIQUE INDEX on `(coalesce(host_key, ''), metric_type, coalesce(sub_key, ''))`. |
 | **`notification_channels`** | Alert delivery targets (Discord, Slack, Microsoft Teams, Telegram, generic webhook, Email SMTP). Config stored as JSON text. |
 | **`dashboard_layouts`** | Per-user dashboard widget layout (JSON text). |
