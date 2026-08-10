@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
-import { IBM_Plex_Sans_KR, IBM_Plex_Mono } from "next/font/google";
+import { IBM_Plex_Mono } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
 import { Providers } from "./providers";
 
@@ -13,10 +14,11 @@ import { Providers } from "./providers";
 /// so size matters more than readability.
 const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(_){}})();`;
 
-const ibmPlexSans = IBM_Plex_Sans_KR({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-ibm-plex-sans",
+const pretendard = localFont({
+  src: "../node_modules/pretendard/dist/web/variable/woff2/PretendardVariable.woff2",
+  weight: "45 920",
+  style: "normal",
+  variable: "--font-pretendard",
   display: "swap",
 });
 
@@ -54,7 +56,7 @@ export default function RootLayout({
       data-theme="light"
       data-scroll-behavior="smooth"
       suppressHydrationWarning
-      className={`${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
+      className={`${pretendard.variable} ${ibmPlexMono.variable}`}
     >
       <head>
         {/* `beforeInteractive` ensures the snippet runs before React hydrates,
