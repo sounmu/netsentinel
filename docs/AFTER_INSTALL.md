@@ -59,7 +59,7 @@ Click **Create admin** → you are redirected to `/login` → sign in with the s
 
 ## Step 3 — Add your first host (1 minute, in the browser)
 
-In the navbar, click **Agents** → **+ Add Agent**. Fill in:
+In the navbar, click **Hosts** → **+ Add Host**. Fill in:
 
 | Field | Example | What it means |
 |---|---|---|
@@ -74,12 +74,12 @@ Hit **Save** → the host shows up in `/agents` immediately with status **`pendi
 
 ---
 
-## Step 4 — Install the agent on the target machine (~2 minutes)
+## Step 4 — Install the host monitor on the target machine (~2 minutes)
 
-NetSentinel ships a one-liner agent installer. On the machine you want to monitor, paste:
+NetSentinel ships a one-liner host monitor installer. On the machine you want to monitor, paste:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- --jwt-secret "PASTE_THE_JWT_SECRET_HERE"
 ```
 
@@ -87,21 +87,21 @@ Common variants:
 
 ```bash
 # Default: listen on every interface, port 9101.
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- \
       --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
       --bind "0.0.0.0" \
       --port 9101
 
 # Tailscale-only exposure: register 100.x.y.z:9101 in the hub.
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- \
       --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
       --bind "100.x.y.z" \
       --port 9101
 
 # Custom port: register <agent-ip>:9200 in the hub.
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- \
       --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
       --bind "0.0.0.0" \
@@ -142,7 +142,7 @@ To update an installed native agent, re-run the installer with the same
 `/etc/netsentinel/agent.env` are replaced, then the service is restarted:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- \
       --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
       --bind "0.0.0.0" \
@@ -160,7 +160,7 @@ sudo systemctl restart netsentinel-agent
 
 ### 4.1 Confirm the server picks up the agent
 
-Back in the hub UI, the `Agents` row flips from `pending` → `online` within one scrape cycle. Live metrics land on the Overview dashboard and `/host/?key=<host_key>`.
+Back in the hub UI, the `Hosts` row flips from `pending` → `online` within one scrape cycle. Live metrics land on the Overview dashboard and `/host/?key=<host_key>`.
 
 ### 4.2 If it stays `pending`
 
@@ -176,14 +176,14 @@ Back in the hub UI, the `Agents` row flips from `pending` → `online` within on
 If you need an unreleased branch, local fork, or unsupported platform, build from source:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \
+curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \
   | sudo bash -s -- \
       --jwt-secret "PASTE_THE_JWT_SECRET_HERE" \
       --build-from-source \
       --ref main
 ```
 
-Register the same `<lan-ip>:<AGENT_PORT>` in the hub's Agents page.
+Register the same `<lan-ip>:<AGENT_PORT>` in the hub's Hosts page.
 
 ---
 
