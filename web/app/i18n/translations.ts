@@ -35,26 +35,6 @@ export const translations = {
         generic: "An error occurred during login",
       },
     },
-    // Dashboard
-    dashboard: {
-      customize: "Customize",
-      done: "Done",
-      addWidget: "Add Widget",
-      removeWidget: "Remove",
-      widgetTypes: {
-        host_status: "Host Status",
-        cpu_chart: "CPU Chart",
-        memory_chart: "Memory Chart",
-        alert_feed: "Alert Feed",
-        uptime_overview: "Uptime Overview",
-        http_monitor: "HTTP Monitor",
-      },
-      selectHost: "Select Host",
-      cpu: "CPU",
-      ram: "RAM",
-      noRecentAlerts: "No recent alerts",
-      noWidgets: "No widgets added. Click 'Customize' to add widgets.",
-    },
     // Overview page
     overview: {
       title: "Infrastructure Overview",
@@ -129,13 +109,6 @@ export const translations = {
         storage: "Storage",
         image: "Image",
       },
-    },
-    // Disk
-    disk: {
-      free: "Free",
-      used: "Used",
-      total: "Total",
-      noDisks: "No disk data",
     },
     // Agents management page
     agents: {
@@ -318,18 +291,6 @@ export const translations = {
       exitCode: "exit {code}",
       restarts: "restarts {count}",
     },
-    // CpuCoreGrid
-    cpuCores: {
-      title: "CPU Cores",
-      core: "Core",
-    },
-    // NetworkInterfaceTable
-    networkInterfaces: {
-      title: "Network Interfaces",
-      interface: "Interface",
-      rx: "RX",
-      tx: "TX",
-    },
     // Chart / TimeSeriesChart
     chart: {
       timeRange: "Time range",
@@ -358,13 +319,6 @@ export const translations = {
       load1m: "1m",
       load5m: "5m",
       load15m: "15m",
-    },
-    // LoadGauge
-    loadGauge: {
-      load1mAvg: "1m avg",
-      load5mAvg: "5m avg",
-      load15mAvg: "15m avg",
-      cpuCoreReference: "Based on CPU cores: {cpuCount} cores (max = {cpuCount})",
     },
     // DateTimePicker
     datePicker: {
@@ -447,16 +401,6 @@ export const translations = {
       statusOk: "OK",
       statusError: "Error",
     },
-    // ProcessTable
-    process: {
-      noData: "No process data",
-      name: "Name",
-      memoryMb: "Memory (MB)",
-    },
-    // TemperatureDisplay
-    temperature: {
-      noData: "No temperature data",
-    },
     // GpuCard
     gpu: {
       noData: "No GPU data",
@@ -485,25 +429,6 @@ export const translations = {
     },
   },
   ko: {
-    dashboard: {
-      customize: "커스터마이즈",
-      done: "완료",
-      addWidget: "위젯 추가",
-      removeWidget: "제거",
-      widgetTypes: {
-        host_status: "호스트 상태",
-        cpu_chart: "CPU 차트",
-        memory_chart: "메모리 차트",
-        alert_feed: "알림 피드",
-        uptime_overview: "가동률 개요",
-        http_monitor: "HTTP 모니터",
-      },
-      selectHost: "호스트 선택",
-      cpu: "CPU",
-      ram: "RAM",
-      noRecentAlerts: "최근 알림 없음",
-      noWidgets: "추가된 위젯이 없습니다. '커스터마이즈'를 클릭하여 위젯을 추가하세요.",
-    },
     auth: {
       login: "로그인",
       logout: "로그아웃",
@@ -606,12 +531,6 @@ export const translations = {
         storage: "스토리지",
         image: "이미지",
       },
-    },
-    disk: {
-      free: "여유",
-      used: "사용",
-      total: "전체",
-      noDisks: "디스크 데이터 없음",
     },
     agents: {
       title: "에이전트 관리",
@@ -790,16 +709,6 @@ export const translations = {
       exitCode: "exit {code}",
       restarts: "재시작 {count}회",
     },
-    cpuCores: {
-      title: "CPU 코어",
-      core: "코어",
-    },
-    networkInterfaces: {
-      title: "네트워크 인터페이스",
-      interface: "인터페이스",
-      rx: "수신",
-      tx: "송신",
-    },
     // Chart / TimeSeriesChart
     chart: {
       timeRange: "기간",
@@ -828,13 +737,6 @@ export const translations = {
       load1m: "1분",
       load5m: "5분",
       load15m: "15분",
-    },
-    // LoadGauge
-    loadGauge: {
-      load1mAvg: "1분 평균",
-      load5mAvg: "5분 평균",
-      load15mAvg: "15분 평균",
-      cpuCoreReference: "CPU 코어 수 기준: {cpuCount} cores (max = {cpuCount})",
     },
     // DateTimePicker
     datePicker: {
@@ -912,14 +814,6 @@ export const translations = {
       noMonitors: "설정된 모니터가 없습니다.",
       statusOk: "정상",
       statusError: "오류",
-    },
-    process: {
-      noData: "프로세스 데이터 없음",
-      name: "이름",
-      memoryMb: "메모리 (MB)",
-    },
-    temperature: {
-      noData: "온도 데이터 없음",
     },
     gpu: {
       noData: "GPU 데이터 없음",

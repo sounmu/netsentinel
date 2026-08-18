@@ -208,9 +208,6 @@ Violations should be fixed before merge.
 
 ## 9. Known remaining work
 
-- `web/app/host/HostPageClient.tsx` and the chart components still carry inline
-  styles. They re-skin correctly through the alias layer but have not been moved
-  onto the primitives.
 - `.alerts-*` in `globals.css` has been folded onto the shared buttons, tabs and
   tiles, but its panels, matrix and drawer still have bespoke rules that could
   collapse into `Panel` / `DataTable`.
