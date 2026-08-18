@@ -227,7 +227,7 @@ function MatrixMobileItem({
   return (
     <div className="alerts-matrix-mobile__item" role="listitem">
       <div className="alerts-matrix-mobile__head">
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+        <label className="alerts-checkbox-label">
           <input
             type="checkbox"
             className="alerts-matrix__checkbox"

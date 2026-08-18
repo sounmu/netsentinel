@@ -61,7 +61,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
               <div className="alerts-active-card__head">
                 <div>
                   <div className="alerts-active-card__host">
-                    <span aria-hidden="true" style={{ marginRight: 6 }}>
+                    <span aria-hidden="true" className="alerts-active-card__emoji">
                       {alertTypeEmoji(alert.alert_type)}
                     </span>
                     {alert.host_key}

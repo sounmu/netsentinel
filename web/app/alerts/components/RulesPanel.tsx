@@ -239,7 +239,7 @@ function HostAlertOverride({
   const msgIsSuccess = msg === t.alerts.saved || msg === t.alerts.revertedToGlobal;
 
   return (
-    <div className="glass-card" style={{ overflow: "hidden", marginBottom: 8 }}>
+    <div className="glass-card alerts-host-card">
       <button
         type="button"
         onClick={toggle}
@@ -287,10 +287,7 @@ function HostAlertOverride({
             </div>
           )}
 
-          <div
-            className="alerts-row alerts-row--end alerts-row--tight"
-            style={{ marginTop: 16 }}
-          >
+          <div className="alerts-row alerts-row--end alerts-row--tight alerts-host-actions">
             {hasOverride && (
               <button
                 type="button"

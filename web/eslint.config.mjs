@@ -1,6 +1,7 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import noStaticStyleProps from "./eslint-rules/no-static-style-props.mjs";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -18,6 +19,21 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "error",
     },
   },
+  // Design-system enforcement (DESIGN.md §8). Typography, spacing and shape
+  // must come from token-backed classes; runtime-computed geometry and colour
+  // stay legal, so the rule targets properties rather than banning `style`.
+  {
+    files: ["app/**/*.tsx"],
+    plugins: { netsentinel: { rules: { "no-static-style-props": noStaticStyleProps } } },
+    rules: { "netsentinel/no-static-style-props": "error" },
+  },
+  {
+    // Replaces the root layout, so globals.css never loads and no token
+    // exists — literal values are correct here.
+    files: ["app/global-error.tsx"],
+    rules: { "netsentinel/no-static-style-props": "off" },
+  },
+
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

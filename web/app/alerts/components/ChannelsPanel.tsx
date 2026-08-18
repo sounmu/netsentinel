@@ -134,7 +134,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
     >
       <div className="alerts-section-heading">
         <div>
-          <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
+          <h2 className="alerts-section-title alerts-section-title--flush">
             {t.notifications.title}
           </h2>
           <p className="alerts-section-description">{t.notifications.description}</p>
@@ -150,7 +150,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
       </div>
 
       {showForm && (
-        <div className="alerts-channel-compose" style={{ marginBottom: 12 }}>
+        <div className="alerts-channel-compose">
           <div className="alerts-channel-type-grid" aria-label={t.notifications.channelType}>
             {channelOptions.map((option) => (
               <button
@@ -232,7 +232,7 @@ export function ChannelsPanel({ onCountChange }: Props) {
       )}
 
       {channels?.map((ch) => (
-        <div key={ch.id} className="alerts-channel-card" style={{ marginBottom: 8 }}>
+        <div key={ch.id} className="alerts-channel-card">
           <span className="alerts-channel-card__icon" aria-hidden="true">
             {channelIcon(ch.channel_type)}
           </span>

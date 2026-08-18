@@ -1,0 +1,66 @@
+{
+  "extends": "stylelint-config-standard",
+  "rules": {
+    "declaration-property-value-allowed-list": {
+      "font-size": [
+        "/^var\\(--fs-/",
+        "inherit",
+        "0"
+      ],
+      "border-radius": [
+        "/^(0|50%|var\\(--r-[a-z]+\\)|\\s)+$/",
+        "inherit"
+      ]
+    },
+    "declaration-property-value-disallowed-list": {
+      "/^(color|fill|stroke|background|background-color|border|border-color|border-top|border-right|border-bottom|border-left|border-top-color|border-right-color|border-bottom-color|border-left-color|outline|outline-color|box-shadow|text-decoration-color|caret-color|accent-color)$/": [
+        "/#[0-9a-fA-F]{3,8}\\b/",
+        "/\\brgba?\\(/",
+        "/\\bhsla?\\(/"
+      ]
+    },
+    "comment-empty-line-before": null,
+    "declaration-empty-line-before": null,
+    "custom-property-empty-line-before": null,
+    "rule-empty-line-before": null,
+    "no-descending-specificity": null,
+    "alpha-value-notation": null,
+    "color-function-notation": null,
+    "color-function-alias-notation": null,
+    "color-hex-length": null,
+    "value-keyword-case": null,
+    "selector-class-pattern": null,
+    "custom-property-pattern": null,
+    "keyframes-name-pattern": null,
+    "import-notation": null,
+    "media-feature-range-notation": null,
+    "at-rule-no-unknown": [
+      true,
+      {
+        "ignoreAtRules": [
+          "theme",
+          "utility",
+          "apply",
+          "variants",
+          "screen",
+          "custom-variant",
+          "plugin",
+          "source",
+          "reference"
+        ]
+      }
+    ],
+    "shorthand-property-no-redundant-values": null,
+    "property-no-vendor-prefix": null,
+    "at-rule-empty-line-before": null,
+    "declaration-block-single-line-max-declarations": null,
+    "length-zero-no-unit": null,
+    "number-max-precision": null,
+    "declaration-block-no-redundant-longhand-properties": null
+  },
+  "ignoreFiles": [
+    ".next/**",
+    "out/**",
+    "node_modules/**"
+  ]
+}

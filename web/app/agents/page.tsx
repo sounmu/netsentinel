@@ -311,7 +311,7 @@ export default function AgentsPage() {
                 )}
               </Field>
               <Field label={t.agents.displayName} required htmlFor="agent-display-name">
-                <input id="agent-display-name" className="date-input" style={{ fontFamily: "inherit" }}
+                <input id="agent-display-name" className="date-input date-input--text"
                   placeholder="Production Server" value={form.display_name}
                   onChange={(e) => updateField("display_name", e.target.value)} />
               </Field>
@@ -331,7 +331,7 @@ export default function AgentsPage() {
                   onChange={(e) => updateField("ports", e.target.value)} />
               </Field>
               <Field label={t.agents.dockerContainers} htmlFor="agent-containers">
-                <input id="agent-containers" className="date-input" style={{ fontFamily: "inherit" }}
+                <input id="agent-containers" className="date-input date-input--text"
                   placeholder="empty = monitor all" value={form.containers}
                   onChange={(e) => updateField("containers", e.target.value)} />
               </Field>

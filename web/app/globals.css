@@ -358,7 +358,7 @@
 *:focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
-  border-radius: var(--md-sys-shape-corner-xs);
+  border-radius: var(--r-xs);
 }
 
 .skip-to-content {
@@ -369,7 +369,7 @@
   padding: 8px 16px;
   background: var(--accent-blue);
   color: white;
-  border-radius: 0 0 var(--md-sys-shape-corner-sm) var(--md-sys-shape-corner-sm);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
   font-size: var(--fs-body);
   font-weight: 600;
   text-decoration: none;
@@ -502,7 +502,7 @@ body {
   );
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
 }
 
 /* Fade in */
@@ -674,7 +674,7 @@ body > main {
   right: 0;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   padding: var(--md-sys-spacing-sm);
   box-shadow: var(--shadow-pop);
   z-index: 100;
@@ -1087,7 +1087,7 @@ body > main {
 
 .docker-grid__empty-filter {
   padding: var(--md-sys-spacing-lg);
-  border-radius: var(--md-sys-shape-corner-lg);
+  border-radius: var(--r-lg);
   background: var(--docker-grid-empty-bg);
   border: 1px dashed var(--md-sys-color-outline-variant);
   color: var(--md-sys-color-on-surface-variant);
@@ -1098,7 +1098,7 @@ body > main {
   display: grid;
   gap: var(--md-sys-spacing-md);
   padding: var(--md-sys-spacing-lg);
-  border-radius: var(--md-sys-shape-corner-lg);
+  border-radius: var(--r-lg);
   background: var(--docker-grid-group-bg);
   border: 1px solid var(--md-sys-color-outline-variant);
 }
@@ -1148,7 +1148,7 @@ body > main {
   display: grid;
   gap: var(--md-sys-spacing-sm);
   padding: var(--md-sys-spacing-lg);
-  border-radius: var(--md-sys-shape-corner-large);
+  border-radius: var(--r-lg);
   background: var(--docker-grid-card-bg);
   border: 1px solid var(--md-sys-color-outline-variant);
   transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
@@ -1224,7 +1224,7 @@ body > main {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
-  border-radius: var(--md-sys-shape-corner-sm);
+  border-radius: var(--r-sm);
   background: transparent;
   border: 1px solid var(--md-sys-color-outline-variant);
   color: var(--md-sys-color-on-surface-variant);
@@ -2068,7 +2068,7 @@ select.date-input,
   cursor: pointer;
   text-align: left;
   color: inherit;
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   transition: background var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
 }
 .alerts-host-toggle:hover {
@@ -2230,7 +2230,7 @@ select.date-input,
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-left: 4px solid var(--accent-red);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   padding: 16px;
   display: flex;
   flex-direction: column;
@@ -2287,7 +2287,7 @@ select.date-input,
 .alerts-matrix-wrap {
   overflow-x: auto;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   background: var(--bg-card);
   box-shadow: 0 1px 2px var(--shadow-sm);
 }
@@ -2403,7 +2403,7 @@ select.date-input,
 .alerts-matrix-mobile__item {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   padding: 14px 16px;
   box-shadow: 0 1px 2px var(--shadow-sm);
 }
@@ -2465,7 +2465,7 @@ select.date-input,
   z-index: 3;
   background: var(--bg-card);
   border: 1px solid var(--accent-blue);
-  border-radius: var(--radius-md);
+  border-radius: var(--r-md);
   padding: 10px 16px;
   margin-bottom: 16px;
   display: flex;
@@ -2633,7 +2633,7 @@ select.date-input,
 .alerts-drawer-scrim {
   position: fixed;
   inset: 0;
-  background: color-mix(in srgb, #000 32%, transparent);
+  background: var(--overlay-bg);
   z-index: 40;
   animation: fadeInScrim var(--md-sys-motion-medium2) var(--md-sys-motion-easing-decelerate);
 }
@@ -3637,3 +3637,78 @@ a.btn { text-decoration: none; }
   color: var(--muted);
 }
 .dtp__now { margin-left: auto; }
+
+/* ── Input modifier: prose, not identifiers ──────
+   `.date-input` is monospace because most fields here hold hosts, ports
+   and paths. Fields that hold a human-written name need the UI face. */
+.date-input--text {
+  font-family: var(--font-sans);
+}
+
+/* ── Navbar: text-label icon button (locale toggle) ─── */
+.navbar-icon-btn--text {
+  width: auto;
+  padding: 0 var(--md-sys-spacing-sm);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+.navbar-mobile-actions {
+  border-top: 1px solid var(--hairline);
+  margin: var(--md-sys-spacing-xs) 0;
+  padding: var(--md-sys-spacing-xs) 0;
+}
+.navbar-mobile-actions__row {
+  display: flex;
+  gap: 6px;
+  padding: var(--md-sys-spacing-xs) var(--md-sys-spacing-md);
+}
+
+/* ── Error boundary fallback ─── */
+.boundary-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-sm);
+  min-height: 60vh;
+  padding: var(--md-sys-spacing-3xl);
+  text-align: center;
+  color: var(--ink);
+}
+.boundary-fallback__icon { color: var(--crit); }
+.boundary-fallback__title {
+  font-size: var(--fs-head);
+  font-weight: 600;
+  letter-spacing: -0.016em;
+  margin: 0;
+}
+.boundary-fallback__message {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  max-width: 44ch;
+  line-height: 1.5;
+  margin: 0 0 var(--md-sys-spacing-sm);
+}
+
+/* ── Docker grid shell ─── */
+.docker-grid {
+  display: grid;
+  gap: var(--md-sys-spacing-lg);
+}
+
+/* ── Alerts: classes replacing inline spacing overrides ─── */
+.alerts-active-card__emoji { margin-right: 6px; }
+.alerts-section-title--flush { margin-bottom: 0; }
+.alerts-history-row__message--spaced { margin-top: 6px; }
+.alerts-search-input { padding-left: 30px; }
+.alerts-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-sm);
+  cursor: pointer;
+}
+.alerts-host-card {
+  overflow: hidden;
+  margin-bottom: var(--md-sys-spacing-sm);
+}
+.alerts-host-actions { margin-top: var(--md-sys-spacing-lg); }

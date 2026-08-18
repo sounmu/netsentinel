@@ -181,11 +181,10 @@ export function HistoryPanel() {
           />
           <input
             type="search"
-            className="alerts-field__input"
+            className="alerts-field__input alerts-search-input"
             placeholder={t.alerts.history.search}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ paddingLeft: 30 }}
           />
         </div>
 
@@ -221,7 +220,7 @@ export function HistoryPanel() {
                     {alert.alert_type}
                   </span>
                 </div>
-                <div className="alerts-history-row__message" style={{ marginTop: 6 }}>
+                <div className="alerts-history-row__message alerts-history-row__message--spaced">
                   {sanitizeMarkdown(alert.message)}
                 </div>
                 <div className="alerts-history-row__meta">

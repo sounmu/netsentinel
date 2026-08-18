@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Box, Server } from "lucide-react";
 import { PageHeader } from "@/app/components/PageHeader";
+import { EmptyState } from "@/app/components/ui";
 import { useI18n } from "@/app/i18n/I18nContext";
 import {
   useSSEConnection,
@@ -332,26 +333,11 @@ export default function ContainersPage() {
         )}
 
         {!isLoading && rows.length === 0 && (
-          <div
-            style={{
-              padding: "48px 24px",
-              textAlign: "center",
-              color: "var(--text-muted)",
-            }}
-          >
-            <Box size={40} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
-            <div
-              style={{
-                fontSize: 15,
-                fontWeight: 600,
-                marginBottom: 6,
-                color: "var(--text-primary)",
-              }}
-            >
-              {t.containers.noContainers}
-            </div>
-            <div style={{ fontSize: 13 }}>{t.containers.noContainersHint}</div>
-          </div>
+          <EmptyState
+            icon={<Box size={28} aria-hidden="true" />}
+            title={t.containers.noContainers}
+            description={t.containers.noContainersHint}
+          />
         )}
 
         {!isLoading && rows.length > 0 && (
