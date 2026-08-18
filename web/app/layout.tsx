@@ -11,7 +11,7 @@ import { Providers } from "./providers";
 /// DOM update via `suppressHydrationWarning` on `<html>`. The expression is
 /// kept tiny on purpose; it ships in every HTML page from the static export,
 /// so size matters more than readability.
-const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(_){}})();`;
+const THEME_BOOTSTRAP = `(function(){try{var t=localStorage.getItem('theme');if(t!=='dark'&&t!=='light'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.setAttribute('data-theme',t);var c=t==='dark'?'#0D0F10':'#F5F7F7';document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.setAttribute('content',c);});}catch(_){}})();`;
 
 const ibmPlexSans = IBM_Plex_Sans_KR({
   subsets: ["latin"],
@@ -30,7 +30,12 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#3B82F6",
+  // Metadata cannot resolve CSS custom properties, so mirror the canonical
+  // canvas tokens for browser chrome in each OS colour scheme.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#F5F7F7" },
+    { media: "(prefers-color-scheme: dark)", color: "#0D0F10" },
+  ],
 };
 
 export const metadata: Metadata = {

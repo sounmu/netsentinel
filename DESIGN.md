@@ -225,7 +225,10 @@ Violations should be fixed before merge.
   `fontSize`, `fontWeight`, `fontFamily`, `lineHeight`, `letterSpacing`,
   `padding`, `margin`, `borderRadius`, `gap` and `boxShadow` inside
   `style={{}}`. Runtime-computed values stay legal, because bar widths and
-  threshold colours cannot live in a stylesheet.
+  threshold colours cannot live in a stylesheet. The companion
+  `no-raw-color-literals` rule rejects raw hex / `rgb()` / `hsl()` strings
+  anywhere in application TS/TSX so palettes and component constants cannot bypass
+  stylelint.
 
 `app/global-error.tsx` is exempt from both: it replaces the root layout, so
 `globals.css` never loads and no token exists.

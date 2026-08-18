@@ -262,12 +262,14 @@ function HttpMonitorsTab({ showForm, onCloseForm }: { showForm: boolean; onClose
         </Panel>
       )}
 
-      <MonitorList
-        rows={rows}
-        emptyLabel={t.monitors.noMonitors}
-        onDelete={handleDelete}
-        deleteLabel={t.common.delete}
-      />
+      {(!showForm || rows.length > 0) && (
+        <MonitorList
+          rows={rows}
+          emptyLabel={t.monitors.noMonitors}
+          onDelete={handleDelete}
+          deleteLabel={t.common.delete}
+        />
+      )}
     </>
   );
 }
@@ -354,12 +356,14 @@ function PingMonitorsTab({ showForm, onCloseForm }: { showForm: boolean; onClose
         </Panel>
       )}
 
-      <MonitorList
-        rows={rows}
-        emptyLabel={t.monitors.noMonitors}
-        onDelete={handleDelete}
-        deleteLabel={t.common.delete}
-      />
+      {(!showForm || rows.length > 0) && (
+        <MonitorList
+          rows={rows}
+          emptyLabel={t.monitors.noMonitors}
+          onDelete={handleDelete}
+          deleteLabel={t.common.delete}
+        />
+      )}
     </>
   );
 }

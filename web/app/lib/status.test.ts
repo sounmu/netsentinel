@@ -1,5 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { getHostStatus } from "./status";
+import {
+  getHostStatus,
+  meterTone,
+  uptimeTone,
+} from "./status";
 
 // Mock Date.now() to simulate time-elapsed scenarios
 describe("getHostStatus", () => {
@@ -99,5 +103,23 @@ describe("getHostStatus", () => {
     const fifteenSecondsAgo = new Date(FIXED_NOW - 15_000).toISOString();
     expect(getHostStatus(fifteenSecondsAgo, true, 20)).toBe("online");
     expect(getHostStatus(fifteenSecondsAgo, true, 5)).toBe("pending");
+  });
+});
+
+describe("meterTone", () => {
+  it("changes tone at the shared warning and critical boundaries", () => {
+    expect(meterTone(59.99)).toBe("ok");
+    expect(meterTone(60)).toBe("warn");
+    expect(meterTone(84.99)).toBe("warn");
+    expect(meterTone(85)).toBe("crit");
+  });
+});
+
+describe("uptimeTone", () => {
+  it("changes tone at the shared warning and healthy boundaries", () => {
+    expect(uptimeTone(94.99)).toBe("crit");
+    expect(uptimeTone(95)).toBe("warn");
+    expect(uptimeTone(99.49)).toBe("warn");
+    expect(uptimeTone(99.5)).toBe("ok");
   });
 });

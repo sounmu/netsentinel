@@ -58,6 +58,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     root.setAttribute("data-theme-switching", "");
     root.setAttribute("data-theme", theme);
 
+    // Keep browser chrome in sync with the explicit app preference, even
+    // when it differs from the operating-system colour scheme used by the
+    // static metadata fallback in layout.tsx.
+    const themeColor = getComputedStyle(root).getPropertyValue("--canvas").trim();
+    if (themeColor) {
+      for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+        meta.content = themeColor;
+      }
+    }
+
     const raf = requestAnimationFrame(() => {
       root.removeAttribute("data-theme-switching");
     });

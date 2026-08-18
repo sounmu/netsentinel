@@ -48,9 +48,8 @@ const PRESET_CONFIG: { key: PresetButtonKey; minutes: number }[] = [
 ];
 
 const PALETTE = [
-  "hsl(220, 70%, 55%)", "hsl(160, 60%, 45%)", "hsl(30, 80%, 55%)",
-  "hsl(280, 65%, 60%)", "hsl(340, 75%, 55%)", "hsl(190, 70%, 45%)",
-  "hsl(50, 80%, 50%)", "hsl(0, 70%, 55%)",
+  "var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)",
+  "var(--chart-5)", "var(--chart-6)", "var(--chart-7)", "var(--chart-8)",
 ];
 
 // ─── Utilities ───────────────────────────────
