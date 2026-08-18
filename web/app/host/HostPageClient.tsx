@@ -18,24 +18,24 @@ const TimeSeriesChart = dynamic(
 import PortList from "@/app/components/PortList";
 import GpuCard from "@/app/components/GpuCard";
 import UptimeHistory from "@/app/components/UptimeHistory";
+import { getHostStatus } from "@/app/lib/status";
 import {
-  getHostStatus,
-  STATUS_DOT_CLASS,
-} from "@/app/lib/status";
+  Panel, PanelHeader, EmptyState, SkeletonRows, StatusDot, Button,
+} from "@/app/components/ui";
 import {
   Activity,
   ArrowLeft,
   Wifi,
-  Network,
   Monitor,
   Clock,
   Globe,
-  Server,
   Cpu,
-  Box,
   MemoryStick,
 } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
+
+/** Maps host status onto the shared dot tones. */
+const DOT_TONE = { online: "ok", pending: "warn", offline: "off" } as const;
 
 /** Format uptime from boot_time (Unix timestamp seconds).
  *  <24h → "Xh Xm", ≥24h → "Xd Xh"
@@ -68,36 +68,20 @@ function useNowSeconds(): number {
   return now;
 }
 
+/** A titled section on the host detail page. Thin wrapper over the shared
+ *  Panel so every section header on this page matches the rest of the app. */
 function SectionCard({
   title,
-  icon,
   children,
-  style,
 }: {
   title: string;
-  icon: React.ReactNode;
   children: React.ReactNode;
-  style?: React.CSSProperties;
 }) {
   return (
-    <div className="glass-card" style={{ padding: "20px 22px", ...style }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          marginBottom: 16,
-          paddingBottom: 12,
-          borderBottom: "1px solid var(--border-subtle)",
-        }}
-      >
-        <span style={{ color: "var(--text-muted)", display: "flex" }}>{icon}</span>
-        <h2 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-          {title}
-        </h2>
-      </div>
-      {children}
-    </div>
+    <Panel>
+      <PanelHeader title={title} />
+      <div className="section-body">{children}</div>
+    </Panel>
   );
 }
 
@@ -171,225 +155,140 @@ export default function HostPageClient() {
   }
 
   return (
-    <div className="fade-in">
-      {/* Info bar */}
-      <div className="glass-card" style={{ marginBottom: 16 }}>
-        <div
-          style={{
-            padding: "16px 20px 0",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button
-              onClick={() => router.push("/")}
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                color: "var(--text-muted)",
-                display: "flex",
-                alignItems: "center",
-                padding: 0,
-              }}
-              aria-label={t.host.backToOverview}
-            >
-              <ArrowLeft size={18} />
-            </button>
-            <h1
-              style={{
-                fontSize: 20,
-                fontWeight: 700,
-                color: "var(--text-primary)",
-                letterSpacing: "-0.3px",
-              }}
-            >
-              {displayName}
-            </h1>
-            <span
-              className={STATUS_DOT_CLASS[hostStatus]}
-              style={{ width: 10, height: 10 }}
-            />
-          </div>
+    <div className="page-content fade-in">
+      {/* Identity header — back, name, live status, and the machine facts
+          that stay true regardless of which chart you are looking at. */}
+      <header className="host-header">
+        <div className="host-header__row">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon
+            onClick={() => router.push("/")}
+            aria-label={t.host.backToOverview}
+          >
+            <ArrowLeft size={15} aria-hidden="true" />
+          </Button>
+          <StatusDot tone={DOT_TONE[hostStatus]} />
+          <h1 className="host-header__name">{displayName}</h1>
         </div>
 
-        <div className="info-bar">
-          {/* System info (from /system-info endpoint) */}
+        <div className="host-facts">
           {statusData?.ip_address && (
-            <>
-              <div className="info-bar-item">
-                <Globe size={14} color="var(--text-muted)" />
-                <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12 }}>
-                  {statusData.ip_address}
-                </span>
-              </div>
-              <div className="info-bar-separator" />
-            </>
+            <span className="host-fact">
+              <Globe size={13} aria-hidden="true" />
+              <span className="mono">{statusData.ip_address}</span>
+            </span>
           )}
           {statusData?.boot_time && (
-            <>
-              <div className="info-bar-item">
-                <Clock size={14} color="var(--text-muted)" />
-                <span style={{ fontSize: 12 }}>
-                  {t.host.uptime}: {formatUptime(statusData.boot_time, nowSecs)}
-                </span>
-              </div>
-              <div className="info-bar-separator" />
-            </>
+            <span className="host-fact">
+              <Clock size={13} aria-hidden="true" />
+              {t.host.uptime} {formatUptime(statusData.boot_time, nowSecs)}
+            </span>
           )}
           {statusData?.os_info && (
-            <>
-              <div className="info-bar-item">
-                <Monitor size={14} color="var(--text-muted)" />
-                <span style={{ fontSize: 12 }}>{statusData.os_info}</span>
-              </div>
-              <div className="info-bar-separator" />
-            </>
+            <span className="host-fact">
+              <Monitor size={13} aria-hidden="true" />
+              {statusData.os_info}
+            </span>
           )}
           {statusData?.cpu_model && (
-            <>
-              <div className="info-bar-item">
-                <Cpu size={14} color="var(--text-muted)" />
-                <span style={{ fontSize: 12 }}>{statusData.cpu_model}</span>
-              </div>
-              <div className="info-bar-separator" />
-            </>
+            <span className="host-fact">
+              <Cpu size={13} aria-hidden="true" />
+              {statusData.cpu_model}
+            </span>
           )}
           {statusData?.memory_total_mb != null && (
-            <div className="info-bar-item">
-              <MemoryStick size={14} color="var(--text-muted)" />
-              <span style={{ fontSize: 12, fontFamily: "var(--font-mono), monospace" }}>
+            <span className="host-fact">
+              <MemoryStick size={13} aria-hidden="true" />
+              <span className="mono">
                 {statusData.memory_total_mb >= 1024
                   ? `${(statusData.memory_total_mb / 1024).toFixed(1)} GB`
                   : `${statusData.memory_total_mb} MB`}
               </span>
-            </div>
+            </span>
           )}
 
-          {/* Fallback: show basic info when system info is not yet available */}
+          {/* Fallback while the agent has not reported system info yet. */}
           {!statusData?.ip_address && !statusData?.os_info && (
             <>
               {displayName !== decodedHostKey && (
-                <>
-                  <div className="info-bar-item">
-                    <Globe size={14} color="var(--text-muted)" />
-                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12 }}>
-                      {decodedHostKey}
-                    </span>
-                  </div>
-                  <div className="info-bar-separator" />
-                </>
+                <span className="host-fact">
+                  <Globe size={13} aria-hidden="true" />
+                  <span className="mono">{decodedHostKey}</span>
+                </span>
               )}
-              <div className="info-bar-item">
-                <Server size={14} color="var(--text-muted)" />
-                <span>{displayName}</span>
-              </div>
               {latestTimestamp && (
-                <>
-                  <div className="info-bar-separator" />
-                  <div className="info-bar-item">
-                    <Clock size={14} color="var(--text-muted)" />
-                    <span style={{ fontSize: 12, fontFamily: "var(--font-mono), monospace" }}>
-                      {new Date(latestTimestamp).toLocaleString()}
-                    </span>
-                  </div>
-                </>
+                <span className="host-fact">
+                  <Clock size={13} aria-hidden="true" />
+                  <span className="mono">
+                    {new Date(latestTimestamp).toLocaleString()}
+                  </span>
+                </span>
               )}
               {liveMetrics && (
                 <>
-                  <div className="info-bar-separator" />
-                  <div className="info-bar-item">
-                    <Cpu size={14} color="var(--text-muted)" />
-                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12, fontWeight: 600 }}>
+                  <span className="host-fact">
+                    <Cpu size={13} aria-hidden="true" />
+                    <span className="mono">
                       CPU {liveMetrics.cpu_usage_percent.toFixed(1)}%
                     </span>
-                  </div>
-                  <div className="info-bar-separator" />
-                  <div className="info-bar-item">
-                    <Activity size={14} color="var(--text-muted)" />
-                    <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 12, fontWeight: 600 }}>
+                  </span>
+                  <span className="host-fact">
+                    <Activity size={13} aria-hidden="true" />
+                    <span className="mono">
                       RAM {liveMetrics.memory_usage_percent.toFixed(1)}%
                     </span>
-                  </div>
+                  </span>
                 </>
               )}
             </>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Loading */}
-      {!isConnected && !hasData && (
-        <div style={{ display: "grid", gap: 16 }}>
-          {[220, 400, 200].map((h, i) => (
-            <div key={i} className="skeleton" style={{ height: h }} />
-          ))}
-        </div>
-      )}
+      {!isConnected && !hasData && <SkeletonRows count={3} height={200} />}
 
-      {/* No data */}
       {isConnected && !hasData && (
-        <div
-          className="glass-card"
-          style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)" }}
-        >
-          <Wifi size={36} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>{t.host.noMetrics}</div>
-          <div style={{ fontSize: 13 }}>{t.host.noMetricsHint}</div>
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<Wifi size={28} aria-hidden="true" />}
+            title={t.host.noMetrics}
+            description={t.host.noMetricsHint}
+          />
+        </Panel>
       )}
 
-      {/* All charts + remaining sections */}
       {hasData && (
         <>
-          {/* Main time-series charts (CPU, RAM, Network, Temp, Cores, Disk, Processes) */}
-          <div style={{ marginBottom: 16 }}>
-            <TimeSeriesChart hostKey={decodedHostKey} />
-          </div>
+          <TimeSeriesChart hostKey={decodedHostKey} />
 
           {/* Daily uptime breakdown — day boundaries are in the workspace
               timezone reported by the API, labelled accordingly. */}
           <div className="host-detail-half-grid">
-            <SectionCard title={t.host.uptimeHistory} icon={<Activity size={15} />}>
+            <SectionCard title={t.host.uptimeHistory}>
               <UptimeHistory hostKey={decodedHostKey} />
             </SectionCard>
             {ports.length > 0 && (
-              <SectionCard
-                title={`${t.host.portStatus} (${ports.length})`}
-                icon={<Network size={15} />}
-              >
+              <SectionCard title={`${t.host.portStatus} (${ports.length})`}>
                 <PortList ports={ports} />
               </SectionCard>
             )}
           </div>
 
           {hasDockerData && (
-            <div style={{ display: "grid", gap: 16, marginBottom: 16 }}>
-              <SectionCard
-                title={`${t.host.dockerContainers} (${dockerContainers.length})`}
-                icon={<Box size={15} />}
-              >
-                <DockerGrid containers={dockerContainers} />
-              </SectionCard>
-            </div>
+            <SectionCard title={`${t.host.dockerContainers} (${dockerContainers.length})`}>
+              <DockerGrid containers={dockerContainers} />
+            </SectionCard>
           )}
 
-          {/* GPU - small info card */}
           {gpus.length > 0 && (
             <div className="host-detail-half-grid">
-              <SectionCard
-                title={`${t.host.gpu} (${gpus.length})`}
-                icon={<Monitor size={15} />}
-              >
+              <SectionCard title={`${t.host.gpu} (${gpus.length})`}>
                 <GpuCard gpus={gpus} />
               </SectionCard>
             </div>
           )}
-
         </>
       )}
     </div>

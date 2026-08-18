@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
-import { Globe, Wifi, Plus, Trash2, CheckCircle, XCircle } from "lucide-react";
+import { Globe, Wifi, Plus, Trash2 } from "lucide-react";
 import {
   HttpMonitor, HttpMonitorSummary, PingMonitor, PingMonitorSummary,
   getHttpMonitorsUrl, getHttpSummariesUrl, getPingMonitorsUrl, getPingSummariesUrl,
@@ -11,74 +11,144 @@ import {
   fetcher,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { uptimeTone } from "@/app/lib/status";
 import { PageHeader } from "@/app/components/PageHeader";
+import {
+  Button, Panel, PanelHeader, Field, EmptyState, Segmented, StatusDot,
+} from "@/app/components/ui";
 
-function MiniField({ label, id, children }: { label: string; id?: string; children: React.ReactNode }) {
+type Tab = "http" | "ping";
+
+/**
+ * A monitor of either kind renders identically: dot · name/target ·
+ * latency · uptime · delete. Both tabs previously duplicated this
+ * markup, the uptime colour maths, and the empty state.
+ */
+interface MonitorRow {
+  id: number;
+  name: string;
+  target: string;
+  healthy: boolean;
+  latency: string | null;
+  uptimePct: number | null;
+}
+
+function MonitorList({
+  rows,
+  emptyLabel,
+  onDelete,
+  deleteLabel,
+}: {
+  rows: MonitorRow[];
+  emptyLabel: string;
+  onDelete: (id: number) => void;
+  deleteLabel: string;
+}) {
+  if (rows.length === 0) {
+    return (
+      <Panel>
+        <EmptyState icon={<Globe size={28} aria-hidden="true" />} title={emptyLabel} />
+      </Panel>
+    );
+  }
+
   return (
-    <div>
-      <label htmlFor={id} style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4, display: "block" }}>{label}</label>
-      {children}
+    <div className="row-stack">
+      {rows.map((row) => (
+        <div key={row.id} className="record-row">
+          <StatusDot tone={row.healthy ? "ok" : "crit"} firing={!row.healthy} />
+          <div className="record-row__id">
+            <span className="record-row__name">{row.name}</span>
+            <span className="record-row__meta" title={row.target}>{row.target}</span>
+          </div>
+          {row.latency && <span className="record-row__num">{row.latency}</span>}
+          {row.uptimePct !== null && (
+            <span
+              className="record-row__num"
+              style={{ color: `var(--${uptimeTone(row.uptimePct)})` }}
+            >
+              {row.uptimePct.toFixed(1)}%
+            </span>
+          )}
+          <div className="record-row__actions">
+            <Button
+              variant="danger"
+              size="sm"
+              icon
+              aria-label={deleteLabel}
+              title={deleteLabel}
+              onClick={() => onDelete(row.id)}
+            >
+              <Trash2 size={13} aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
-
-type Tab = "http" | "ping";
 
 export default function MonitorsPage() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("http");
+  const [showForm, setShowForm] = useState(false);
+
+  const { data: httpMonitors } = useSWR<HttpMonitor[]>(
+    getHttpMonitorsUrl(), fetcher, { revalidateOnFocus: false },
+  );
+  const { data: pingMonitors } = useSWR<PingMonitor[]>(
+    getPingMonitorsUrl(), fetcher, { revalidateOnFocus: false },
+  );
+
+  const total = (httpMonitors?.length ?? 0) + (pingMonitors?.length ?? 0);
+
+  const tabs = [
+    { value: "http" as const, label: t.monitors.httpMonitors, icon: <Globe size={13} aria-hidden="true" />, count: httpMonitors?.length ?? null },
+    { value: "ping" as const, label: t.monitors.pingMonitors, icon: <Wifi size={13} aria-hidden="true" />, count: pingMonitors?.length ?? null },
+  ];
 
   return (
     <div className="page-content fade-in">
       <PageHeader
-        icon={<Globe size={18} aria-hidden="true" />}
+        icon={<Globe size={16} aria-hidden="true" />}
         title={t.monitors.title}
+        badge={total}
+        description={t.monitors.description}
+        right={
+          <Button variant="primary" onClick={() => setShowForm((v) => !v)}>
+            <Plus size={14} aria-hidden="true" /> {t.monitors.addMonitor}
+          </Button>
+        }
       />
 
-      {/* Tab buttons */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-        <button
-          onClick={() => setActiveTab("http")}
-          style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
-            borderRadius: 8, border: `1px solid ${activeTab === "http" ? "var(--accent-blue)" : "var(--border-subtle)"}`,
-            background: activeTab === "http" ? "var(--accent-blue)" : "var(--bg-secondary)",
-            color: activeTab === "http" ? "var(--text-on-accent, #fff)" : "var(--text-secondary)",
-            fontSize: 13, fontWeight: 600, cursor: "pointer",
-          }}
-        >
-          <Globe size={14} /> {t.monitors.httpMonitors}
-        </button>
-        <button
-          onClick={() => setActiveTab("ping")}
-          style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
-            borderRadius: 8, border: `1px solid ${activeTab === "ping" ? "var(--accent-blue)" : "var(--border-subtle)"}`,
-            background: activeTab === "ping" ? "var(--accent-blue)" : "var(--bg-secondary)",
-            color: activeTab === "ping" ? "var(--text-on-accent, #fff)" : "var(--text-secondary)",
-            fontSize: 13, fontWeight: 600, cursor: "pointer",
-          }}
-        >
-          <Wifi size={14} /> {t.monitors.pingMonitors}
-        </button>
-      </div>
+      <Segmented
+        options={tabs}
+        value={activeTab}
+        onChange={(next) => {
+          setActiveTab(next);
+          setShowForm(false);
+        }}
+        ariaLabel={t.monitors.title}
+      />
 
-      {/* Content */}
-      {activeTab === "http" ? <HttpMonitorsTab /> : <PingMonitorsTab />}
+      {activeTab === "http" ? (
+        <HttpMonitorsTab showForm={showForm} onCloseForm={() => setShowForm(false)} />
+      ) : (
+        <PingMonitorsTab showForm={showForm} onCloseForm={() => setShowForm(false)} />
+      )}
     </div>
   );
 }
 
-function HttpMonitorsTab() {
+function HttpMonitorsTab({ showForm, onCloseForm }: { showForm: boolean; onCloseForm: () => void }) {
   const { t } = useI18n();
   const { data: monitors, mutate: mutateMonitors } = useSWR<HttpMonitor[]>(
-    getHttpMonitorsUrl(), fetcher, { revalidateOnFocus: false }
+    getHttpMonitorsUrl(), fetcher, { revalidateOnFocus: false },
   );
   const { data: summaries } = useSWR<HttpMonitorSummary[]>(
-    getHttpSummariesUrl(), fetcher, { refreshInterval: 10000, revalidateOnFocus: false }
+    getHttpSummariesUrl(), fetcher, { refreshInterval: 10000, revalidateOnFocus: false },
   );
 
-  const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
   const [formUrl, setFormUrl] = useState("");
   const [formMethod, setFormMethod] = useState("GET");
@@ -88,8 +158,22 @@ function HttpMonitorsTab() {
 
   const summaryMap = useMemo(
     () => new Map(summaries?.map((s) => [s.monitor_id, s])),
-    [summaries]
+    [summaries],
   );
+
+  const rows: MonitorRow[] = (monitors ?? []).map((m) => {
+    const summary = summaryMap.get(m.id);
+    return {
+      id: m.id,
+      name: m.name,
+      target: `${m.method} ${m.url}`,
+      healthy: summary ? summary.latest_error === null : true,
+      latency: summary?.latest_response_time_ms != null
+        ? `${summary.latest_response_time_ms}ms`
+        : null,
+      uptimePct: summary ? summary.uptime_pct : null,
+    };
+  });
 
   const handleCreate = async () => {
     if (!formName.trim() || !formUrl.trim()) return;
@@ -102,7 +186,7 @@ function HttpMonitorsTab() {
         interval_secs: formInterval,
         timeout_ms: formTimeout,
       });
-      setShowForm(false);
+      onCloseForm();
       setFormName("");
       setFormUrl("");
       setFormMethod("GET");
@@ -125,147 +209,103 @@ function HttpMonitorsTab() {
   };
 
   return (
-    <div>
-      {/* Add Monitor button */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button type="button" onClick={() => setShowForm((v) => !v)} className="md-btn-filled">
-          <Plus size={16} aria-hidden="true" /> {t.monitors.addMonitor}
-        </button>
-      </div>
-
-      {/* Add form */}
+    <>
       {showForm && (
-        <div className="glass-card" style={{ padding: 20, marginBottom: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-            <MiniField label={t.monitors.name} id="http-monitor-name">
-              <input id="http-monitor-name" className="date-input" style={{ width: "100%" }} value={formName}
-                onChange={(e) => setFormName(e.target.value)} placeholder="My API" />
-            </MiniField>
-            <MiniField label={t.monitors.url} id="http-monitor-url">
-              <input id="http-monitor-url" className="date-input" style={{ width: "100%" }} value={formUrl}
-                onChange={(e) => setFormUrl(e.target.value)} placeholder="https://example.com" />
-            </MiniField>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
-            <MiniField label={t.monitors.method} id="http-monitor-method">
-              <select id="http-monitor-method" className="date-input" style={{ width: "100%" }} value={formMethod}
-                onChange={(e) => setFormMethod(e.target.value)}>
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="HEAD">HEAD</option>
-              </select>
-            </MiniField>
-            <MiniField label={t.monitors.expectedStatus} id="http-monitor-expected-status">
-              <input id="http-monitor-expected-status" className="date-input" style={{ width: "100%" }} type="number"
-                value={formExpectedStatus} onChange={(e) => setFormExpectedStatus(parseInt(e.target.value) || 200)} />
-            </MiniField>
-            <MiniField label={t.monitors.interval} id="http-monitor-interval">
-              <input id="http-monitor-interval" className="date-input" style={{ width: "100%" }} type="number"
-                value={formInterval} onChange={(e) => setFormInterval(parseInt(e.target.value) || 60)} />
-            </MiniField>
-            <MiniField label={t.monitors.timeout} id="http-monitor-timeout">
-              <input id="http-monitor-timeout" className="date-input" style={{ width: "100%" }} type="number"
-                value={formTimeout} onChange={(e) => setFormTimeout(parseInt(e.target.value) || 10000)} />
-            </MiniField>
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" onClick={() => setShowForm(false)} className="md-btn-tonal">
-              {t.common.cancel}
-            </button>
-            <button type="button" onClick={handleCreate} className="md-btn-filled">
-              {t.monitors.addMonitor}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Monitor list */}
-      {monitors?.map((monitor) => {
-        const summary = summaryMap.get(monitor.id);
-        const isHealthy = summary ? summary.latest_error === null : true;
-        const uptimePct = summary?.uptime_pct ?? 0;
-        const uptimeColor = uptimePct >= 99 ? "var(--accent-green)" : uptimePct >= 95 ? "var(--accent-yellow)" : "var(--accent-red)";
-
-        return (
-          <div key={monitor.id} className="glass-card" style={{ padding: "14px 20px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
-            {/* Status indicator */}
-            {isHealthy
-              ? <CheckCircle size={18} color="var(--accent-green)" />
-              : <XCircle size={18} color="var(--accent-red)" />
+        <Panel>
+          <PanelHeader
+            title={t.monitors.addMonitor}
+            right={
+              <Button variant="ghost" size="sm" onClick={onCloseForm}>
+                {t.common.cancel}
+              </Button>
             }
-
-            {/* Name & URL */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>{monitor.name}</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {monitor.method} {monitor.url}
-              </div>
+          />
+          <div className="form-body">
+            <div className="form-grid">
+              <Field label={t.monitors.name} htmlFor="http-monitor-name">
+                <input id="http-monitor-name" className="date-input" value={formName}
+                  onChange={(e) => setFormName(e.target.value)} placeholder="My API" />
+              </Field>
+              <Field label={t.monitors.url} htmlFor="http-monitor-url">
+                <input id="http-monitor-url" className="date-input" value={formUrl}
+                  onChange={(e) => setFormUrl(e.target.value)} placeholder="https://example.com" />
+              </Field>
+              <Field label={t.monitors.method} htmlFor="http-monitor-method">
+                <select id="http-monitor-method" className="date-input" value={formMethod}
+                  onChange={(e) => setFormMethod(e.target.value)}>
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="HEAD">HEAD</option>
+                </select>
+              </Field>
+              <Field label={t.monitors.expectedStatus} htmlFor="http-monitor-expected-status">
+                <input id="http-monitor-expected-status" className="date-input" type="number"
+                  value={formExpectedStatus}
+                  onChange={(e) => setFormExpectedStatus(parseInt(e.target.value) || 200)} />
+              </Field>
+              <Field label={t.monitors.interval} htmlFor="http-monitor-interval">
+                <input id="http-monitor-interval" className="date-input" type="number"
+                  value={formInterval}
+                  onChange={(e) => setFormInterval(parseInt(e.target.value) || 60)} />
+              </Field>
+              <Field label={t.monitors.timeout} htmlFor="http-monitor-timeout">
+                <input id="http-monitor-timeout" className="date-input" type="number"
+                  value={formTimeout}
+                  onChange={(e) => setFormTimeout(parseInt(e.target.value) || 10000)} />
+              </Field>
             </div>
-
-            {/* Response time */}
-            {summary?.latest_response_time_ms != null && (
-              <div style={{ fontSize: 13, fontFamily: "var(--font-mono), monospace", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                {summary.latest_response_time_ms}ms
-              </div>
-            )}
-
-            {/* Uptime */}
-            {summary && (
-              <div style={{ fontSize: 13, fontWeight: 600, color: uptimeColor, whiteSpace: "nowrap" }}>
-                {uptimePct.toFixed(1)}%
-              </div>
-            )}
-
-            {/* Delete */}
-            <button
-              onClick={() => handleDelete(monitor.id)}
-              aria-label={t.common.delete}
-              title={t.common.delete}
-              style={{
-                padding: "4px 8px", borderRadius: 6,
-                border: "1px solid var(--badge-offline-border)",
-                background: "var(--status-offline-bg)", color: "var(--accent-red)",
-                fontSize: 11, cursor: "pointer",
-              }}
-            >
-              <Trash2 size={12} />
-            </button>
+            <div className="form-actions">
+              <Button variant="secondary" onClick={onCloseForm}>{t.common.cancel}</Button>
+              <Button variant="primary" onClick={handleCreate}>{t.monitors.addMonitor}</Button>
+            </div>
           </div>
-        );
-      })}
-
-      {(!monitors || monitors.length === 0) && !showForm && (
-        <div className="glass-card" style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-          {t.monitors.noMonitors}
-        </div>
+        </Panel>
       )}
-    </div>
+
+      <MonitorList
+        rows={rows}
+        emptyLabel={t.monitors.noMonitors}
+        onDelete={handleDelete}
+        deleteLabel={t.common.delete}
+      />
+    </>
   );
 }
 
-function PingMonitorsTab() {
+function PingMonitorsTab({ showForm, onCloseForm }: { showForm: boolean; onCloseForm: () => void }) {
   const { t } = useI18n();
   const { data: monitors, mutate: mutateMonitors } = useSWR<PingMonitor[]>(
-    getPingMonitorsUrl(), fetcher, { revalidateOnFocus: false }
+    getPingMonitorsUrl(), fetcher, { revalidateOnFocus: false },
   );
   const { data: summaries } = useSWR<PingMonitorSummary[]>(
-    getPingSummariesUrl(), fetcher, { refreshInterval: 10000, revalidateOnFocus: false }
+    getPingSummariesUrl(), fetcher, { refreshInterval: 10000, revalidateOnFocus: false },
   );
 
-  const [showForm, setShowForm] = useState(false);
   const [formName, setFormName] = useState("");
   const [formHost, setFormHost] = useState("");
 
   const summaryMap = useMemo(
     () => new Map(summaries?.map((s) => [s.monitor_id, s])),
-    [summaries]
+    [summaries],
   );
+
+  const rows: MonitorRow[] = (monitors ?? []).map((m) => {
+    const summary = summaryMap.get(m.id);
+    return {
+      id: m.id,
+      name: m.name,
+      target: m.host,
+      healthy: summary ? summary.latest_success === true : true,
+      latency: summary?.latest_rtt_ms != null ? `${summary.latest_rtt_ms.toFixed(1)}ms` : null,
+      uptimePct: summary ? summary.uptime_pct : null,
+    };
+  });
 
   const handleCreate = async () => {
     if (!formName.trim() || !formHost.trim()) return;
     try {
       await createPingMonitor({ name: formName, host: formHost });
-      setShowForm(false);
+      onCloseForm();
       setFormName("");
       setFormHost("");
       await mutateMonitors();
@@ -284,98 +324,42 @@ function PingMonitorsTab() {
   };
 
   return (
-    <div>
-      {/* Add Monitor button */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button type="button" onClick={() => setShowForm((v) => !v)} className="md-btn-filled">
-          <Plus size={16} aria-hidden="true" /> {t.monitors.addMonitor}
-        </button>
-      </div>
-
-      {/* Add form */}
+    <>
       {showForm && (
-        <div className="glass-card" style={{ padding: 20, marginBottom: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-            <MiniField label={t.monitors.name} id="ping-monitor-name">
-              <input id="ping-monitor-name" className="date-input" style={{ width: "100%" }} value={formName}
-                onChange={(e) => setFormName(e.target.value)} placeholder="Gateway" />
-            </MiniField>
-            <MiniField label={t.monitors.host} id="ping-monitor-host">
-              <input id="ping-monitor-host" className="date-input" style={{ width: "100%" }} value={formHost}
-                onChange={(e) => setFormHost(e.target.value)} placeholder="192.168.1.1 or 192.168.1.1:80" />
-            </MiniField>
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" onClick={() => setShowForm(false)} className="md-btn-tonal">
-              {t.common.cancel}
-            </button>
-            <button type="button" onClick={handleCreate} className="md-btn-filled">
-              {t.monitors.addMonitor}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Monitor list */}
-      {monitors?.map((monitor) => {
-        const summary = summaryMap.get(monitor.id);
-        const isHealthy = summary ? summary.latest_success === true : true;
-        const uptimePct = summary?.uptime_pct ?? 0;
-        const uptimeColor = uptimePct >= 99 ? "var(--accent-green)" : uptimePct >= 95 ? "var(--accent-yellow)" : "var(--accent-red)";
-
-        return (
-          <div key={monitor.id} className="glass-card" style={{ padding: "14px 20px", marginBottom: 8, display: "flex", alignItems: "center", gap: 12 }}>
-            {/* Status indicator */}
-            {isHealthy
-              ? <CheckCircle size={18} color="var(--accent-green)" />
-              : <XCircle size={18} color="var(--accent-red)" />
+        <Panel>
+          <PanelHeader
+            title={t.monitors.addMonitor}
+            right={
+              <Button variant="ghost" size="sm" onClick={onCloseForm}>
+                {t.common.cancel}
+              </Button>
             }
-
-            {/* Name & host */}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>{monitor.name}</div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono), monospace" }}>
-                {monitor.host}
-              </div>
+          />
+          <div className="form-body">
+            <div className="form-grid">
+              <Field label={t.monitors.name} htmlFor="ping-monitor-name">
+                <input id="ping-monitor-name" className="date-input" value={formName}
+                  onChange={(e) => setFormName(e.target.value)} placeholder="Gateway" />
+              </Field>
+              <Field label={t.monitors.host} htmlFor="ping-monitor-host">
+                <input id="ping-monitor-host" className="date-input" value={formHost}
+                  onChange={(e) => setFormHost(e.target.value)} placeholder="192.168.1.1" />
+              </Field>
             </div>
-
-            {/* RTT */}
-            {summary?.latest_rtt_ms != null && (
-              <div style={{ fontSize: 13, fontFamily: "var(--font-mono), monospace", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-                {summary.latest_rtt_ms.toFixed(1)}ms
-              </div>
-            )}
-
-            {/* Uptime */}
-            {summary && (
-              <div style={{ fontSize: 13, fontWeight: 600, color: uptimeColor, whiteSpace: "nowrap" }}>
-                {uptimePct.toFixed(1)}%
-              </div>
-            )}
-
-            {/* Delete */}
-            <button
-              onClick={() => handleDelete(monitor.id)}
-              aria-label={t.common.delete}
-              title={t.common.delete}
-              style={{
-                padding: "4px 8px", borderRadius: 6,
-                border: "1px solid var(--badge-offline-border)",
-                background: "var(--status-offline-bg)", color: "var(--accent-red)",
-                fontSize: 11, cursor: "pointer",
-              }}
-            >
-              <Trash2 size={12} />
-            </button>
+            <div className="form-actions">
+              <Button variant="secondary" onClick={onCloseForm}>{t.common.cancel}</Button>
+              <Button variant="primary" onClick={handleCreate}>{t.monitors.addMonitor}</Button>
+            </div>
           </div>
-        );
-      })}
-
-      {(!monitors || monitors.length === 0) && !showForm && (
-        <div className="glass-card" style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-          {t.monitors.noMonitors}
-        </div>
+        </Panel>
       )}
-    </div>
+
+      <MonitorList
+        rows={rows}
+        emptyLabel={t.monitors.noMonitors}
+        onDelete={handleDelete}
+        deleteLabel={t.common.delete}
+      />
+    </>
   );
 }

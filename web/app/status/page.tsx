@@ -12,13 +12,9 @@ import {
   publicFetcher,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { uptimeTone } from "@/app/lib/status";
 import { PageHeader } from "@/app/components/PageHeader";
-
-function getUptimeColor(pct: number): string {
-  if (pct >= 99.5) return "var(--accent-green)";
-  if (pct >= 95) return "var(--accent-yellow)";
-  return "var(--accent-red)";
-}
+import { Panel, EmptyState, StatusDot, Badge } from "@/app/components/ui";
 
 type StatusRow = {
   key: string;
@@ -89,169 +85,118 @@ export default function StatusPage() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   return (
-    <div className="page-content fade-in" style={{ maxWidth: 720, margin: "0 auto" }}>
+    <div className="page-content fade-in status-page">
       <PageHeader
-        icon={<Shield size={18} aria-hidden="true" />}
+        icon={<Shield size={16} aria-hidden="true" />}
         title={t.statusPage.title}
         description={t.statusPage.subtitle}
         align="center"
       />
 
       {isDisabled ? (
-        <div
-          className="glass-card"
-          style={{ padding: "24px", textAlign: "center" }}
-        >
-          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>
-            {t.statusPage.disabledTitle}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {t.statusPage.disabledBody}
-          </div>
-        </div>
+        <Panel>
+          <EmptyState
+            title={t.statusPage.disabledTitle}
+            description={t.statusPage.disabledBody}
+          />
+        </Panel>
       ) : hasError ? (
-        <div
-          className="glass-card"
-          style={{
-            padding: "24px",
-            textAlign: "center",
-            background: "var(--status-offline-bg)",
-            borderColor: "var(--badge-offline-border)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 15,
-              fontWeight: 700,
-              marginBottom: 8,
-              color: "var(--badge-offline-text)",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <XCircle size={18} aria-hidden="true" />
-            {t.statusPage.errorTitle}
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            {t.statusPage.errorBody}
-          </div>
-        </div>
+        <Panel>
+          <EmptyState
+            tone="error"
+            icon={<XCircle size={28} aria-hidden="true" />}
+            title={t.statusPage.errorTitle}
+            description={t.statusPage.errorBody}
+          />
+        </Panel>
       ) : (
         <>
-          {/* Overall status banner */}
-          <div
-            className="glass-card"
-            style={{
-              padding: "16px 24px",
-              marginBottom: 24,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              background: allOnline ? "var(--status-online-bg)" : "var(--status-offline-bg)",
-              borderColor: allOnline ? "var(--badge-online-border)" : "var(--badge-offline-border)",
-            }}
-          >
+          {/* Overall verdict. The banner carries the only saturated
+              surface on the page, so "something is wrong" is the one
+              thing that reads from across the room. */}
+          <div className={`status-banner ${allOnline ? "status-banner--ok" : "status-banner--crit"}`}>
             {allOnline ? (
-              <CheckCircle size={20} color="var(--badge-online-text)" />
+              <CheckCircle size={18} aria-hidden="true" />
             ) : (
-              <XCircle size={20} color="var(--badge-offline-text)" />
+              <XCircle size={18} aria-hidden="true" />
             )}
-            <span style={{
-              fontSize: 15,
-              fontWeight: 700,
-              color: allOnline ? "var(--badge-online-text)" : "var(--badge-offline-text)",
-            }}>
+            <span className="status-banner__text">
               {allOnline ? t.statusPage.allOperational : t.statusPage.someIssues}
             </span>
           </div>
 
-          {renderSection(t.statusPage.hostsSection, hostRows, t)}
-          {renderSection(t.statusPage.monitorsSection, monitorRows, t)}
+          <StatusSection title={t.statusPage.hostsSection} rows={hostRows} t={t} />
+          <StatusSection title={t.statusPage.monitorsSection} rows={monitorRows} t={t} />
 
           {isLoading && (
-            <div className="glass-card" style={{ padding: 32, textAlign: "center" }}>
-              <div className="skeleton" style={{ height: 48, borderRadius: 8, marginBottom: 8 }} />
-              <div className="skeleton" style={{ height: 48, borderRadius: 8 }} />
-            </div>
+            <Panel>
+              <div className="skeleton-stack">
+                <div className="skeleton" style={{ height: 44 }} />
+                <div className="skeleton" style={{ height: 44 }} />
+              </div>
+            </Panel>
           )}
 
           {!isLoading && hostRows.length === 0 && monitorRows.length === 0 && (
-            <div className="glass-card" style={{ padding: 32, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
-              {t.statusPage.noHosts}
-            </div>
+            <Panel>
+              <EmptyState title={t.statusPage.noHosts} />
+            </Panel>
           )}
         </>
       )}
 
       {/* Footer */}
-      <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: "var(--text-muted)" }}>
+      <div className="status-footer">
         {t.statusPage.lastUpdated}: {now ? now.toLocaleString(locale === "ko" ? "ko-KR" : "en-US") : ""}
       </div>
     </div>
   );
 }
 
-function renderSection(
-  title: string,
-  rows: StatusRow[],
-  t: ReturnType<typeof useI18n>["t"],
-) {
+/**
+ * A section of the public status list. This was previously a plain
+ * `renderSection()` function rather than a component, so it could not
+ * hold state or hooks and its rows were emitted as bare divs.
+ */
+function StatusSection({
+  title,
+  rows,
+  t,
+}: {
+  title: string;
+  rows: StatusRow[];
+  t: ReturnType<typeof useI18n>["t"];
+}) {
   if (rows.length === 0) return null;
   return (
-    <div style={{ marginBottom: 24 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6, color: "var(--text-muted)", padding: "0 4px 8px" }}>
-        {title}
-      </div>
-      <div className="glass-card" style={{ overflow: "hidden" }}>
-        {rows.map((row, idx) => (
-          <div
-            key={row.key}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "16px 24px",
-              borderBottom: idx < rows.length - 1 ? "1px solid var(--border-subtle)" : undefined,
-            }}
-          >
-            {row.is_online ? (
-              <CheckCircle size={18} color="var(--accent-green)" />
-            ) : (
-              <XCircle size={18} color="var(--accent-red)" />
-            )}
+    <section className="status-section">
+      <h2 className="status-section__title">{title}</h2>
+      <Panel>
+        {rows.map((row) => (
+          <div key={row.key} className="status-row">
+            <StatusDot tone={row.is_online ? "ok" : "crit"} firing={!row.is_online} />
 
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
-                {row.primary}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono), monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {row.secondary}
-              </div>
+            <div className="status-row__id">
+              <span className="status-row__name">{row.primary}</span>
+              <span className="status-row__target">{row.secondary}</span>
             </div>
 
-            <span className={row.is_online ? "badge-online" : "badge-offline"}>
+            <Badge tone={row.is_online ? "ok" : "crit"}>
               {row.is_online ? t.statusPage.operational : t.statusPage.down}
-            </span>
+            </Badge>
 
-            <div style={{ textAlign: "right", minWidth: 80 }}>
-              <div
-                className="font-mono"
-                style={{
-                  fontSize: 14,
-                  fontWeight: 700,
-                  color: getUptimeColor(row.uptime),
-                }}
+            <div className="status-row__uptime">
+              <span
+                className="status-row__uptime-value"
+                style={{ color: `var(--${uptimeTone(row.uptime)})` }}
               >
                 {row.uptime.toFixed(2)}%
-              </div>
-              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                {row.uptimeLabel}
-              </div>
+              </span>
+              <span className="status-row__uptime-label">{row.uptimeLabel}</span>
             </div>
           </div>
         ))}
-      </div>
-    </div>
+      </Panel>
+    </section>
   );
 }

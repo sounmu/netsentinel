@@ -332,6 +332,7 @@ export const translations = {
     },
     // Chart / TimeSeriesChart
     chart: {
+      timeRange: "Time range",
       presets: {
         "1m": "1m",
         "5m": "5m",
@@ -473,8 +474,10 @@ export const translations = {
       delete: "Delete",
       cancel: "Cancel",
       confirm: "Confirm",
-      online: "ONLINE",
-      offline: "OFFLINE",
+      // Sentence case: status badges are no longer uppercase pills, and
+      // shouting "ONLINE" on every healthy host competed with real alerts.
+      online: "Online",
+      offline: "Offline",
       servers: "servers",
       host: "Host",
       apply: "Apply",
@@ -799,6 +802,7 @@ export const translations = {
     },
     // Chart / TimeSeriesChart
     chart: {
+      timeRange: "기간",
       presets: {
         "1m": "1분",
         "5m": "5분",

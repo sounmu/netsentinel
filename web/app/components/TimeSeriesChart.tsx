@@ -128,14 +128,17 @@ function pickCpuTemp(temps: TemperatureInfo[]): TemperatureInfo | null {
 
 // ─── Styles ───────────────────────────────
 
+// A tooltip genuinely floats, so it is one of the few surfaces allowed
+// a shadow (see DESIGN.md §4).
 const tooltipStyle: React.CSSProperties = {
-  background: "var(--bg-card)",
-  border: "1px solid var(--border-subtle)",
-  borderRadius: 10,
-  fontSize: 11,
-  color: "var(--text-secondary)",
-  padding: "8px 12px",
-  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+  background: "var(--surface)",
+  border: "1px solid var(--hairline)",
+  borderRadius: "var(--r-sm)",
+  fontSize: "var(--fs-micro)",
+  color: "var(--slate)",
+  padding: "7px 10px",
+  boxShadow: "var(--shadow-pop)",
+  fontVariantNumeric: "tabular-nums",
 };
 
 // ─── ChartCard ──────────────────────────────
@@ -185,16 +188,14 @@ const ChartCard = memo(function ChartCard({
 
   return (
     <div
-      className="glass-card"
-      style={{ padding: "16px 18px", gridColumn: span2 ? "1 / -1" : undefined }}
+      className="chart-card"
+      style={{ gridColumn: span2 ? "1 / -1" : undefined }}
     >
-      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 12 }}>
-        {title}
-      </div>
+      <div className="chart-card__title">{title}</div>
       {isLoading ? (
         <div className="skeleton" style={{ height }} />
       ) : data.length === 0 ? (
-        <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 12 }}>
+        <div className="chart-card__empty" style={{ height }}>
           {t.chart.noData}
         </div>
       ) : (
@@ -211,7 +212,7 @@ const ChartCard = memo(function ChartCard({
                 );
               })}
             </defs>
-            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--bg-card-hover)" />
+            <CartesianGrid vertical={false} stroke="var(--hairline)" />
             <XAxis
               dataKey="ts"
               type="number"
@@ -234,18 +235,20 @@ const ChartCard = memo(function ChartCard({
               interval={0}
               minTickGap={40}
               tickFormatter={(val) => formatAxisTime(val as number, rangeHours, locale)}
-              tick={{ fill: "var(--text-muted)", fontSize: 10 }}
+              tick={{ fill: "var(--muted)", fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: "var(--border-subtle)" }}
             />
             <YAxis
               domain={domain}
-              tick={{ fill: "var(--text-muted)", fontSize: 10 }}
+              tick={{ fill: "var(--muted)", fontSize: 10 }}
               tickLine={false}
               axisLine={false}
               tickFormatter={yTickFormatter}
               unit={yTickFormatter ? undefined : yUnit}
-              width={yTickFormatter ? 68 : 48}
+              // 68px wrapped formatted ticks like "559.2 KB/s" onto a
+              // second line, which then overlapped the X-axis labels.
+              width={yTickFormatter ? 82 : 48}
               minTickGap={18}
             />
             <Tooltip
@@ -571,18 +574,23 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     <div>
       {/* Time range controls */}
       <div className="time-controls">
-        {PRESET_CONFIG.map(({ key, minutes }) => (
-          <button
-            key={key}
-            className={`preset-btn ${range.preset === key ? "active" : ""}`}
-            onClick={() => onPresetClick(minutes, key)}
-          >
-            {t.chart.presets[key]}
-          </button>
-        ))}
-        <div style={{ width: 1, height: 24, background: "var(--border-subtle)", margin: "0 4px" }} />
+        <div className="segmented" role="tablist" aria-label={t.chart.timeRange}>
+          {PRESET_CONFIG.map(({ key, minutes }) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={range.preset === key}
+              className="segmented__item"
+              onClick={() => onPresetClick(minutes, key)}
+            >
+              {t.chart.presets[key]}
+            </button>
+          ))}
+        </div>
+        <div className="toolbar-divider" />
         <DateTimePicker value={range.start} onChange={onCustomStartChange} />
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>~</span>
+        <span className="toolbar-tilde">~</span>
         <DateTimePicker value={range.end} onChange={onCustomEndChange} />
       </div>
 
@@ -590,7 +598,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       <div className="chart-grid">
         <ChartCard
           title={t.chart.cpuUsage}
-          color="var(--accent-blue)"
+          color="var(--chart-1)"
           isLoading={isInitialLoading}
           data={chartData.cpu}
           dataKey="CPU (%)"
@@ -602,7 +610,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         />
         <ChartCard
           title={t.chart.ramUsage}
-          color="var(--accent-purple)"
+          color="var(--chart-4)"
           isLoading={isInitialLoading}
           data={chartData.ram}
           dataKey="RAM (%)"
@@ -616,8 +624,8 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         {/* Network Bandwidth (RX + TX) */}
         <ChartCard
           title={t.chart.networkBandwidth}
-          color="var(--accent-green)"
-          colors={["var(--accent-green)", "var(--accent-blue)"]}
+          color="var(--chart-2)"
+          colors={["var(--chart-2)", "var(--chart-1)"]}
           isLoading={isInitialLoading}
           data={chartData.net}
           dataKey={["RX", "TX"]}
@@ -632,7 +640,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         {chartData.tempData.length > 0 && (
           <ChartCard
             title={t.chart.cpuTemperature}
-            color="var(--accent-red)"
+            color="var(--chart-5)"
             isLoading={isInitialLoading}
             data={chartData.tempData}
             dataKey="CPU Temp"
@@ -647,7 +655,7 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         {chartData.diskUsageKeys.length > 0 && (
           <ChartCard
             title={t.host.diskUsage}
-            color="var(--accent-yellow)"
+            color="var(--chart-3)"
             colors={PALETTE}
             isLoading={isInitialLoading}
             data={chartData.diskUsageData}
@@ -663,8 +671,8 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         {chartData.diskIo.length > 0 && (
           <ChartCard
             title={t.chart.diskIo}
-            color="var(--accent-cyan)"
-            colors={["var(--accent-cyan)", "var(--accent-purple)"]}
+            color="var(--chart-1)"
+            colors={["var(--chart-1)", "var(--chart-4)"]}
             isLoading={isInitialLoading}
             data={chartData.diskIo}
             dataKey={["Read", "Write"]}
