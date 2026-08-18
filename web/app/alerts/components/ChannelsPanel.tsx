@@ -28,6 +28,7 @@ import { useI18n } from "@/app/i18n/I18nContext";
 import type { Translations } from "@/app/i18n/translations";
 import { Switch } from "@/app/components/Switch";
 import { apiErrorMessage } from "./shared";
+import { EmptyState, Panel } from "@/app/components/ui";
 
 interface Props {
   onCountChange?: (count: number | null) => void;
@@ -277,13 +278,13 @@ export function ChannelsPanel({ onCountChange }: Props) {
       ))}
 
       {(!channels || channels.length === 0) && !showForm && (
-        <div className="alerts-empty alerts-empty--compact">
-          <span className="alerts-empty__icon" aria-hidden="true">
-            <Send size={24} />
-          </span>
-          <span className="alerts-empty__title">{t.notifications.noChannels}</span>
-          <span className="alerts-empty__description">{t.notifications.noChannelsDescription}</span>
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<Send size={24} aria-hidden="true" />}
+            title={t.notifications.noChannels}
+            description={t.notifications.noChannelsDescription}
+          />
+        </Panel>
       )}
     </div>
   );

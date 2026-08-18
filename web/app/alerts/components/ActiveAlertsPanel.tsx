@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useNowTick } from "@/app/lib/useNowTick";
+import { EmptyState, Panel, SkeletonRows } from "@/app/components/ui";
 import { alertTypeEmoji, formatRelative, sanitizeMarkdown } from "./shared";
 
 interface Props {
@@ -38,16 +39,16 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
       role="tabpanel"
       aria-labelledby="alerts-tab-active"
     >
-      {active === undefined && <div className="skeleton" style={{ height: 220 }} />}
+      {active === undefined && <SkeletonRows count={2} height={96} />}
 
       {active && active.length === 0 && (
-        <div className="alerts-empty" role="status">
-          <span className="alerts-empty__icon" aria-hidden="true">
-            <ShieldCheck size={28} />
-          </span>
-          <span className="alerts-empty__title">{t.alerts.active.allClear}</span>
-          <span className="alerts-empty__description">{t.alerts.active.allClearDescription}</span>
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<ShieldCheck size={28} aria-hidden="true" />}
+            title={t.alerts.active.allClear}
+            description={t.alerts.active.allClearDescription}
+          />
+        </Panel>
       )}
 
       {active && active.length > 0 && (
