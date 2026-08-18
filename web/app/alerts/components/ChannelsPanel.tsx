@@ -28,7 +28,7 @@ import { useI18n } from "@/app/i18n/I18nContext";
 import type { Translations } from "@/app/i18n/translations";
 import { Switch } from "@/app/components/Switch";
 import { apiErrorMessage } from "./shared";
-import { EmptyState, Panel } from "@/app/components/ui";
+import { Button, EmptyState, Panel } from "@/app/components/ui";
 
 interface Props {
   onCountChange?: (count: number | null) => void;
@@ -139,14 +139,14 @@ export function ChannelsPanel({ onCountChange }: Props) {
           </h2>
           <p className="alerts-section-description">{t.notifications.description}</p>
         </div>
-        <button
+        <Button
           type="button"
           onClick={() => setShowForm((v) => !v)}
-          className="alerts-btn alerts-btn--sm alerts-btn--filled"
+          variant="primary" size="sm"
         >
           <Plus size={14} aria-hidden="true" />
           {t.notifications.addChannel}
-        </button>
+        </Button>
       </div>
 
       {showForm && (
@@ -212,21 +212,21 @@ export function ChannelsPanel({ onCountChange }: Props) {
           </div>
 
           <div className="alerts-row alerts-row--end alerts-row--tight">
-            <button
+            <Button
               type="button"
               onClick={() => setShowForm(false)}
-              className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+              variant="secondary" size="sm"
             >
               {t.common.cancel}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={handleCreate}
-              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+              variant="primary" size="sm"
             >
               <Save size={12} aria-hidden="true" />
               {t.alerts.save}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -257,23 +257,24 @@ export function ChannelsPanel({ onCountChange }: Props) {
             {ch.enabled ? t.notifications.enabled : t.notifications.disabled}
           </span>
           <Switch checked={ch.enabled} onChange={() => handleToggle(ch)} aria-label={ch.name} />
-          <button
+          <Button
             type="button"
             onClick={() => handleTest(ch.id)}
-            className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+            variant="secondary" size="sm"
             aria-label={`${t.notifications.testSend}: ${ch.name}`}
           >
             <Send size={10} aria-hidden="true" />
             {t.notifications.testSend}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            icon
             onClick={() => handleDelete(ch.id)}
-            className="alerts-icon-btn alerts-icon-btn--danger"
             aria-label={`Delete ${ch.name}`}
           >
-            <Trash2 size={14} aria-hidden="true" />
-          </button>
+            <Trash2 size={13} aria-hidden="true" />
+          </Button>
         </div>
       ))}
 

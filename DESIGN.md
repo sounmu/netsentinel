@@ -183,6 +183,7 @@ here, not in an inline `style={{}}`.
 | `Segmented` | The one tab/toggle language |
 | `EmptyState` | `tone="error"` variant included |
 | `Field` | Label + control + hint |
+| `Drawer` | Right side sheet; owns Escape + scrim close |
 | `StatTile` | Summary numbers |
 | `SkeletonRows` | Loading |
 
@@ -233,10 +234,11 @@ Violations should be fixed before merge.
 
 ## 10. Known remaining work
 
-- `.alerts-matrix` (sticky header, sticky first column, mobile card
-  fallback), the metric rule stack, and the side drawer are still bespoke.
-  Collapsing them means rewriting ~1,300 lines of interactive TSX across
-  `RulesMatrix` / `RulesPanel` / `ChannelsPanel` / `HistoryPanel`, and it
-  should be exercised against a running backend, not shipped on a build pass.
-- There is no shared `Drawer` or `DataTable` primitive yet; both would come
-  out of that work.
+- `.alerts-matrix` keeps bespoke rules for its sticky header, sticky first
+  column and mobile card fallback. That behaviour has no shared equivalent
+  yet; a `DataTable` primitive would be the place for it.
+- The metric rule stack (`.alerts-rule-stack`, `.alerts-metric*`) is still
+  page-specific. It is a genuinely unusual control — icon, toggle, slider and
+  two numeric fields on one row — so it may not want to be generalised.
+- `.alerts-channel-status` marks an enabled channel in `--ok`. The toggle
+  beside it already says the same thing, so the colour is arguably redundant.

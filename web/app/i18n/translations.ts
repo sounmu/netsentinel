@@ -215,7 +215,7 @@ export const translations = {
         selectedHosts: "{count} selected",
         applyGlobal: "Apply global defaults",
         matrix: "Rule matrix",
-        matrixDescription: "Overview of thresholds per host. Cells tinted blue indicate a per-host override.",
+        matrixDescription: "Overview of thresholds per host. Highlighted cells indicate a per-host override.",
         using: "Using global",
         overridden: "Overridden",
         clearSelection: "Clear",
@@ -641,7 +641,7 @@ export const translations = {
         applyGlobal: "글로벌 기본값 적용",
         matrix: "규칙 매트릭스",
         matrixDescription:
-          "호스트별 임계치를 한눈에 확인합니다. 파란색 배경은 호스트 오버라이드를 의미합니다.",
+          "호스트별 임계치를 한눈에 확인합니다. 강조된 셀은 호스트 오버라이드를 의미합니다.",
         using: "글로벌 사용",
         overridden: "오버라이드됨",
         clearSelection: "선택 해제",

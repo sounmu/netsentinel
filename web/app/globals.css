@@ -356,7 +356,7 @@
 /* ── Accessibility ─────────────────────────── */
 
 *:focus-visible {
-  outline: 2px solid var(--accent-blue);
+  outline: 2px solid var(--link);
   outline-offset: 2px;
   border-radius: var(--r-xs);
 }
@@ -367,8 +367,8 @@
   left: 16px;
   z-index: 9999;
   padding: 8px 16px;
-  background: var(--accent-blue);
-  color: white;
+  background: var(--link);
+  color: var(--on-solid);
   border-radius: 0 0 var(--r-sm) var(--r-sm);
   font-size: var(--fs-body);
   font-weight: 600;
@@ -1549,8 +1549,7 @@ body > main {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--link) 15%, transparent);
 }
 
-select.date-input,
-.alerts-field__input { font-family: inherit; }
+select.date-input { font-family: var(--font-sans); }
 
 @media (pointer: coarse) {
   .date-input,
@@ -1614,86 +1613,6 @@ select.date-input,
   flex: 1;
   min-width: 0;
 }
-
-/* ── Buttons ── folded onto the shared .btn family so the
-   alerts page stops speaking its own dialect. Only the
-   `.alerts-btn*` names survive, for the markup that uses them. */
-.alerts-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: var(--h-control);
-  padding: 0 12px;
-  border-radius: var(--r-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--ink);
-  font-family: inherit;
-  font-size: var(--fs-meta);
-  font-weight: 500;
-  letter-spacing: -0.005em;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--t-fast) var(--ease),
-              border-color var(--t-fast) var(--ease),
-              color var(--t-fast) var(--ease);
-}
-.alerts-btn--sm {
-  height: var(--h-control-sm);
-  padding: 0 9px;
-  font-size: var(--fs-micro);
-  border-radius: var(--r-xs);
-  gap: 4px;
-}
-
-.alerts-btn--filled {
-  background: var(--solid);
-  border-color: var(--solid);
-  color: var(--on-solid);
-  font-weight: 600;
-}
-.alerts-btn--filled:hover:not(:disabled) {
-  background: var(--solid-hover);
-  border-color: var(--solid-hover);
-}
-.alerts-btn--filled:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.alerts-btn--tonal,
-.alerts-btn--outlined {
-  background: var(--surface);
-  border-color: var(--rule);
-  color: var(--ink);
-}
-.alerts-btn--tonal:hover:not(:disabled),
-.alerts-btn--outlined:hover:not(:disabled) {
-  background: var(--inset);
-}
-
-.alerts-btn--danger {
-  background: var(--surface);
-  border-color: color-mix(in srgb, var(--crit) 36%, transparent);
-  color: var(--crit);
-}
-.alerts-btn--danger:hover:not(:disabled) {
-  background: var(--crit-bg);
-}
-
-.alerts-btn:focus-visible {
-  outline: 2px solid var(--link);
-  outline-offset: 2px;
-}
-
-@media (pointer: coarse) {
-  .alerts-btn { height: 40px; padding: 0 16px; }
-  .alerts-btn--sm { height: 34px; }
-}
-
-
-/* ── Mini form fields ── */
 
 /* ── Inline feedback (save success/failure) ── */
 .alerts-feedback {
@@ -1939,9 +1858,9 @@ select.date-input,
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  border-radius: var(--r-md);
-  background: var(--preset-hover-bg);
-  color: var(--accent-blue);
+  border-radius: var(--r-sm);
+  background: var(--inset);
+  color: var(--muted);
 }
 .alerts-metric__label {
   font-size: var(--fs-body);
@@ -1992,9 +1911,9 @@ select.date-input,
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--accent-blue);
-  border: 2px solid var(--bg-card);
-  box-shadow: 0 0 0 1px var(--border-subtle);
+  background: var(--solid);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--rule);
   cursor: pointer;
   transition: transform var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
 }
@@ -2003,8 +1922,8 @@ select.date-input,
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--accent-blue);
-  border: 2px solid var(--bg-card);
+  background: var(--solid);
+  border: 2px solid var(--surface);
   cursor: pointer;
 }
 .alerts-slider__value {
@@ -2096,12 +2015,12 @@ select.date-input,
 .alerts-override-chip {
   padding: 2px 8px;
   border-radius: var(--r-sm);
-  background: var(--preset-hover-bg);
-  color: var(--accent-blue);
+  background: var(--inset);
+  border: 1px solid var(--hairline);
+  color: var(--slate);
   font-size: var(--fs-micro);
   font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 .alerts-host-body {
   padding: 0 20px 20px;
@@ -2188,7 +2107,7 @@ select.date-input,
   transition: border-color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
 }
 .alerts-chip-select:hover { border-color: var(--text-secondary); }
-.alerts-chip-select:focus { border-color: var(--accent-blue); outline: none; }
+.alerts-chip-select:focus { border-color: var(--link); outline: none; }
 
 /* ── Severity badge ── */
 .alerts-severity {
@@ -2373,14 +2292,18 @@ select.date-input,
   background: var(--bg-card);
   border-color: var(--border-subtle);
 }
+/* A per-host override is a state marker, not a link. Blue is reserved for
+   links and focus (DESIGN.md §1.2), so the deviation reads as weight plus
+   an inset ground and a leading rule instead of a hue. */
 .alerts-matrix__cell--override button {
-  background: var(--preset-hover-bg);
-  color: var(--accent-blue);
+  background: var(--inset);
+  color: var(--ink);
   font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--rule);
 }
 .alerts-matrix__cell--override button:hover {
-  background: var(--preset-hover-bg);
-  border-color: var(--accent-blue);
+  background: var(--inset);
+  border-color: var(--rule);
 }
 .alerts-matrix__cell--disabled button {
   color: var(--text-muted);
@@ -2390,7 +2313,7 @@ select.date-input,
 .alerts-matrix__checkbox {
   width: 16px;
   height: 16px;
-  accent-color: var(--accent-blue);
+  accent-color: var(--solid);
   cursor: pointer;
 }
 
@@ -2431,11 +2354,11 @@ select.date-input,
   text-align: left;
 }
 .alerts-matrix-mobile__cell:hover {
-  border-color: var(--accent-blue);
+  border-color: var(--rule);
 }
 .alerts-matrix-mobile__cell--override {
-  background: var(--preset-hover-bg);
-  border-color: var(--accent-blue);
+  background: var(--inset);
+  border-color: var(--rule);
 }
 .alerts-matrix-mobile__cell-label {
   font-size: var(--fs-micro);
@@ -2450,7 +2373,8 @@ select.date-input,
   color: var(--text-primary);
 }
 .alerts-matrix-mobile__cell--override .alerts-matrix-mobile__cell-value {
-  color: var(--accent-blue);
+  color: var(--ink);
+  font-weight: 600;
 }
 
 @media (max-width: 839px) {
@@ -2463,8 +2387,8 @@ select.date-input,
   position: sticky;
   top: 12px;
   z-index: 3;
-  background: var(--bg-card);
-  border: 1px solid var(--accent-blue);
+  background: var(--surface);
+  border: 1px solid var(--rule);
   border-radius: var(--r-md);
   padding: 10px 16px;
   margin-bottom: 16px;
@@ -2517,8 +2441,8 @@ select.date-input,
   background: var(--bg-card-hover);
 }
 .alerts-channel-type--selected {
-  background: color-mix(in srgb, var(--accent-blue) 7%, var(--bg-card));
-  border-color: color-mix(in srgb, var(--accent-blue) 42%, var(--border-subtle));
+  background: var(--inset);
+  border-color: var(--rule);
   box-shadow: none;
 }
 .alerts-channel-type__icon {
@@ -2528,8 +2452,8 @@ select.date-input,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent-blue);
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  color: var(--muted);
+  background: var(--inset);
   flex-shrink: 0;
 }
 .alerts-channel-type__copy {
@@ -2565,8 +2489,8 @@ select.date-input,
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--accent-blue);
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  color: var(--muted);
+  background: var(--inset);
 }
 .alerts-channel__name {
   font-size: var(--fs-item);
@@ -2629,82 +2553,13 @@ select.date-input,
   }
 }
 
-/* ── Rule drawer (side-sheet) ── */
-.alerts-drawer-scrim {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay-bg);
-  z-index: 40;
-  animation: fadeInScrim var(--md-sys-motion-medium2) var(--md-sys-motion-easing-decelerate);
-}
-@keyframes fadeInScrim {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-.alerts-drawer {
-  position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(440px, 100vw);
-  background: var(--bg-card);
-  border-left: 1px solid var(--border-subtle);
-  box-shadow: -8px 0 24px var(--shadow-md);
-  z-index: 41;
-  display: flex;
-  flex-direction: column;
-  animation: slideInRight var(--md-sys-motion-medium2) var(--md-sys-motion-easing-decelerate);
-}
-@keyframes slideInRight {
-  from { transform: translateX(100%); }
-  to { transform: translateX(0); }
-}
-.alerts-drawer__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-.alerts-drawer__title {
-  font-size: var(--fs-item);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-.alerts-drawer__subtitle {
-  font-size: var(--fs-micro);
-  font-family: var(--font-mono), 'Courier New', monospace;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-.alerts-drawer__body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-}
-.alerts-drawer__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 14px 20px;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--bg-secondary);
-}
-
-/* Motion reduction */
+/* Motion reduction. The global `* { transition-duration: 1ms }` rule further
+   down covers transitions; this kills the entering animations. */
 @media (prefers-reduced-motion: reduce) {
   .alerts-panel,
   .alerts-bulk-bar,
-  .alerts-metric,
-  .fade-in,
-  .alerts-tab,
-  .alerts-btn,
-  .alerts-drawer,
-  .alerts-drawer-scrim {
+  .fade-in {
     animation: none !important;
-    transition: none !important;
   }
 }
 
@@ -3712,3 +3567,83 @@ a.btn { text-decoration: none; }
   margin-bottom: var(--md-sys-spacing-sm);
 }
 .alerts-host-actions { margin-top: var(--md-sys-spacing-lg); }
+
+/* ══════════════════════════════════════════════════
+   Drawer (side sheet)
+   Genuinely floats, so it keeps a shadow — see §4.
+   ══════════════════════════════════════════════════ */
+.drawer-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay-bg);
+  z-index: 40;
+  animation: fade-in var(--t-enter) var(--ease);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 100vw);
+  background: var(--surface);
+  border-left: 1px solid var(--hairline);
+  box-shadow: var(--shadow-float);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  animation: slide-in-right var(--t-enter) var(--ease);
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--md-sys-spacing-md);
+  padding: var(--md-sys-spacing-md) var(--md-sys-spacing-lg);
+  border-bottom: 1px solid var(--hairline);
+}
+.drawer__heading { min-width: 0; }
+.drawer__title {
+  font-size: var(--fs-item);
+  font-weight: 600;
+  letter-spacing: -0.008em;
+  color: var(--ink);
+  margin: 0;
+}
+.drawer__subtitle {
+  font-family: var(--font-code);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  margin-top: 2px;
+}
+.drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--md-sys-spacing-lg);
+}
+.drawer__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--md-sys-spacing-sm);
+  padding: var(--md-sys-spacing-md) var(--md-sys-spacing-lg);
+  border-top: 1px solid var(--hairline);
+  background: var(--canvas);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer,
+  .drawer-scrim {
+    animation: none;
+  }
+}

@@ -13,6 +13,7 @@ import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useNowTick } from "@/app/lib/useNowTick";
 import { alertTypeEmoji, alertTypeSeverity, formatRelative, sanitizeMarkdown } from "./shared";
+import { Button } from "@/app/components/ui";
 
 type RangeKey = "24h" | "7d" | "30d" | "90d";
 
@@ -189,14 +190,14 @@ export function HistoryPanel() {
         </div>
 
         {anyFilter && (
-          <button
+          <Button
             type="button"
             onClick={handleClearFilters}
-            className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+            variant="secondary" size="sm"
           >
             <X size={12} aria-hidden="true" />
             {t.alerts.history.clearFilters}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -253,22 +254,22 @@ export function HistoryPanel() {
                 .replace("{total}", String(total))}
             </span>
             <div className="alerts-row alerts-row--tight">
-              <button
+              <Button
                 type="button"
-                className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+                variant="secondary" size="sm"
                 disabled={page === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
               >
                 {t.alerts.history.prev}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+                variant="secondary" size="sm"
                 disabled={page >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
               >
                 {t.alerts.history.next}
-              </button>
+              </Button>
             </div>
           </div>
         )}

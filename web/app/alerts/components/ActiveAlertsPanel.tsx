@@ -82,7 +82,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
               <p className="alerts-active-card__message">{sanitizeMarkdown(alert.message)}</p>
               <div className="alerts-active-card__actions">
                 <Link
-                  className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+                  className="btn btn--secondary btn--sm"
                   href={`/host/?key=${encodeURIComponent(alert.host_key)}`}
                   // See `app/page.tsx` for the rationale — static export
                   // with query-string keying makes Next's prefetcher 404

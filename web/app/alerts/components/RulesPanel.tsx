@@ -26,6 +26,7 @@ import { MetricRuleCard } from "./MetricRuleCard";
 import { RulesMatrix } from "./RulesMatrix";
 import { BulkApplyBar } from "./BulkApplyBar";
 import { RuleDrawer } from "./RuleDrawer";
+import { Button } from "@/app/components/ui";
 
 export function RulesPanel() {
   const { t } = useI18n();
@@ -95,15 +96,15 @@ export function RulesPanel() {
       <section className="glass-card alerts-section-card">
         <div className="alerts-section-card__head">
           <h2 className="alerts-section-card__title">{t.alerts.globalDefaults}</h2>
-          <button
+          <Button
             type="button"
             onClick={handleGlobalSave}
             disabled={saving || !globalForm}
-            className="alerts-btn alerts-btn--filled"
+            variant="primary"
           >
             <Save size={14} aria-hidden="true" />
             {saving ? t.alerts.saving : t.alerts.save}
-          </button>
+          </Button>
         </div>
 
         {saveMsg && (
@@ -289,24 +290,24 @@ function HostAlertOverride({
 
           <div className="alerts-row alerts-row--end alerts-row--tight alerts-host-actions">
             {hasOverride && (
-              <button
+              <Button
                 type="button"
                 onClick={handleDelete}
-                className="alerts-btn alerts-btn--sm alerts-btn--danger"
+                variant="danger" size="sm"
               >
                 <Trash2 size={12} aria-hidden="true" />
                 {t.alerts.deleteOverride}
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+              variant="primary" size="sm"
             >
               <Save size={12} aria-hidden="true" />
               {saving ? t.alerts.saving : t.alerts.save}
-            </button>
+            </Button>
           </div>
         </div>
       )}

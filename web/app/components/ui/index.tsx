@@ -12,7 +12,8 @@
  * See DESIGN.md for the rules these components encode.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
+import { X } from "lucide-react";
 import { meterTone, type MeterTone } from "@/app/lib/status";
 
 /* ── Button ───────────────────────────────────────
@@ -253,6 +254,64 @@ export function SkeletonRows({ count = 3, height = 34 }: { count?: number; heigh
         <div key={i} className="skeleton" style={{ height }} />
       ))}
     </div>
+  );
+}
+
+/* ── Drawer ───────────────────────────────────────
+   A right-hand side sheet. Genuinely floats above the
+   page, so it is one of the few surfaces allowed a
+   shadow (DESIGN.md §4). Closes on Escape and on a
+   scrim click; the caller owns mount/unmount.
+   ─────────────────────────────────────────────── */
+export function Drawer({
+  title,
+  subtitle,
+  onClose,
+  footer,
+  closeLabel = "Close",
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  footer?: ReactNode;
+  closeLabel?: string;
+  children: ReactNode;
+}) {
+  const titleId = `drawer-title-${title.replace(/\W+/g, "-").toLowerCase()}`;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="drawer-scrim" onClick={onClose} role="presentation" />
+      <aside
+        className="drawer"
+        role="dialog"
+        aria-labelledby={titleId}
+        aria-modal="true"
+      >
+        <div className="drawer__header">
+          <div className="drawer__heading">
+            <h3 id={titleId} className="drawer__title">{title}</h3>
+            {subtitle && <div className="drawer__subtitle">{subtitle}</div>}
+          </div>
+          <Button variant="ghost" size="sm" icon onClick={onClose} aria-label={closeLabel}>
+            <X size={14} aria-hidden="true" />
+          </Button>
+        </div>
+
+        <div className="drawer__body">{children}</div>
+
+        {footer && <div className="drawer__footer">{footer}</div>}
+      </aside>
+    </>
   );
 }
 
