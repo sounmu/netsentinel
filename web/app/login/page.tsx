@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { Shield } from "lucide-react";
+import { Shield, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/app/auth/AuthContext";
 import { useI18n } from "@/app/i18n/I18nContext";
@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
 
   const { data: authStatus } = useSWR<AuthStatus>(
     getAuthStatusUrl(),
@@ -139,6 +140,32 @@ export default function LoginPage() {
             {loading ? t.common.loading : t.auth.loginButton}
           </Button>
         </form>
+
+        {/* Recovery is deliberately not self-service. A reset button here
+            would let anyone who can reach this page take over the instance,
+            which for a single-admin tool is total compromise. Running a
+            command on the host proves ownership; this just says how. */}
+        <div className="auth-recovery">
+          <button
+            type="button"
+            className="auth-recovery__toggle"
+            onClick={() => setShowRecovery((v) => !v)}
+            aria-expanded={showRecovery}
+          >
+            {t.auth.forgotPassword}
+          </button>
+
+          {showRecovery && (
+            <div className="auth-recovery__body">
+              <p className="auth-recovery__lede">
+                <Terminal size={13} aria-hidden="true" />
+                {t.auth.forgotPasswordHelp}
+              </p>
+              <pre className="code-block">netsentinel-server reset-admin-password</pre>
+              <p className="auth-recovery__note">{t.auth.forgotPasswordNote}</p>
+            </div>
+          )}
+        </div>
 
         {authStatus?.oauth_enabled && (
           <>

@@ -562,6 +562,13 @@ export interface UserInfo {
   display_name?: string | null;
   picture_url?: string | null;
   role: string;
+  /**
+   * Set when an operator issued a temporary password with
+   * `netsentinel-server reset-admin-password`. While true the server refuses
+   * every route except identity and password change, so the client must send
+   * the user to /account/password before anything else.
+   */
+  must_change_password?: boolean;
 }
 
 export interface LoginResponse {
@@ -628,6 +635,13 @@ export const startGoogleOAuth = async (): Promise<OAuthStartResponse> => {
   }
   return res.json();
 };
+
+/** PUT /api/auth/password. `current_password` is omitted only for
+ *  OAuth-only accounts that have never set a local password. */
+export const changePassword = (body: {
+  current_password?: string;
+  new_password: string;
+}) => apiCall<{ success: boolean }>(`${API_BASE}/api/auth/password`, "PUT", body);
 
 export const getMe = () =>
   apiCall<UserInfo>(`${API_BASE}/api/auth/me`, "GET");

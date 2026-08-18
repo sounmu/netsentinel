@@ -1,3 +1,4 @@
+pub mod admin_reset;
 pub mod agent_enrollment;
 pub mod alert_service;
 pub mod auth;

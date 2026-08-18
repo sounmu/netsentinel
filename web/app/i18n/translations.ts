@@ -23,6 +23,11 @@ export const translations = {
       passwordPolicy: "Password must contain uppercase, lowercase, digit, and special character",
       passwordMismatch: "Passwords do not match",
       setupFailed: "Setup failed",
+      forgotPassword: "Forgot your password?",
+      forgotPasswordHelp:
+        "Password recovery runs on the server, not from this page. Sign in to the machine running NetSentinel and run:",
+      forgotPasswordNote:
+        "It prints a temporary password and signs out every session. You will be asked to set a new one right after signing in.",
       or: "or",
       loginError: {
         invalid: "Invalid username or password",
@@ -417,6 +422,18 @@ export const translations = {
       reload: "Reload",
       fallbackMessage: "An unexpected error occurred.",
     },
+    // Account
+    account: {
+      changePassword: "Change password",
+      currentPassword: "Current password",
+      newPassword: "New password",
+      passwordChanged: "Password changed. Please sign in again.",
+      passwordChangeFailed: "Could not change the password.",
+      currentPasswordWrong: "Current password is incorrect.",
+      passwordUnchanged: "The new password must differ from the current one.",
+      temporaryPasswordNotice:
+        "You are signed in with a temporary password. Set a new one to unlock the dashboard.",
+    },
     // Common
     common: {
       delete: "Delete",
@@ -451,6 +468,11 @@ export const translations = {
       passwordPolicy: "비밀번호에 대문자, 소문자, 숫자, 특수문자가 포함되어야 합니다",
       passwordMismatch: "비밀번호가 일치하지 않습니다",
       setupFailed: "초기 설정에 실패했습니다",
+      forgotPassword: "비밀번호를 잊으셨나요?",
+      forgotPasswordHelp:
+        "비밀번호 복구는 이 페이지가 아니라 서버에서 진행합니다. NetSentinel이 실행 중인 서버에 접속해 다음을 실행하세요:",
+      forgotPasswordNote:
+        "임시 비밀번호가 출력되고 모든 세션이 로그아웃됩니다. 로그인 직후 새 비밀번호를 설정하게 됩니다.",
       or: "또는",
       loginError: {
         invalid: "아이디 또는 비밀번호가 올바르지 않습니다",
@@ -832,6 +854,17 @@ export const translations = {
       title: "오류가 발생했습니다",
       reload: "새로고침",
       fallbackMessage: "예상치 못한 오류가 발생했습니다.",
+    },
+    account: {
+      changePassword: "비밀번호 변경",
+      currentPassword: "현재 비밀번호",
+      newPassword: "새 비밀번호",
+      passwordChanged: "비밀번호가 변경되었습니다. 다시 로그인해 주세요.",
+      passwordChangeFailed: "비밀번호를 변경하지 못했습니다.",
+      currentPasswordWrong: "현재 비밀번호가 올바르지 않습니다.",
+      passwordUnchanged: "새 비밀번호는 현재 비밀번호와 달라야 합니다.",
+      temporaryPasswordNotice:
+        "임시 비밀번호로 로그인한 상태입니다. 새 비밀번호를 설정해야 대시보드를 사용할 수 있습니다.",
     },
     common: {
       delete: "삭제",

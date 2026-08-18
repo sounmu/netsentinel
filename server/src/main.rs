@@ -53,6 +53,55 @@ fn validate_jwt_secret(jwt_secret: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Dispatch a CLI subcommand. Returns `Ok(())` once the command has run;
+/// the process exits rather than continuing to boot the server.
+async fn run_subcommand(
+    cmd: &str,
+    arg: Option<String>,
+    db_pool: &db::DbPool,
+) -> anyhow::Result<()> {
+    match cmd {
+        "reset-admin-password" => {
+            let (username, temp) =
+                services::admin_reset::reset_admin_password(db_pool, arg.as_deref()).await?;
+
+            // Printed to stdout, never logged: the operator is standing at the
+            // terminal, and this value must not land in the log files.
+            println!();
+            println!("  Temporary password issued for '{username}':");
+            println!();
+            println!("      {temp}");
+            println!();
+            println!("  Sign in with it, then set a new password when prompted.");
+            println!("  Every existing session has been signed out, and the");
+            println!("  dashboard stays locked until the password is changed.");
+            println!();
+            Ok(())
+        }
+        "help" | "--help" | "-h" => {
+            print_usage();
+            Ok(())
+        }
+        other => {
+            eprintln!("Unknown command: {other}\n");
+            print_usage();
+            std::process::exit(2);
+        }
+    }
+}
+
+fn print_usage() {
+    eprintln!("netsentinel-server — run with no arguments to start the server.\n");
+    eprintln!("Commands:");
+    eprintln!("  reset-admin-password [username]");
+    eprintln!("      Issue a temporary password for the admin account and sign");
+    eprintln!("      out every session. Omit the username when only one admin");
+    eprintln!("      account exists. The dashboard forces a password change on");
+    eprintln!("      the next sign-in.");
+    eprintln!("  help");
+    eprintln!("      Show this message.");
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env file (ignored if not present — env vars may come from Docker / systemd)
@@ -120,6 +169,14 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .unwrap_or(30);
     let db_pool = db::connect(&database_url, max_db_connections, statement_timeout_secs).await?;
+
+    // ── CLI subcommands ──
+    // Handled after the pool exists (they need the DB) but before any worker
+    // spawns, so the process does the one job and exits.
+    if let Some(cmd) = std::env::args().nth(1) {
+        db::run_migrations(&db_pool).await?;
+        return run_subcommand(&cmd, std::env::args().nth(2), &db_pool).await;
+    }
 
     // Validate WORKSPACE_TIMEZONE at startup (warns + falls back to UTC if the
     // IANA name is invalid). Storage/wire stay UTC; this only affects calendar
@@ -530,6 +587,12 @@ async fn main() -> anyhow::Result<()> {
     }
     .layer(middleware::map_response(add_api_version_header))
     .layer(middleware::from_fn(request_id::request_id))
+    // Runs before the rate limiter so a locked-out account cannot burn quota
+    // hammering routes it is not allowed to reach yet.
+    .layer(middleware::from_fn_with_state(
+        Arc::clone(&state),
+        services::auth::require_password_change,
+    ))
     .layer(middleware::from_fn_with_state(
         Arc::clone(&state),
         request_id::api_rate_limit,
