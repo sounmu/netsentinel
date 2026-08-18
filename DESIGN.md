@@ -212,10 +212,31 @@ Violations should be fixed before merge.
 
 ---
 
-## 9. Known remaining work
+## 9. Enforcement
 
-- `.alerts-*` in `globals.css` has been folded onto the shared buttons, tabs and
-  tiles, but its panels, matrix and drawer still have bespoke rules that could
-  collapse into `Panel` / `DataTable`.
-- No lint rule enforces §8 yet. Adding `react/forbid-dom-props` for `style` plus
-  a stylelint check for raw px/hex is the next step.
+`npm run lint:all` in `web/` runs both:
+
+- **stylelint** (`.stylelintrc.json`) — `font-size` must be `var(--fs-*)`,
+  `border-radius` must be composed of `var(--r-*)`, and raw hex / `rgb()` /
+  `hsl()` is banned in styling properties. Custom-property declarations are
+  exempt: the token block is where literals belong.
+- **eslint** (`eslint-rules/no-static-style-props.mjs`) — bans literal
+  `fontSize`, `fontWeight`, `fontFamily`, `lineHeight`, `letterSpacing`,
+  `padding`, `margin`, `borderRadius`, `gap` and `boxShadow` inside
+  `style={{}}`. Runtime-computed values stay legal, because bar widths and
+  threshold colours cannot live in a stylesheet.
+
+`app/global-error.tsx` is exempt from both: it replaces the root layout, so
+`globals.css` never loads and no token exists.
+
+---
+
+## 10. Known remaining work
+
+- `.alerts-matrix` (sticky header, sticky first column, mobile card
+  fallback), the metric rule stack, and the side drawer are still bespoke.
+  Collapsing them means rewriting ~1,300 lines of interactive TSX across
+  `RulesMatrix` / `RulesPanel` / `ChannelsPanel` / `HistoryPanel`, and it
+  should be exercised against a running backend, not shipped on a build pass.
+- There is no shared `Drawer` or `DataTable` primitive yet; both would come
+  out of that work.
