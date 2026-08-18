@@ -80,8 +80,14 @@
   --fs-head:  17px;
   --fs-page:  22px;
 
-  --font-sans: var(--font-pretendard), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-code: var(--font-mono), ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* The next/font variables are injected by `layout.tsx` onto <html>.
+     Both carry an inline fallback: a bare `var(--x)` that resolves to
+     nothing makes the WHOLE custom property invalid at computed-value
+     time, which silently voids every `font:` shorthand built on the
+     typescale below. The fallback keeps substitution succeeding even if
+     the font wiring is renamed. */
+  --font-sans: var(--font-ibm-plex-sans, -apple-system), BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-code: var(--font-mono, ui-monospace), "SF Mono", Menlo, Consolas, monospace;
 
   /* Chart series — desaturated to sit beside the signal
      colors without competing with them. */
@@ -378,7 +384,7 @@
 body {
   background-color: var(--bg-primary);
   color: var(--text-primary);
-  font-family: var(--font-ibm-plex-sans), -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
@@ -1531,10 +1537,7 @@ select.date-input { font-family: inherit; }
   background: var(--inset);
 }
 
-/* Calendar day button hover */
-.calendar-day:not(.calendar-day-selected):hover {
-  background: var(--inset);
-}
+
 
 /* ══════════════════════════════════════════════════
    Alerts page — aligned to shared NetSentinel look
@@ -3446,3 +3449,246 @@ select.date-input { font-family: inherit; }
   color: var(--muted);
   font-size: var(--fs-meta);
 }
+
+/* ══════════════════════════════════════════════════
+   Auth surfaces (/login, /setup)
+   Rendered outside the app shell, so they carry their
+   own centering. `--border` / `--surface-elevated` /
+   `--danger` were referenced here and never defined —
+   the divider and Google button were invisible.
+   ══════════════════════════════════════════════════ */
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--md-sys-spacing-xl);
+  background: var(--canvas);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  padding: var(--md-sys-spacing-2xl) var(--md-sys-spacing-xl);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-spacing-lg);
+}
+
+.auth-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--md-sys-spacing-sm);
+}
+.auth-card__head svg { color: var(--muted); }
+.auth-card__title {
+  font-size: var(--fs-head);
+  font-weight: 600;
+  letter-spacing: -0.016em;
+  color: var(--ink);
+  margin: 0;
+}
+.auth-card__lede {
+  margin: calc(var(--md-sys-spacing-md) * -1) 0 0;
+  text-align: center;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--md-sys-spacing-md);
+}
+
+.auth-submit { width: 100%; }
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-md);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.auth-google-mark {
+  font-weight: 600;
+  font-size: var(--fs-item);
+}
+
+.auth-error {
+  margin: 0;
+  padding: 8px 11px;
+  border-radius: var(--r-sm);
+  background: var(--crit-bg);
+  border: 1px solid color-mix(in srgb, var(--crit) 30%, transparent);
+  color: var(--crit);
+  font-size: var(--fs-meta);
+}
+
+/* A Link styled as a button needs the text-decoration reset. */
+a.btn { text-decoration: none; }
+
+/* ══════════════════════════════════════════════════
+   Date-time picker
+   A dropdown genuinely floats, so it is one of the few
+   surfaces allowed a shadow (DESIGN.md §4).
+   ══════════════════════════════════════════════════ */
+.dtp {
+  position: relative;
+  display: inline-block;
+}
+
+.dtp__trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-sm);
+  cursor: pointer;
+  min-width: 178px;
+  white-space: nowrap;
+}
+.dtp__trigger svg { color: var(--muted); flex-shrink: 0; }
+
+.dtp__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 100;
+  width: 288px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-float);
+  animation: fadeInUp var(--t-enter) var(--ease) forwards;
+}
+
+.dtp__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--md-sys-spacing-md) var(--md-sys-spacing-lg) var(--md-sys-spacing-sm);
+  border-bottom: 1px solid var(--hairline);
+}
+.dtp__nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--slate);
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+.dtp__nav:hover { background: var(--inset); }
+.dtp__month {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--ink);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px var(--md-sys-spacing-sm);
+  border-radius: var(--r-xs);
+  font-family: inherit;
+}
+.dtp__month:hover { background: var(--inset); }
+
+.dtp__dow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: var(--md-sys-spacing-sm) var(--md-sys-spacing-md) var(--md-sys-spacing-xs);
+}
+.dtp__dow span {
+  text-align: center;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--muted);
+  padding: var(--md-sys-spacing-xs) 0;
+}
+
+.dtp__grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  padding: 0 var(--md-sys-spacing-md) var(--md-sys-spacing-sm);
+  gap: 2px;
+}
+
+.calendar-day {
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--fs-meta);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--t-fast) var(--ease);
+}
+.calendar-day:hover:not(.calendar-day-selected) { background: var(--inset); }
+.calendar-day[aria-current="date"]:not(.calendar-day-selected) {
+  border-color: var(--rule);
+  font-weight: 600;
+}
+.calendar-day-selected {
+  background: var(--solid);
+  color: var(--on-solid);
+  font-weight: 600;
+}
+.calendar-day:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}
+
+.dtp__time {
+  display: flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-sm);
+  padding: var(--md-sys-spacing-sm) var(--md-sys-spacing-lg) var(--md-sys-spacing-md);
+  border-top: 1px solid var(--hairline);
+  background: var(--canvas);
+}
+.dtp__time svg { color: var(--muted); flex-shrink: 0; }
+.dtp__time-input {
+  width: 38px;
+  text-align: center;
+  height: 26px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-code);
+  font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.dtp__time-input:focus {
+  border-color: var(--link);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--link) 15%, transparent);
+}
+.dtp__time-sep {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--muted);
+}
+.dtp__now { margin-left: auto; }

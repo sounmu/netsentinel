@@ -89,8 +89,14 @@ canonical tokens.** The alias block is a migration bridge, not API.
 
 ## 2. Typography
 
-Faces are unchanged: **Pretendard** (locally bundled, excellent Korean + Latin)
-and **IBM Plex Mono** for values, IDs, and paths. No CDN.
+Faces are unchanged: **IBM Plex Sans KR** for UI text and **IBM Plex Mono**
+for values, IDs, and paths, both wired through `next/font` in `layout.tsx`.
+
+Always reach for `var(--font-sans)` / `var(--font-code)`, never the raw
+`--font-ibm-plex-sans` / `--font-mono` variables. The tokens carry an inline
+`var()` fallback; a bare reference that fails to resolve makes the whole custom
+property invalid at computed-value time, which silently voids every `font:`
+shorthand built on the typescale.
 
 Six sizes, three weights — 400, 500, 600. Nothing heavier: 700/800 is what made
 the old UI shout.

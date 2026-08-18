@@ -326,6 +326,10 @@ export const translations = {
       months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
       monthYearTemplate: "{month} {year}",
       now: "Now",
+      prevMonth: "Previous month",
+      nextMonth: "Next month",
+      hours: "Hours",
+      minutes: "Minutes",
     },
     // Alert history
     alertHistory: {
@@ -744,6 +748,10 @@ export const translations = {
       months: ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"],
       monthYearTemplate: "{year}년 {month}",
       now: "현재 시간",
+      prevMonth: "이전 달",
+      nextMonth: "다음 달",
+      hours: "시",
+      minutes: "분",
     },
     alertHistory: {
       title: "알림 이력",
