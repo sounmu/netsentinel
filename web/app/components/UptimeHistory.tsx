@@ -8,6 +8,7 @@ import {
   type UptimeSummary,
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { uptimeTone } from "@/app/lib/status";
 
 const DEFAULT_UPTIME_DAYS = 31;
 
@@ -43,11 +44,23 @@ function formatDateKey(dateKey: string, locale: string): string {
   }).format(new Date(Date.UTC(year, month - 1, day)));
 }
 
-/** Threshold colors mirror the public status page's `getUptimeColor`. */
+/** Thresholds come from `uptimeTone()` so this bar, /monitors and the
+ *  public /status page all describe the same percentage the same way.
+ *
+ *  Healthy days are drawn at reduced strength on purpose. A month of
+ *  full-saturation green is thirty-one bars shouting "fine", which buries
+ *  the two that are not — the opposite of what the widget is for. Only
+ *  warn/crit days get the full signal color. */
 function uptimeColor(pct: number): string {
-  if (pct >= 99.5) return "var(--accent-green)";
-  if (pct >= 95) return "var(--accent-yellow)";
-  return "var(--accent-red)";
+  const tone = uptimeTone(pct);
+  return tone === "ok"
+    ? "color-mix(in srgb, var(--ok) 42%, var(--inset))"
+    : `var(--${tone})`;
+}
+
+/** The headline percentage is a single number, so it keeps full strength. */
+function uptimeHeadlineColor(pct: number): string {
+  return `var(--${uptimeTone(pct)})`;
 }
 
 /**
@@ -77,7 +90,7 @@ export default function UptimeHistory({
     return <div className="skeleton" style={{ height: 64 }} />;
   }
   if (!data) {
-    return <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{t.host.uptimeNoData}</div>;
+    return <div className="uptime-empty">{t.host.uptimeNoData}</div>;
   }
 
   const loc = locale === "ko" ? "ko-KR" : "en-US";
@@ -94,37 +107,17 @@ export default function UptimeHistory({
 
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 8,
-          flexWrap: "wrap",
-          marginBottom: 12,
-        }}
-      >
+      <div className="uptime-head">
         <span
-          style={{
-            fontSize: 22,
-            fontWeight: 700,
-            color: hasSamples ? uptimeColor(data.overall_pct) : "var(--text-muted)",
-          }}
+          className="uptime-head__value"
+          style={{ color: hasSamples ? uptimeHeadlineColor(data.overall_pct) : "var(--muted)" }}
         >
           {data.overall_pct.toFixed(2)}%
         </span>
-        <span
-          style={{
-            fontSize: 11,
-            color: "var(--text-muted)",
-            fontFamily: "var(--font-mono), monospace",
-          }}
-        >
-          {data.timezone}
-        </span>
+        <span className="uptime-head__tz">{data.timezone}</span>
       </div>
 
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 48 }}>
+      <div className="uptime-track">
         {axis.map(({ dayKey, point }) => {
           const label = formatDateKey(dayKey, loc);
           return (
@@ -135,16 +128,7 @@ export default function UptimeHistory({
                   ? `${label} - ${point.uptime_pct.toFixed(1)}%`
                   : `${label} - ${t.chart.noData}`
               }
-              style={{
-                flex: 1,
-                minWidth: 3,
-                height: "100%",
-                display: "flex",
-                alignItems: "flex-end",
-                background: "var(--border-subtle)",
-                borderRadius: 2,
-                overflow: "hidden",
-              }}
+              className="uptime-bar"
             >
               {point && (
                 <div
@@ -160,13 +144,9 @@ export default function UptimeHistory({
         })}
       </div>
 
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {formatDateKey(axis[0].dayKey, loc)}
-        </span>
-        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-          {formatDateKey(axis[axis.length - 1].dayKey, loc)}
-        </span>
+      <div className="uptime-axis">
+        <span>{formatDateKey(axis[0].dayKey, loc)}</span>
+        <span>{formatDateKey(axis[axis.length - 1].dayKey, loc)}</span>
       </div>
     </div>
   );

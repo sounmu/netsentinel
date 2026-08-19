@@ -26,6 +26,7 @@ import { MetricRuleCard } from "./MetricRuleCard";
 import { RulesMatrix } from "./RulesMatrix";
 import { BulkApplyBar } from "./BulkApplyBar";
 import { RuleDrawer } from "./RuleDrawer";
+import { Button } from "@/app/components/ui";
 
 export function RulesPanel() {
   const { t } = useI18n();
@@ -95,15 +96,15 @@ export function RulesPanel() {
       <section className="glass-card alerts-section-card">
         <div className="alerts-section-card__head">
           <h2 className="alerts-section-card__title">{t.alerts.globalDefaults}</h2>
-          <button
+          <Button
             type="button"
             onClick={handleGlobalSave}
             disabled={saving || !globalForm}
-            className="alerts-btn alerts-btn--filled"
+            variant="primary"
           >
             <Save size={14} aria-hidden="true" />
             {saving ? t.alerts.saving : t.alerts.save}
-          </button>
+          </Button>
         </div>
 
         {saveMsg && (
@@ -239,7 +240,7 @@ function HostAlertOverride({
   const msgIsSuccess = msg === t.alerts.saved || msg === t.alerts.revertedToGlobal;
 
   return (
-    <div className="glass-card" style={{ overflow: "hidden", marginBottom: 8 }}>
+    <div className="glass-card alerts-host-card">
       <button
         type="button"
         onClick={toggle}
@@ -287,29 +288,26 @@ function HostAlertOverride({
             </div>
           )}
 
-          <div
-            className="alerts-row alerts-row--end alerts-row--tight"
-            style={{ marginTop: 16 }}
-          >
+          <div className="alerts-row alerts-row--end alerts-row--tight alerts-host-actions">
             {hasOverride && (
-              <button
+              <Button
                 type="button"
                 onClick={handleDelete}
-                className="alerts-btn alerts-btn--sm alerts-btn--danger"
+                variant="danger" size="sm"
               >
                 <Trash2 size={12} aria-hidden="true" />
                 {t.alerts.deleteOverride}
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
               onClick={handleSave}
               disabled={saving}
-              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+              variant="primary" size="sm"
             >
               <Save size={12} aria-hidden="true" />
               {saving ? t.alerts.saving : t.alerts.save}
-            </button>
+            </Button>
           </div>
         </div>
       )}

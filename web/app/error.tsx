@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { AlertTriangle } from "lucide-react";
+import { Button, Panel, EmptyState } from "@/app/components/ui";
 
 export default function ErrorPage({
   error,
@@ -14,25 +16,18 @@ export default function ErrorPage({
   }, [error]);
 
   return (
-    <div className="glass-card" style={{ padding: "48px 24px", textAlign: "center" }}>
-      <h2 style={{ fontSize: 20, marginBottom: 12 }}>Something went wrong</h2>
-      <p style={{ color: "var(--text-muted)", marginBottom: 20 }}>
-        The dashboard hit an unexpected error while rendering this route.
-      </p>
-      <button
-        type="button"
-        onClick={reset}
-        style={{
-          padding: "10px 18px",
-          borderRadius: 8,
-          border: "1px solid var(--accent-blue)",
-          background: "var(--accent-blue)",
-          color: "var(--text-on-accent, #fff)",
-          cursor: "pointer",
-        }}
-      >
-        Try again
-      </button>
-    </div>
+    <Panel>
+      <EmptyState
+        tone="error"
+        icon={<AlertTriangle size={28} aria-hidden="true" />}
+        title="Something went wrong"
+        description="The dashboard hit an unexpected error while rendering this route."
+        action={
+          <Button variant="primary" onClick={reset}>
+            Try again
+          </Button>
+        }
+      />
+    </Panel>
   );
 }

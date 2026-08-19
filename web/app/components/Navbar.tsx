@@ -115,11 +115,10 @@ export default function Navbar() {
           {theme === "light" ? <Moon size={14} /> : <Sun size={14} />}
         </button>
         <button
-          className="navbar-icon-btn"
+          className="navbar-icon-btn navbar-icon-btn--text"
           onClick={() => setLocale(locale === "en" ? "ko" : "en")}
           title="Toggle language"
           aria-label={locale === "en" ? "Switch to Korean" : "Switch to English"}
-          style={{ fontSize: 11, fontWeight: 600, width: "auto", padding: "0 8px" }}
         >
           {locale === "en" ? "KO" : "EN"}
         </button>
@@ -178,15 +177,14 @@ export default function Navbar() {
               </button>
             );
           })}
-          <div style={{ borderTop: "1px solid var(--border-subtle)", margin: "4px 0", padding: "4px 0" }}>
-            <div style={{ display: "flex", gap: 6, padding: "4px 14px" }}>
+          <div className="navbar-mobile-actions">
+            <div className="navbar-mobile-actions__row">
               <button className="navbar-icon-btn" onClick={toggleTheme} aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}>
                 {theme === "light" ? <Moon size={14} /> : <Sun size={14} />}
               </button>
               <button
-                className="navbar-icon-btn"
+                className="navbar-icon-btn navbar-icon-btn--text"
                 onClick={() => setLocale(locale === "en" ? "ko" : "en")}
-                style={{ fontSize: 11, fontWeight: 600, width: "auto", padding: "0 8px" }}
                 aria-label={locale === "en" ? "Switch to Korean" : "Switch to English"}
               >
                 {locale === "en" ? "KO" : "EN"}

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { toast } from "sonner";
-import { Save, Trash2, X } from "lucide-react";
+import { Save, Trash2 } from "lucide-react";
 import {
   AlertConfigRow,
   fetcher,
@@ -17,6 +17,7 @@ import type { HostSummary } from "@/app/types/metrics";
 import type { AlertFormData, MetricPrefix } from "./shared";
 import { apiErrorMessage, configsToForm, formToRequests } from "./shared";
 import { MetricRuleCard } from "./MetricRuleCard";
+import { Button, Drawer, SkeletonRows } from "@/app/components/ui";
 
 interface Props {
   host: HostSummary;
@@ -49,20 +50,13 @@ export function RuleDrawer({ host, metric, onClose }: Props) {
   const [form, setForm] = useState<AlertFormData | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // Seed from the host override when one exists, otherwise from the global
+  // defaults — the drawer edits a copy either way, and `handleSave` writes
+  // back every metric at once per the all-or-nothing PUT contract.
   useEffect(() => {
-    if (hostConfigs !== undefined && globalConfigs !== undefined) {
-      setForm(configsToForm(hostConfigs.length > 0 ? hostConfigs : globalConfigs));
-    }
+    if (hostConfigs === undefined || globalConfigs === undefined) return;
+    setForm(configsToForm(hostConfigs.length > 0 ? hostConfigs : globalConfigs));
   }, [hostConfigs, globalConfigs]);
-
-  // Close on Escape key.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   const handleSave = async () => {
     if (!form) return;
@@ -102,73 +96,34 @@ export function RuleDrawer({ host, metric, onClose }: Props) {
   }[metric];
 
   return (
-    <>
-      <div
-        className="alerts-drawer-scrim"
-        onClick={onClose}
-        role="presentation"
-      />
-      <aside
-        className="alerts-drawer"
-        role="dialog"
-        aria-labelledby="alerts-drawer-title"
-        aria-modal="true"
-      >
-        <div className="alerts-drawer__header">
-          <div>
-            <h3 id="alerts-drawer-title" className="alerts-drawer__title">
-              {label}
-            </h3>
-            <div className="alerts-drawer__subtitle">{host.host_key}</div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="alerts-icon-btn"
-            aria-label="Close"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
-
-        <div className="alerts-drawer__body">
-          {form ? (
-            <MetricRuleCard label={label} prefix={metric} form={form} setForm={setForm} />
-          ) : (
-            <div className="skeleton" style={{ height: 180 }} />
-          )}
-        </div>
-
-        <div className="alerts-drawer__footer">
+    <Drawer
+      title={label}
+      subtitle={host.host_key}
+      onClose={onClose}
+      closeLabel={t.common.cancel}
+      footer={
+        <>
           {hasOverride && (
-            <button
-              type="button"
-              onClick={handleRevert}
-              disabled={saving}
-              className="alerts-btn alerts-btn--sm alerts-btn--danger"
-            >
+            <Button onClick={handleRevert} disabled={saving} variant="danger" size="sm">
               <Trash2 size={12} aria-hidden="true" />
               {t.alerts.deleteOverride}
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            onClick={onClose}
-            className="alerts-btn alerts-btn--sm alerts-btn--tonal"
-          >
+          <Button onClick={onClose} variant="secondary" size="sm">
             {t.common.cancel}
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !form}
-            className="alerts-btn alerts-btn--sm alerts-btn--filled"
-          >
+          </Button>
+          <Button onClick={handleSave} disabled={saving || !form} variant="primary" size="sm">
             <Save size={12} aria-hidden="true" />
             {saving ? t.alerts.saving : t.alerts.save}
-          </button>
-        </div>
-      </aside>
-    </>
+          </Button>
+        </>
+      }
+    >
+      {form ? (
+        <MetricRuleCard label={label} prefix={metric} form={form} setForm={setForm} />
+      ) : (
+        <SkeletonRows count={1} height={180} />
+      )}
+    </Drawer>
   );
 }

@@ -12,6 +12,7 @@ import {
   publicFetcher,
   setupAdmin,
 } from "@/app/lib/api";
+import { Button, Field } from "@/app/components/ui";
 
 export default function SetupPage() {
   const auth = useAuth();
@@ -71,88 +72,53 @@ export default function SetupPage() {
   };
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: 20,
-      }}
-    >
-      <section className="glass-card" style={{ maxWidth: 420, width: "100%", padding: 32 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "center", marginBottom: 10 }}>
-          <Shield size={28} style={{ color: "var(--accent-blue)" }} />
-          <h1 style={{ color: "var(--text-primary)", fontSize: 24, margin: 0 }}>
-            {t.auth.setupTitle}
-          </h1>
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="auth-card__head">
+          <Shield size={22} aria-hidden="true" />
+          <h1 className="auth-card__title">{t.auth.setupTitle}</h1>
         </div>
-        <p style={{ color: "var(--text-muted)", textAlign: "center", margin: "0 0 24px", fontSize: 14 }}>
-          {t.auth.setupDescription}
-        </p>
+        <p className="auth-card__lede">{t.auth.setupDescription}</p>
 
-        <form onSubmit={handleSubmit}>
-          <label htmlFor="setup-username" style={{ display: "block", color: "var(--text-muted)", marginBottom: 6, fontSize: 14 }}>
-            {t.auth.username}
-          </label>
-          <input
-            id="setup-username"
-            className="date-input"
-            type="text"
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            style={{ width: "100%", boxSizing: "border-box", marginBottom: 16 }}
-            autoFocus
-          />
+        <form onSubmit={handleSubmit} className="auth-form">
+          <Field label={t.auth.username} htmlFor="setup-username">
+            <input
+              id="setup-username"
+              className="date-input"
+              type="text"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoFocus
+            />
+          </Field>
 
-          <label htmlFor="setup-password" style={{ display: "block", color: "var(--text-muted)", marginBottom: 6, fontSize: 14 }}>
-            {t.auth.password}
-          </label>
-          <input
-            id="setup-password"
-            className="date-input"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            style={{ width: "100%", boxSizing: "border-box", marginBottom: 16 }}
-          />
+          <Field label={t.auth.password} htmlFor="setup-password">
+            <input
+              id="setup-password"
+              className="date-input"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </Field>
 
-          <label htmlFor="setup-confirm" style={{ display: "block", color: "var(--text-muted)", marginBottom: 6, fontSize: 14 }}>
-            {t.auth.confirmPassword}
-          </label>
-          <input
-            id="setup-confirm"
-            className="date-input"
-            type="password"
-            value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
-            style={{ width: "100%", boxSizing: "border-box", marginBottom: 16 }}
-          />
+          <Field label={t.auth.confirmPassword} htmlFor="setup-confirm">
+            <input
+              id="setup-confirm"
+              className="date-input"
+              type="password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+            />
+          </Field>
 
           {error && (
-            <p style={{ color: "var(--danger)", fontSize: 13, margin: "0 0 16px" }}>
-              {error}
-            </p>
+            <p className="auth-error" role="alert">{error}</p>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%",
-              minHeight: 42,
-              padding: "10px 16px",
-              backgroundColor: "var(--accent-blue)",
-              color: "var(--text-on-accent, #fff)",
-              border: "none",
-              borderRadius: 8,
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: loading ? "not-allowed" : "pointer",
-              opacity: loading ? 0.7 : 1,
-            }}
-          >
-            {loading ? "..." : t.auth.setupButton}
-          </button>
+          <Button type="submit" variant="primary" disabled={loading} className="auth-submit">
+            {loading ? t.common.loading : t.auth.setupButton}
+          </Button>
         </form>
       </section>
     </main>

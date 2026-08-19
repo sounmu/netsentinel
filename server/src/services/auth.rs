@@ -1,5 +1,6 @@
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
+use axum::response::IntoResponse;
 
 use crate::errors::AppError;
 use chrono::Utc;
@@ -203,6 +204,72 @@ where
         }
 
         Ok(AdminGuard { claims })
+    }
+}
+
+/// Paths that stay reachable while `must_change_password` is set.
+///
+/// The set is deliberately tiny: prove who you are, get out, or fix the
+/// thing that is blocking you. Everything else — hosts, metrics, alerts,
+/// monitors — stays shut, so a temporary password that leaks cannot be used
+/// to read or change anything.
+fn allowed_while_password_change_required(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/auth/password"
+            | "/api/auth/me"
+            | "/api/auth/logout"
+            | "/api/auth/refresh"
+            | "/api/auth/login"
+            | "/api/auth/setup"
+            | "/api/auth/status"
+            | "/api/health"
+            | "/api/public/status"
+    )
+}
+
+/// Refuse the API while the caller owes us a password change.
+///
+/// Runs for every request. Unauthenticated ones pass straight through — the
+/// route's own `UserGuard` decides those. Authenticated ones cost one
+/// primary-key lookup, which is the honest price of reading the flag from the
+/// database rather than trusting a claim baked into a JWT that was minted
+/// before the reset.
+pub async fn require_password_change(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::models::app_state::AppState>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+    if allowed_while_password_change_required(path) {
+        return next.run(request).await;
+    }
+
+    let claims = request
+        .headers()
+        .get("Authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .and_then(super::user_auth::decode_user_jwt);
+
+    let Some(claims) = claims else {
+        return next.run(request).await;
+    };
+
+    match crate::repositories::users_repo::find_by_id(&state.db_pool, claims.sub).await {
+        Ok(Some(user)) if user.must_change_password => {
+            // A distinct code so the client can route to the change-password
+            // screen instead of treating this as a generic permission error.
+            crate::errors::AppError::Forbidden(
+                "password_change_required: set a new password before using the dashboard"
+                    .to_string(),
+            )
+            .into_response()
+        }
+        // A lookup failure must not open the gate, but it also must not lock
+        // out a healthy instance on a transient DB blip: the route's own guard
+        // still runs behind us, so falling through is safe here.
+        _ => next.run(request).await,
     }
 }
 

@@ -3,6 +3,7 @@
 import { PortStatus } from "@/app/types/metrics";
 import { Network } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { EmptyState, StatusDot } from "@/app/components/ui";
 
 interface PortListProps {
   ports: PortStatus[];
@@ -26,63 +27,23 @@ export default function PortList({ ports }: PortListProps) {
   const { t } = useI18n();
   if (ports.length === 0) {
     return (
-      <div
-        style={{
-          textAlign: "center",
-          padding: "24px 0",
-          color: "var(--text-muted)",
-          fontSize: 13,
-        }}
-      >
-        <Network size={28} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
-        <div>{t.portList.noData}</div>
-      </div>
+      <EmptyState
+        icon={<Network size={24} aria-hidden="true" />}
+        title={t.portList.noData}
+      />
     );
   }
 
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+    <div className="port-list">
       {ports.map((p) => {
         const label = PORT_LABELS[p.port];
         return (
-          <div
-            key={p.port}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "6px 12px",
-              borderRadius: 9999,
-              background: p.is_open ? "var(--status-online-bg)" : "var(--status-offline-bg)",
-              border: `1px solid ${p.is_open ? "var(--badge-online-border)" : "var(--badge-offline-border)"}`,
-              fontSize: 12,
-              fontWeight: 500,
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: p.is_open ? "var(--accent-green)" : "var(--accent-red)",
-                flexShrink: 0,
-              }}
-            />
-            <span
-              className="font-mono"
-              style={{
-                fontWeight: 600,
-                color: "var(--text-primary)",
-              }}
-            >
-              {p.port}
-            </span>
-            {label && (
-              <span style={{ color: "var(--text-muted)", fontSize: 11 }}>
-                {label}
-              </span>
-            )}
-          </div>
+          <span key={p.port} className="port-chip" data-open={p.is_open}>
+            <StatusDot tone={p.is_open ? "ok" : "crit"} />
+            <span className="port-chip__num">{p.port}</span>
+            {label && <span className="port-chip__label">{label}</span>}
+          </span>
         );
       })}
     </div>

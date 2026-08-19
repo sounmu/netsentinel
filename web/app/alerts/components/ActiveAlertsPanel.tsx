@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/api";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useNowTick } from "@/app/lib/useNowTick";
+import { EmptyState, Panel, SkeletonRows } from "@/app/components/ui";
 import { alertTypeEmoji, formatRelative, sanitizeMarkdown } from "./shared";
 
 interface Props {
@@ -38,16 +39,16 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
       role="tabpanel"
       aria-labelledby="alerts-tab-active"
     >
-      {active === undefined && <div className="skeleton" style={{ height: 220 }} />}
+      {active === undefined && <SkeletonRows count={2} height={96} />}
 
       {active && active.length === 0 && (
-        <div className="alerts-empty" role="status">
-          <span className="alerts-empty__icon" aria-hidden="true">
-            <ShieldCheck size={28} />
-          </span>
-          <span className="alerts-empty__title">{t.alerts.active.allClear}</span>
-          <span className="alerts-empty__description">{t.alerts.active.allClearDescription}</span>
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<ShieldCheck size={28} aria-hidden="true" />}
+            title={t.alerts.active.allClear}
+            description={t.alerts.active.allClearDescription}
+          />
+        </Panel>
       )}
 
       {active && active.length > 0 && (
@@ -60,7 +61,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
               <div className="alerts-active-card__head">
                 <div>
                   <div className="alerts-active-card__host">
-                    <span aria-hidden="true" style={{ marginRight: 6 }}>
+                    <span aria-hidden="true" className="alerts-active-card__emoji">
                       {alertTypeEmoji(alert.alert_type)}
                     </span>
                     {alert.host_key}
@@ -81,7 +82,7 @@ export function ActiveAlertsPanel({ onCountChange }: Props) {
               <p className="alerts-active-card__message">{sanitizeMarkdown(alert.message)}</p>
               <div className="alerts-active-card__actions">
                 <Link
-                  className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+                  className="btn btn--secondary btn--sm"
                   href={`/host/?key=${encodeURIComponent(alert.host_key)}`}
                   // See `app/page.tsx` for the rationale — static export
                   // with query-string keying makes Next's prefetcher 404

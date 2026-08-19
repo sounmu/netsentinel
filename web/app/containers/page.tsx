@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Box, Server } from "lucide-react";
 import { PageHeader } from "@/app/components/PageHeader";
+import { EmptyState, Meter } from "@/app/components/ui";
 import { useI18n } from "@/app/i18n/I18nContext";
 import {
   useSSEConnection,
@@ -17,38 +18,6 @@ import {
   type HostStatus,
 } from "@/app/lib/status";
 import type { DockerContainer, DockerContainerStats } from "@/app/types/metrics";
-
-function meterTone(pct: number): string {
-  if (pct >= 85) return "var(--md-sys-color-error)";
-  if (pct >= 60) return "var(--md-custom-color-warning)";
-  return "var(--md-custom-color-success)";
-}
-
-function InlineMeter({ value }: { value: number; label?: string }) {
-  const pct = Math.min(Math.max(value, 0), 100);
-  const tone = meterTone(pct);
-  return (
-    <div className="flex items-center gap-3">
-      <span
-        className="min-w-[44px] shrink-0 text-right tabular-nums text-[var(--md-sys-color-on-surface)]"
-        style={{ font: "var(--md-sys-typescale-label-medium)" }}
-      >
-        {pct.toFixed(1)}%
-      </span>
-      <span className="h-[4px] min-w-[48px] flex-1 overflow-hidden rounded-full bg-[var(--md-sys-color-surface-container-highest)]">
-        <span
-          className="block h-full rounded-full"
-          style={{
-            width: `${pct}%`,
-            background: tone,
-            transition:
-              "width var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard), background var(--md-sys-motion-duration-medium2) var(--md-sys-motion-easing-standard)",
-          }}
-        />
-      </span>
-    </div>
-  );
-}
 
 type ContainerHealth = "attention" | "running" | "stopped";
 type SortKey = "container" | "host" | "status" | "cpu" | "memory" | "network" | "storage" | "image";
@@ -332,26 +301,11 @@ export default function ContainersPage() {
         )}
 
         {!isLoading && rows.length === 0 && (
-          <div
-            style={{
-              padding: "48px 24px",
-              textAlign: "center",
-              color: "var(--text-muted)",
-            }}
-          >
-            <Box size={40} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
-            <div
-              style={{
-                fontSize: 15,
-                fontWeight: 600,
-                marginBottom: 6,
-                color: "var(--text-primary)",
-              }}
-            >
-              {t.containers.noContainers}
-            </div>
-            <div style={{ fontSize: 13 }}>{t.containers.noContainersHint}</div>
-          </div>
+          <EmptyState
+            icon={<Box size={28} aria-hidden="true" />}
+            title={t.containers.noContainers}
+            description={t.containers.noContainersHint}
+          />
         )}
 
         {!isLoading && rows.length > 0 && (
@@ -543,7 +497,7 @@ export default function ContainersPage() {
                       </td>
                       <td>
                         {stat ? (
-                          <InlineMeter value={stat.cpu_percent} label="CPU" />
+                          <Meter value={stat.cpu_percent} />
                         ) : (
                           <span
                             className="text-[var(--md-sys-color-outline)]"
@@ -557,7 +511,7 @@ export default function ContainersPage() {
                         {stat ? (
                           <div className="grid gap-1.5">
                             {row.memoryPercent !== null ? (
-                              <InlineMeter value={row.memoryPercent} label="MEM" />
+                              <Meter value={row.memoryPercent} />
                             ) : (
                               <div
                                 className="tabular-nums text-[var(--md-sys-color-on-surface)]"

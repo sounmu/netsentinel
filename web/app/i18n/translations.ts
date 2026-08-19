@@ -23,6 +23,11 @@ export const translations = {
       passwordPolicy: "Password must contain uppercase, lowercase, digit, and special character",
       passwordMismatch: "Passwords do not match",
       setupFailed: "Setup failed",
+      forgotPassword: "Forgot your password?",
+      forgotPasswordHelp:
+        "Password recovery runs on the server, not from this page. Sign in to the machine running NetSentinel and run:",
+      forgotPasswordNote:
+        "It prints a temporary password and signs out every session. You will be asked to set a new one right after signing in.",
       or: "or",
       loginError: {
         invalid: "Invalid username or password",
@@ -34,26 +39,6 @@ export const translations = {
         oauthConflict: "This Google account is already linked to another user",
         generic: "An error occurred during login",
       },
-    },
-    // Dashboard
-    dashboard: {
-      customize: "Customize",
-      done: "Done",
-      addWidget: "Add Widget",
-      removeWidget: "Remove",
-      widgetTypes: {
-        host_status: "Host Status",
-        cpu_chart: "CPU Chart",
-        memory_chart: "Memory Chart",
-        alert_feed: "Alert Feed",
-        uptime_overview: "Uptime Overview",
-        http_monitor: "HTTP Monitor",
-      },
-      selectHost: "Select Host",
-      cpu: "CPU",
-      ram: "RAM",
-      noRecentAlerts: "No recent alerts",
-      noWidgets: "No widgets added. Click 'Customize' to add widgets.",
     },
     // Overview page
     overview: {
@@ -242,7 +227,7 @@ export const translations = {
         selectedHosts: "{count} selected",
         applyGlobal: "Apply global defaults",
         matrix: "Rule matrix",
-        matrixDescription: "Overview of thresholds per host. Cells tinted blue indicate a per-host override.",
+        matrixDescription: "Overview of thresholds per host. Highlighted cells indicate a per-host override.",
         using: "Using global",
         overridden: "Overridden",
         clearSelection: "Clear",
@@ -318,20 +303,9 @@ export const translations = {
       exitCode: "exit {code}",
       restarts: "restarts {count}",
     },
-    // CpuCoreGrid
-    cpuCores: {
-      title: "CPU Cores",
-      core: "Core",
-    },
-    // NetworkInterfaceTable
-    networkInterfaces: {
-      title: "Network Interfaces",
-      interface: "Interface",
-      rx: "RX",
-      tx: "TX",
-    },
     // Chart / TimeSeriesChart
     chart: {
+      timeRange: "Time range",
       presets: {
         "1m": "1m",
         "5m": "5m",
@@ -358,19 +332,16 @@ export const translations = {
       load5m: "5m",
       load15m: "15m",
     },
-    // LoadGauge
-    loadGauge: {
-      load1mAvg: "1m avg",
-      load5mAvg: "5m avg",
-      load15mAvg: "15m avg",
-      cpuCoreReference: "Based on CPU cores: {cpuCount} cores (max = {cpuCount})",
-    },
     // DateTimePicker
     datePicker: {
       days: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
       months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
       monthYearTemplate: "{month} {year}",
       now: "Now",
+      prevMonth: "Previous month",
+      nextMonth: "Next month",
+      hours: "Hours",
+      minutes: "Minutes",
     },
     // Alert history
     alertHistory: {
@@ -446,16 +417,6 @@ export const translations = {
       statusOk: "OK",
       statusError: "Error",
     },
-    // ProcessTable
-    process: {
-      noData: "No process data",
-      name: "Name",
-      memoryMb: "Memory (MB)",
-    },
-    // TemperatureDisplay
-    temperature: {
-      noData: "No temperature data",
-    },
     // GpuCard
     gpu: {
       noData: "No GPU data",
@@ -468,13 +429,27 @@ export const translations = {
       reload: "Reload",
       fallbackMessage: "An unexpected error occurred.",
     },
+    // Account
+    account: {
+      changePassword: "Change password",
+      currentPassword: "Current password",
+      newPassword: "New password",
+      passwordChanged: "Password changed. Please sign in again.",
+      passwordChangeFailed: "Could not change the password.",
+      currentPasswordWrong: "Current password is incorrect.",
+      passwordUnchanged: "The new password must differ from the current one.",
+      temporaryPasswordNotice:
+        "You are signed in with a temporary password. Set a new one to unlock the dashboard.",
+    },
     // Common
     common: {
       delete: "Delete",
       cancel: "Cancel",
       confirm: "Confirm",
-      online: "ONLINE",
-      offline: "OFFLINE",
+      // Sentence case: status badges are no longer uppercase pills, and
+      // shouting "ONLINE" on every healthy host competed with real alerts.
+      online: "Online",
+      offline: "Offline",
       servers: "servers",
       host: "Host",
       apply: "Apply",
@@ -482,25 +457,6 @@ export const translations = {
     },
   },
   ko: {
-    dashboard: {
-      customize: "커스터마이즈",
-      done: "완료",
-      addWidget: "위젯 추가",
-      removeWidget: "제거",
-      widgetTypes: {
-        host_status: "호스트 상태",
-        cpu_chart: "CPU 차트",
-        memory_chart: "메모리 차트",
-        alert_feed: "알림 피드",
-        uptime_overview: "가동률 개요",
-        http_monitor: "HTTP 모니터",
-      },
-      selectHost: "호스트 선택",
-      cpu: "CPU",
-      ram: "RAM",
-      noRecentAlerts: "최근 알림 없음",
-      noWidgets: "추가된 위젯이 없습니다. '커스터마이즈'를 클릭하여 위젯을 추가하세요.",
-    },
     auth: {
       login: "로그인",
       logout: "로그아웃",
@@ -519,6 +475,11 @@ export const translations = {
       passwordPolicy: "비밀번호에 대문자, 소문자, 숫자, 특수문자가 포함되어야 합니다",
       passwordMismatch: "비밀번호가 일치하지 않습니다",
       setupFailed: "초기 설정에 실패했습니다",
+      forgotPassword: "비밀번호를 잊으셨나요?",
+      forgotPasswordHelp:
+        "비밀번호 복구는 이 페이지가 아니라 서버에서 진행합니다. NetSentinel이 실행 중인 서버에 접속해 다음을 실행하세요:",
+      forgotPasswordNote:
+        "임시 비밀번호가 출력되고 모든 세션이 로그아웃됩니다. 로그인 직후 새 비밀번호를 설정하게 됩니다.",
       or: "또는",
       loginError: {
         invalid: "아이디 또는 비밀번호가 올바르지 않습니다",
@@ -715,7 +676,7 @@ export const translations = {
         applyGlobal: "글로벌 기본값 적용",
         matrix: "규칙 매트릭스",
         matrixDescription:
-          "호스트별 임계치를 한눈에 확인합니다. 파란색 배경은 호스트 오버라이드를 의미합니다.",
+          "호스트별 임계치를 한눈에 확인합니다. 강조된 셀은 호스트 오버라이드를 의미합니다.",
         using: "글로벌 사용",
         overridden: "오버라이드됨",
         clearSelection: "선택 해제",
@@ -787,18 +748,9 @@ export const translations = {
       exitCode: "exit {code}",
       restarts: "재시작 {count}회",
     },
-    cpuCores: {
-      title: "CPU 코어",
-      core: "코어",
-    },
-    networkInterfaces: {
-      title: "네트워크 인터페이스",
-      interface: "인터페이스",
-      rx: "수신",
-      tx: "송신",
-    },
     // Chart / TimeSeriesChart
     chart: {
+      timeRange: "기간",
       presets: {
         "1m": "1분",
         "5m": "5분",
@@ -825,19 +777,16 @@ export const translations = {
       load5m: "5분",
       load15m: "15분",
     },
-    // LoadGauge
-    loadGauge: {
-      load1mAvg: "1분 평균",
-      load5mAvg: "5분 평균",
-      load15mAvg: "15분 평균",
-      cpuCoreReference: "CPU 코어 수 기준: {cpuCount} cores (max = {cpuCount})",
-    },
     // DateTimePicker
     datePicker: {
       days: ["일", "월", "화", "수", "목", "금", "토"],
       months: ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"],
       monthYearTemplate: "{year}년 {month}",
       now: "현재 시간",
+      prevMonth: "이전 달",
+      nextMonth: "다음 달",
+      hours: "시",
+      minutes: "분",
     },
     alertHistory: {
       title: "알림 이력",
@@ -909,14 +858,6 @@ export const translations = {
       statusOk: "정상",
       statusError: "오류",
     },
-    process: {
-      noData: "프로세스 데이터 없음",
-      name: "이름",
-      memoryMb: "메모리 (MB)",
-    },
-    temperature: {
-      noData: "온도 데이터 없음",
-    },
     gpu: {
       noData: "GPU 데이터 없음",
       memory: "VRAM",
@@ -926,6 +867,17 @@ export const translations = {
       title: "오류가 발생했습니다",
       reload: "새로고침",
       fallbackMessage: "예상치 못한 오류가 발생했습니다.",
+    },
+    account: {
+      changePassword: "비밀번호 변경",
+      currentPassword: "현재 비밀번호",
+      newPassword: "새 비밀번호",
+      passwordChanged: "비밀번호가 변경되었습니다. 다시 로그인해 주세요.",
+      passwordChangeFailed: "비밀번호를 변경하지 못했습니다.",
+      currentPasswordWrong: "현재 비밀번호가 올바르지 않습니다.",
+      passwordUnchanged: "새 비밀번호는 현재 비밀번호와 달라야 합니다.",
+      temporaryPasswordNotice:
+        "임시 비밀번호로 로그인한 상태입니다. 새 비밀번호를 설정해야 대시보드를 사용할 수 있습니다.",
     },
     common: {
       delete: "삭제",

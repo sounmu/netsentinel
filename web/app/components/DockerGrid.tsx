@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Box } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
 import type { DockerContainer } from "@/app/types/metrics";
+import { EmptyState } from "@/app/components/ui";
 
 interface DockerGridProps {
   containers: DockerContainer[];
@@ -50,22 +51,15 @@ export default function DockerGrid({ containers }: DockerGridProps) {
 
   if (containers.length === 0) {
     return (
-      <div
-        style={{
-          textAlign: "center",
-          padding: "24px 0",
-          color: "var(--md-sys-color-on-surface-variant)",
-          fontSize: 13,
-        }}
-      >
-        <Box size={28} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
-        <div>{t.dockerGrid.noContainers}</div>
-      </div>
+      <EmptyState
+        icon={<Box size={24} aria-hidden="true" />}
+        title={t.dockerGrid.noContainers}
+      />
     );
   }
 
   return (
-    <div style={{ display: "grid", gap: 16 }}>
+    <div className="docker-grid">
       <div className="docker-grid__filters" role="tablist" aria-label={t.host.dockerContainers}>
         <button
           type="button"
