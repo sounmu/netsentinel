@@ -85,7 +85,45 @@ In the Cloudflare Zero Trust dashboard, route your public hostname to the intern
 
 Both the UI and API are on the same origin, so a single hostname is all you need.
 
-### 2.3 Scrape agents over the tunnel
+### 2.3 Set `TRUSTED_PROXY_COUNT=1` (required)
+
+Every request that arrives through the tunnel has the same source IP — the
+`cloudflared` container. With the default `TRUSTED_PROXY_COUNT=0` the server
+keys its per-IP rate limits off that single address, so all dashboards share
+one bucket and drain it together: the SPA renders blank and a reload returns
+`Too many requests` as the whole page.
+
+```env
+# .env
+TRUSTED_PROXY_COUNT=1
+```
+
+The server then keys limits off `CF-Connecting-IP` (Cloudflare overwrites any
+spoofed value at the edge), falling back to the rightmost `X-Forwarded-For`
+entry. Restart with `docker compose up -d server`; the startup log stops
+printing the `TRUSTED_PROXY_COUNT=0` warning once it takes effect.
+
+Only trust those headers when the tunnel is the **only** way in. If port
+`3000` is also reachable directly, bind it to the loopback interface
+(`SERVER_HOST=127.0.0.1`, or drop the published port from `docker-compose.yml`)
+— otherwise a client that reaches the origin directly can forge
+`CF-Connecting-IP` and sidestep the per-IP limits.
+
+### 2.4 Cloudflare Access in front of the dashboard
+
+Access works with NetSentinel as-is — its login runs before any request
+reaches the origin, and the app's own login page loads afterwards. Two things
+to keep in mind:
+
+- Add an Access **bypass** (or a service-token policy) for the agent scrape
+  hostnames. Access challenges every request, and agents cannot complete an
+  interactive login.
+- When an Access session expires mid-session, `/api/*` calls answer with an
+  Access redirect instead of JSON, and the dashboard's fetches fail until the
+  page is reloaded. Aligning the Access session lifetime with the dashboard's
+  own session avoids the surprise.
+
+### 2.5 Scrape agents over the tunnel
 
 Agents register their own public hostname (e.g. `agent1.example.com`) in Cloudflare and the server reaches them as `http://agent1.example.com/metrics`. The `host_key` in `/api/hosts` should then be `agent1.example.com:443` (port is required in the key format).
 

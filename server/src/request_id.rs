@@ -3,10 +3,11 @@
 //! **Request ID** — every inbound request gets a unique `request_id` field
 //! attached to its tracing span and echoed back via `X-Request-Id`.
 //!
-//! **API rate limit** — per-IP sliding window that caps the total request
-//! rate to any endpoint. Protects against runaway clients or accidental
+//! **API rate limit** — per-IP sliding window that caps the request rate to
+//! `/api/*` and `/metrics`. Protects against runaway clients or accidental
 //! infinite-loop polling. Configured via `API_RATE_LIMIT_MAX` (default 200)
-//! and `API_RATE_LIMIT_WINDOW_SECS` (default 60).
+//! and `API_RATE_LIMIT_WINDOW_SECS` (default 60). Static bundle files are
+//! not metered — a single page load fetches dozens of them.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -94,6 +95,16 @@ fn is_public_path(path: &str) -> bool {
     )
 }
 
+/// Paths the per-IP limiter applies to: the JSON API and the Prometheus
+/// export. Everything else is the pre-built web bundle served off disk by
+/// `ServeDir` — see the bypass note in [`api_rate_limit`].
+fn is_rate_limited_path(path: &str) -> bool {
+    path == "/api"
+        || path.starts_with("/api/")
+        || path == "/metrics"
+        || path.starts_with("/metrics/")
+}
+
 /// Per-IP API rate limiter middleware.
 ///
 /// Two independent sliding-window buckets per IP, selected by request path:
@@ -109,12 +120,27 @@ fn is_public_path(path: &str) -> bool {
 ///   the SQLite writer lock.
 ///
 /// Both return `429 Too Many Requests` + `Retry-After` on overflow.
+///
+/// Static bundle requests are **not** metered — see the bypass at the top
+/// of the body.
 pub async fn api_rate_limit(
     State(state): State<Arc<AppState>>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
+    // Static bundle requests (HTML, JS chunks, CSS, fonts) bypass the
+    // limiter entirely. One cold load of the `output: 'export'` bundle
+    // pulls dozens of files; behind a reverse proxy that collapses every
+    // visitor onto a single source IP (Cloudflare Tunnel with
+    // `TRUSTED_PROXY_COUNT=0`, or plain NAT) that drains the per-IP budget
+    // before the SPA has even rendered — the page comes up blank and a
+    // reload returns this limiter's plain-text "Too many requests" as the
+    // whole document. Reading a file off disk costs nothing worth
+    // metering, so only the API and the Prometheus export are counted.
+    if !is_rate_limited_path(request.uri().path()) {
+        return next.run(request).await;
+    }
     let ip = crate::handlers::auth_handler::extract_client_ip(
         request.headers(),
         &peer_addr,
@@ -155,6 +181,33 @@ mod tests {
         let id1 = generate_request_id();
         let id2 = generate_request_id();
         assert_ne!(id1, id2, "consecutive request IDs should differ");
+    }
+
+    #[test]
+    fn rate_limited_paths_cover_api_and_metrics() {
+        assert!(is_rate_limited_path("/api"));
+        assert!(is_rate_limited_path("/api/auth/login"));
+        assert!(is_rate_limited_path("/api/hosts"));
+        assert!(is_rate_limited_path("/metrics"));
+        assert!(is_rate_limited_path("/metrics/extra"));
+    }
+
+    #[test]
+    fn rate_limited_paths_exclude_static_bundle() {
+        for path in [
+            "/",
+            "/login/",
+            "/index.html",
+            "/_next/static/chunks/main.js",
+            "/favicon.ico",
+            "/apix",
+            "/metricsboard",
+        ] {
+            assert!(
+                !is_rate_limited_path(path),
+                "static asset {path} must not be metered"
+            );
+        }
     }
 
     #[test]
