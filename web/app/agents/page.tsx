@@ -97,7 +97,7 @@ export default function AgentsPage() {
     setEnrollmentLoading(true);
     setFormError(null);
     try {
-      const token = await createAgentEnrollment({ label: "Agent install", ttl_secs: 900 });
+      const token = await createAgentEnrollment({ label: "Host install", ttl_secs: 900 });
       setEnrollment(token);
       setCopied(false);
     } catch (e) {
@@ -192,7 +192,7 @@ export default function AgentsPage() {
   const normalizedServerUrl = serverUrl.trim().replace(/\/+$/, "");
   const installCommand = enrollment
     ? [
-      "curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-agent.sh \\",
+      "curl -fsSL https://raw.githubusercontent.com/sounmu/netsentinel/main/scripts/install-host.sh \\",
       "  | sudo bash -s -- \\",
       `      --server-url ${shellArg(normalizedServerUrl)} \\`,
       `      --enroll-token ${shellArg(enrollment.token)} \\`,

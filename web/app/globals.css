@@ -87,7 +87,7 @@
      time, which silently voids every `font:` shorthand built on the
      typescale below. The fallback keeps substitution succeeding even if
      the font wiring is renamed. */
-  --font-sans: var(--font-ibm-plex-sans, -apple-system), BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: var(--font-pretendard, -apple-system), BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-code: var(--font-mono, ui-monospace), "SF Mono", Menlo, Consolas, monospace;
 
   /* Chart series — desaturated to sit beside the signal

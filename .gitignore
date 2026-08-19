@@ -54,10 +54,13 @@ scripts/*
 !scripts/doctor.sh
 !scripts/install-hub.sh
 !scripts/install-agent.sh
+!scripts/install-host.sh
 !scripts/update-hub.sh
 !scripts/update-agent.sh
+!scripts/update-host.sh
 !scripts/remove-hub.sh
 !scripts/remove-agent.sh
+!scripts/remove-host.sh
 !scripts/publish-server-image.sh
 
 # netsentinel-web has its own scripts/ folder used by npm start
