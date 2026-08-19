@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] — 2026-08-19
+
+Patch release that improves the day-to-day dashboard experience and fixes a
+Cloudflare Tunnel failure mode. No database migration or agent ↔ server
+wire-format change is required.
+
+### Added
+
+- **Instrument Panel dashboard.** The overview receives the new operational
+  dashboard layout, alongside admin password recovery.
+- **Cloudflare Tunnel guidance.** Deployment documentation now covers trusted
+  proxy configuration and Cloudflare Access policies for agent scrape hosts.
+
+### Changed
+
+- **Host-first wording.** Dashboard labels and installer-facing language now
+  consistently call monitored machines “hosts”.
+- **Pretendard UI font.** The web interface uses Pretendard in place of IBM
+  Plex Sans KR.
+
+### Fixed
+
+- **Static files no longer exhaust API rate limits.** The per-IP limiter now
+  applies only to `/api/*` and `/metrics`; static HTML, JavaScript, CSS, and
+  font requests bypass it. This prevents a cold dashboard load behind a
+  proxy/NAT from consuming the shared API budget and rendering a blank page.
+- **Password-change middleware formatting.** The server-side password-change
+  flow includes its formatting correction from main.
+
 ## [0.5.0] — 2026-06-21
 
 Feature release centred on a redesigned agent onboarding flow. Existing
