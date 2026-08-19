@@ -236,7 +236,9 @@ fn allowed_while_password_change_required(path: &str) -> bool {
 /// database rather than trusting a claim baked into a JWT that was minted
 /// before the reset.
 pub async fn require_password_change(
-    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::models::app_state::AppState>>,
+    axum::extract::State(state): axum::extract::State<
+        std::sync::Arc<crate::models::app_state::AppState>,
+    >,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
