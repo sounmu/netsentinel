@@ -146,12 +146,26 @@ pub async fn api_rate_limit(
         &peer_addr,
         state.trusted_proxy_count,
     );
-    let limiter = if is_public_path(request.uri().path()) {
+    let public = is_public_path(request.uri().path());
+    let limiter = if public {
         &state.public_api_rate_limiter
     } else {
         &state.api_rate_limiter
     };
     if let Err(retry_after) = limiter.check(&ip) {
+        // Logged because a 429 is otherwise invisible from the operator's
+        // side: the response short-circuits before the request-ID span
+        // opens, so a rate-limited deployment looks identical to an edge
+        // (Cloudflare/WAF) throttle in a browser. `ip` is the key the
+        // limiter actually used — if it reads as one proxy address for
+        // every visitor, `TRUSTED_PROXY_COUNT` is unset or too low.
+        tracing::warn!(
+            ip = %ip,
+            path = %request.uri().path(),
+            bucket = if public { "public" } else { "authenticated" },
+            retry_after,
+            "⚠️ [RateLimit] 429 Too Many Requests"
+        );
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(
