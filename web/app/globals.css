@@ -835,6 +835,21 @@ body {
   margin-bottom: var(--md-sys-spacing-lg);
 }
 
+.chart-time-contract {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: -8px 0 var(--md-sys-spacing-lg);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+}
+
+.chart-time-contract span + span::before {
+  content: "·";
+  margin-right: 14px;
+  color: var(--md-sys-color-outline);
+}
+
 /* ── Container operations workspace ─── */
 .container-observation-note,
 .alerts-coverage-note {
@@ -1682,6 +1697,7 @@ body {
 /* ── Time range preset buttons ─── */
 .preset-btn {
   padding: 6px 14px;
+  min-height: 40px;
   border-radius: var(--md-sys-shape-corner-full);
   border: 1px solid var(--border-subtle);
   background: var(--bg-card);
@@ -1702,17 +1718,24 @@ body {
 }
 
 .preset-btn.active {
-  background: var(--accent-blue);
-  border-color: var(--accent-blue);
-  color: white;
+  background: var(--md-sys-color-primary);
+  border-color: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
   font-weight: 600;
+}
+
+@media (max-width: 599px) {
+  .preset-btn {
+    min-height: 48px;
+  }
 }
 
 /* Date input (M3 outlined text field) */
 .date-input {
   padding: 8px 12px;
+  min-height: 48px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--md-sys-color-outline);
   background: var(--bg-card);
   color: var(--text-primary);
   font-size: 13px;
@@ -1725,6 +1748,11 @@ body {
 
 .date-input:hover {
   border-color: var(--text-secondary);
+}
+
+.date-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 1;
 }
 
 .date-input:focus {

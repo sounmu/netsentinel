@@ -21,44 +21,21 @@ import {
 import { formatNetworkSpeed, formatNetworkSpeedTick } from "@/app/lib/formatters";
 import { mergeMetricsRows } from "@/app/lib/live-metrics";
 import { useHostLiveRows } from "@/app/lib/live-metrics-store";
-import DateTimePicker from "./DateTimePicker";
+import {
+  getPresetRangeAt,
+  isLivePreset,
+  resolveEffectiveRange,
+  type PresetKey,
+  type TimeRange,
+} from "@/app/lib/time-range";
+import { TimeRangeControls } from "./TimeRangeControls";
 import { useI18n } from "@/app/i18n/I18nContext";
-
-// ─── Types ───────────────────────────────────
-
-type PresetKey = "1m" | "5m" | "1h" | "6h" | "12h" | "24h" | "7d" | "30d" | "custom";
-
-interface TimeRange {
-  start: Date;
-  end: Date;
-  preset: PresetKey;
-}
-
-type PresetButtonKey = Exclude<PresetKey, "custom">;
-
-const PRESET_CONFIG: { key: PresetButtonKey; minutes: number }[] = [
-  { key: "1m", minutes: 1 },
-  { key: "5m", minutes: 5 },
-  { key: "1h", minutes: 60 },
-  { key: "6h", minutes: 60 * 6 },
-  { key: "12h", minutes: 60 * 12 },
-  { key: "24h", minutes: 60 * 24 },
-  { key: "7d", minutes: 60 * 24 * 7 },
-  { key: "30d", minutes: 60 * 24 * 30 },
-];
 
 const PALETTE = [
   "hsl(220, 70%, 55%)", "hsl(160, 60%, 45%)", "hsl(30, 80%, 55%)",
   "hsl(280, 65%, 60%)", "hsl(340, 75%, 55%)", "hsl(190, 70%, 45%)",
   "hsl(50, 80%, 50%)", "hsl(0, 70%, 55%)",
 ];
-
-// ─── Utilities ───────────────────────────────
-
-function getPresetRange(minutes: number): { start: Date; end: Date } {
-  const end = new Date();
-  return { start: new Date(end.getTime() - minutes * 60 * 1000), end };
-}
 
 // Recharts hands the tick formatter a numeric epoch ms (the value
 // from the X-axis `domain`). The previous shape converted that number
@@ -199,7 +176,7 @@ const ChartCard = memo(function ChartCard({
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={height}>
-          <AreaChart data={data} margin={{ top: 4, right: 6, bottom: 0, left: -8 }}>
+          <AreaChart data={data} margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
             <defs>
               {keys.map((k, idx) => {
                 const c = lineColors[idx % lineColors.length] ?? color;
@@ -227,20 +204,20 @@ const ChartCard = memo(function ChartCard({
               // window for a 1 min chart. The ticks landed in the
               // middle of the expanded domain instead of spanning it.
               allowDataOverflow={true}
-              // Disable the tick auto-drop heuristic (default
-              // `preserveEnd` drops labels on width fluctuations,
-              // producing a 5→3→5 flicker). `generateTimeTicks`
-              // produces ~6 ticks so physical overlap is a non-issue.
-              interval={0}
-              minTickGap={40}
+              // Preserve the selected range endpoints while letting Recharts
+              // reduce intermediate labels when localized timestamps would
+              // overlap on compact screens.
+              interval="preserveStartEnd"
+              minTickGap={24}
+              tickMargin={8}
               tickFormatter={(val) => formatAxisTime(val as number, rangeHours, locale)}
-              tick={{ fill: "var(--text-muted)", fontSize: 10 }}
+              tick={{ fill: "var(--md-sys-color-on-surface-variant)", fontSize: 10 }}
               tickLine={false}
               axisLine={{ stroke: "var(--border-subtle)" }}
             />
             <YAxis
               domain={domain}
-              tick={{ fill: "var(--text-muted)", fontSize: 10 }}
+              tick={{ fill: "var(--md-sys-color-on-surface-variant)", fontSize: 10 }}
               tickLine={false}
               axisLine={false}
               tickFormatter={yTickFormatter}
@@ -291,10 +268,9 @@ interface TimeSeriesChartProps {
 
 export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   const { t } = useI18n();
-  const [range, setRange] = useState<TimeRange>(() => {
-    const { start, end } = getPresetRange(60);
-    return { start, end, preset: "1h" };
-  });
+  const [range, setRange] = useState<TimeRange>(
+    () => getPresetRangeAt(60, "1h", Date.now()),
+  );
 
   const liveRows = useHostLiveRows(hostKey);
   const latestLiveTimestamp = liveRows.at(-1)?.timestamp ?? null;
@@ -315,25 +291,17 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   // Initial mount fallback uses `Date.now()` captured by the lazy
   // `useState` initializer; once an SSE event lands the anchor jumps
   // to that timestamp and stays in sync from there.
-  const isLivePreset = range.preset === "1m" || range.preset === "5m";
+  const livePresetSelected = isLivePreset(range.preset);
   const [initialAnchorTs] = useState<number>(() => Date.now());
-  const liveAnchorTs = useMemo(() => {
-    if (!isLivePreset) return null;
-    if (latestLiveTimestamp) {
-      return new Date(latestLiveTimestamp).getTime();
-    }
-    return initialAnchorTs;
-  }, [isLivePreset, latestLiveTimestamp, initialAnchorTs]);
 
-  const effectiveRange = useMemo<TimeRange>(() => {
-    if (!isLivePreset || liveAnchorTs == null) return range;
-    const windowMs = range.preset === "1m" ? 60_000 : 300_000;
-    return {
-      start: new Date(liveAnchorTs - windowMs),
-      end: new Date(liveAnchorTs),
-      preset: range.preset,
-    };
-  }, [range, isLivePreset, liveAnchorTs]);
+  const effectiveRange = useMemo(
+    () => resolveEffectiveRange(
+      range,
+      latestLiveTimestamp,
+      initialAnchorTs,
+    ),
+    [range, latestLiveTimestamp, initialAnchorTs],
+  );
 
   const swrKey = useMemo(
     () =>
@@ -353,9 +321,9 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         // SSE samples are held in a tiny per-chart ring buffer, so the
         // REST baseline can lag briefly without dropping an in-between
         // point from the visible series.
-        isLivePreset ? 30 : 60,
+        livePresetSelected ? 30 : 60,
       ),
-    [hostKey, effectiveRange, isLivePreset]
+    [hostKey, effectiveRange, livePresetSelected]
   );
 
   const { data: rows = [], isValidating } = useSWR<ChartMetricsRow[]>(swrKey, fetcher, {
@@ -424,21 +392,21 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   // `displayedRange` re-syncs to the rolling `effectiveRange` on every
   // settled render.
   const timeTicks = useMemo(
-    () => generateTimeTicks(displayedRange.start, displayedRange.end, 5),
-    [displayedRange]
+    () => generateTimeTicks(
+      displayedRange.start,
+      displayedRange.end,
+      5,
+    ),
+    [displayedRange],
   );
 
+  const rangeIsSettling =
+    displayedRange.preset !== effectiveRange.preset
+    || displayedRange.start.getTime() !== effectiveRange.start.getTime()
+    || displayedRange.end.getTime() !== effectiveRange.end.getTime();
+
   const onPresetClick = useCallback((minutes: number, key: PresetKey) => {
-    const { start, end } = getPresetRange(minutes);
-    setRange({ start, end, preset: key });
-  }, []);
-
-  const onCustomStartChange = useCallback((date: Date) => {
-    setRange((prev) => ({ ...prev, start: date, preset: "custom" }));
-  }, []);
-
-  const onCustomEndChange = useCallback((date: Date) => {
-    setRange((prev) => ({ ...prev, end: date, preset: "custom" }));
+    setRange(getPresetRangeAt(minutes, key, Date.now()));
   }, []);
 
   // ─── Data extraction (single pass) ──────────────
@@ -569,22 +537,16 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
   return (
     <div>
-      {/* Time range controls */}
-      <div className="time-controls">
-        {PRESET_CONFIG.map(({ key, minutes }) => (
-          <button
-            key={key}
-            className={`preset-btn ${range.preset === key ? "active" : ""}`}
-            onClick={() => onPresetClick(minutes, key)}
-          >
-            {t.chart.presets[key]}
-          </button>
-        ))}
-        <div style={{ width: 1, height: 24, background: "var(--border-subtle)", margin: "0 4px" }} />
-        <DateTimePicker value={range.start} onChange={onCustomStartChange} />
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>~</span>
-        <DateTimePicker value={range.end} onChange={onCustomEndChange} />
-      </div>
+      <TimeRangeControls
+        displayedRange={displayedRange}
+        rangeIsSettling={rangeIsSettling}
+        presetLabels={t.chart.presets}
+        browserTimeTemplate={t.chart.browserTime}
+        utcStorageLabel={t.chart.utcStorage}
+        rangeUpdatingLabel={t.chart.rangeUpdating}
+        onPresetClick={onPresetClick}
+        onRangeChange={setRange}
+      />
 
       {/* Chart grid */}
       <div className="chart-grid">

@@ -410,6 +410,9 @@ export const translations = {
       load1m: "1m",
       load5m: "5m",
       load15m: "15m",
+      browserTime: "Browser time ({offset})",
+      utcStorage: "Stored and queried as UTC",
+      rangeUpdating: "Updating the visible range…",
     },
     // LoadGauge
     loadGauge: {
@@ -930,6 +933,9 @@ export const translations = {
       load1m: "1분",
       load5m: "5분",
       load15m: "15분",
+      browserTime: "브라우저 시간 ({offset})",
+      utcStorage: "저장·조회 기준은 UTC",
+      rangeUpdating: "표시 범위 갱신 중…",
     },
     // LoadGauge
     loadGauge: {
