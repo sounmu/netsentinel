@@ -182,17 +182,25 @@ function deriveOverviewRows(metricsMap, statusMap) {
   return list;
 }
 
-function getContainerHealth(container) {
-  if (container.state !== "running" || container.health_status === "unhealthy" || container.oom_killed) {
+function assessContainer(container) {
+  const state = container.state.toLowerCase();
+  if (
+    container.oom_killed
+    || container.health_status === "unhealthy"
+    || state === "restarting"
+    || state === "dead"
+    || (state === "exited" && container.exit_code != null && container.exit_code !== 0)
+  ) {
     return "attention";
   }
-  return container.state === "running" ? "running" : "stopped";
+  if (state === "running") return "running";
+  if (state === "exited" && container.exit_code === 0) return "completed";
+  return "inactive";
 }
 
 function deriveContainerRows(metricsMap, statusMap) {
   const collected = [];
-  let runningCount = 0;
-  let attentionCount = 0;
+  const counts = { running: 0, attention: 0, inactive: 0, completed: 0 };
 
   for (const status of Object.values(statusMap)) {
     const metrics = metricsMap[status.host_key];
@@ -200,7 +208,7 @@ function deriveContainerRows(metricsMap, statusMap) {
     const isOnline = metrics?.is_online ?? status.is_online ?? false;
     const hostStatus = getHostStatus(lastSeen, isOnline, status.scrape_interval_secs);
     const statsByName = new Map();
-    for (const stat of status.docker_stats ?? []) {
+    for (const stat of metrics?.docker_stats ?? status.docker_stats ?? []) {
       statsByName.set(stat.container_name, stat);
     }
 
@@ -209,9 +217,8 @@ function deriveContainerRows(metricsMap, statusMap) {
       const memoryPercent = stat && stat.memory_limit_mb > 0
         ? (stat.memory_usage_mb / stat.memory_limit_mb) * 100
         : null;
-      const health = getContainerHealth(container);
-      if (health === "running") runningCount += 1;
-      if (health === "attention") attentionCount += 1;
+      const category = assessContainer(container);
+      counts[category] += 1;
       collected.push({
         key: `${status.host_key}::${container.container_name}`,
         hostKey: status.host_key,
@@ -220,16 +227,16 @@ function deriveContainerRows(metricsMap, statusMap) {
         container,
         stat,
         memoryPercent,
-        health,
+        category,
       });
     }
   }
 
   collected.sort((a, b) => {
-    const healthOrder = { attention: 0, running: 1, stopped: 2 };
+    const categoryOrder = { attention: 0, running: 1, inactive: 2, completed: 3 };
     const statusOrder = { online: 0, pending: 1, offline: 2 };
-    const healthDiff = healthOrder[a.health] - healthOrder[b.health];
-    if (healthDiff !== 0) return healthDiff;
+    const categoryDiff = categoryOrder[a.category] - categoryOrder[b.category];
+    if (categoryDiff !== 0) return categoryDiff;
     const statusDiff = statusOrder[a.hostStatus] - statusOrder[b.hostStatus];
     if (statusDiff !== 0) return statusDiff;
     return a.container.container_name.localeCompare(b.container.container_name);
@@ -238,8 +245,7 @@ function deriveContainerRows(metricsMap, statusMap) {
   return {
     rows: collected,
     total: collected.length,
-    running: runningCount,
-    attention: attentionCount,
+    ...counts,
     hostCount: new Set(collected.map((row) => row.hostKey)).size,
   };
 }
