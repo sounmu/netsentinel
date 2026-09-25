@@ -155,19 +155,22 @@ export default function Navbar() {
         className="navbar-mobile-toggle"
         onClick={() => setMobileOpen((v) => !v)}
         aria-label={mobileOpen ? t.sidebar.closeSidebar : t.sidebar.openSidebar}
+        aria-expanded={mobileOpen}
+        aria-controls="mobile-navigation"
       >
         {mobileOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
 
       {/* Mobile dropdown menu */}
       {mobileOpen && (
-        <div className="navbar-mobile-menu">
+        <div id="mobile-navigation" className="navbar-mobile-menu">
           {navItems.map((item) => {
             const active = item.exact ? pathname === item.href : pathname.startsWith(item.href);
             return (
               <button
                 key={item.href}
                 className={`navbar-link ${active ? "active" : ""}`}
+                aria-current={active ? "page" : undefined}
                 onClick={() => {
                   router.push(item.href);
                   setMobileOpen(false);
@@ -202,7 +205,7 @@ export default function Navbar() {
                 </button>
               )}
               {user && (
-                <button className="navbar-icon-btn" onClick={logout} aria-label="Logout">
+                <button className="navbar-icon-btn" onClick={logout} aria-label={t.auth.logout}>
                   <LogOut size={14} />
                 </button>
               )}

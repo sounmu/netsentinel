@@ -188,7 +188,9 @@ export default function HostPageClient() {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
+              type="button"
               onClick={() => router.push("/")}
+              className="host-back-button"
               style={{
                 background: "none",
                 border: "none",
@@ -196,11 +198,10 @@ export default function HostPageClient() {
                 color: "var(--text-muted)",
                 display: "flex",
                 alignItems: "center",
-                padding: 0,
               }}
               aria-label={t.host.backToOverview}
             >
-              <ArrowLeft size={18} />
+              <ArrowLeft size={18} aria-hidden="true" />
             </button>
             <h1
               style={{
