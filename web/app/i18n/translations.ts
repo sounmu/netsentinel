@@ -271,14 +271,27 @@ export const translations = {
         channels: "Channels",
       },
       summary: {
-        rules: "Rules",
+        rules: "Core rules",
         hosts: "Hosts",
         active: "Firing",
         channels: "Channels",
+        rulesBuiltIn: "Built-in defaults; host overrides are separate",
+        rulesSaved: "Saved global defaults; host overrides are separate",
+        rulesMixed: "Saved and built-in defaults; host overrides are separate",
+      },
+      coverage: {
+        title: "Observed issues and alert events are separate signals",
+        dockerEnabled:
+          "Docker alerts are enabled in the global defaults. Alerts still represent emitted events, not every observed container state.",
+        dockerDisabled:
+          "Docker alerts are disabled in the global defaults, so observed container issues do not create firing alerts unless a host override enables them.",
+        hostOverrides: "Host-specific overrides may differ; review the Rules matrix for effective coverage.",
+        reviewContainers: "Review observed containers",
       },
       active: {
         allClear: "All clear",
-        allClearDescription: "No alerts are currently firing.",
+        allClearDescription:
+          "No alert events are currently firing. Observed issues may still appear in Containers.",
         firingSince: "Firing since",
         viewHost: "View host",
         ack: "Acknowledge",
@@ -286,6 +299,9 @@ export const translations = {
         silence1d: "Silence 1d",
       },
       rules: {
+        builtInDefaultsTitle: "Built-in defaults are active",
+        builtInDefaultsDescription:
+          "CPU, memory, and disk alerts use built-in defaults. Review these values and Save to persist explicit global rules.",
         bulkApply: "Apply to selected hosts",
         selectedHosts: "{count} selected",
         applyGlobal: "Apply global defaults",
@@ -799,14 +815,27 @@ export const translations = {
         channels: "채널",
       },
       summary: {
-        rules: "규칙",
+        rules: "핵심 규칙",
         hosts: "호스트",
         active: "발생 중",
         channels: "채널",
+        rulesBuiltIn: "내장 기본값 기준 · 호스트 오버라이드는 별도",
+        rulesSaved: "저장된 글로벌 기본값 기준 · 호스트 오버라이드는 별도",
+        rulesMixed: "저장값·내장 기본값 혼합 · 호스트 오버라이드는 별도",
+      },
+      coverage: {
+        title: "관측 문제와 알람 이벤트는 서로 다른 신호입니다",
+        dockerEnabled:
+          "글로벌 기본값에서 Docker 알람이 활성화되어 있습니다. 발생 중 수치는 모든 관측 상태가 아니라 실제 생성된 알람 이벤트를 셉니다.",
+        dockerDisabled:
+          "글로벌 기본값에서 Docker 알람이 비활성화되어 있습니다. 호스트 오버라이드가 켜져 있지 않으면 관측된 컨테이너 문제도 알람으로 발생하지 않습니다.",
+        hostOverrides: "호스트별 오버라이드는 다를 수 있으므로 규칙 매트릭스에서 실제 적용 범위를 확인하세요.",
+        reviewContainers: "관측 컨테이너 확인",
       },
       active: {
         allClear: "모두 정상",
-        allClearDescription: "현재 발생 중인 알람이 없습니다.",
+        allClearDescription:
+          "현재 발생 중인 알람 이벤트가 없습니다. 관측된 문제는 컨테이너 화면에 별도로 표시될 수 있습니다.",
         firingSince: "발생 시각",
         viewHost: "호스트 보기",
         ack: "확인",
@@ -814,6 +843,9 @@ export const translations = {
         silence1d: "1일 뮤트",
       },
       rules: {
+        builtInDefaultsTitle: "내장 기본 규칙이 적용 중입니다",
+        builtInDefaultsDescription:
+          "CPU, 메모리, 디스크 알람은 내장 기본값을 사용합니다. 값을 검토한 뒤 저장하면 명시적인 글로벌 규칙으로 유지됩니다.",
         bulkApply: "선택한 호스트에 적용",
         selectedHosts: "{count}개 선택됨",
         applyGlobal: "글로벌 기본값 적용",

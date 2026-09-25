@@ -1997,6 +1997,22 @@ body {
   background: transparent;
 }
 
+.alerts-defaults-note {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  font: var(--md-sys-typescale-body-small);
+}
+
+.alerts-defaults-note span {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
 /* ── Summary bar (4 stats) ── glass-cards in a 4-up grid ── */
 .alerts-summary {
   display: grid;
@@ -2023,7 +2039,7 @@ body {
 .alerts-summary__label {
   font-size: 12px;
   font-weight: 700;
-  color: var(--text-muted);
+  color: var(--md-sys-color-on-surface-variant);
 }
 .alerts-summary__value {
   font-size: 30px;
@@ -2033,7 +2049,16 @@ body {
   line-height: 1.1;
 }
 .alerts-summary__value--critical { color: var(--accent-red); }
-.alerts-summary__value--ok { color: var(--accent-green); }
+.alerts-summary__value--ok { color: var(--md-custom-color-success); }
+.alerts-summary__hint {
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+  line-height: 1.35;
+}
+
+.alerts-coverage-note {
+  margin-bottom: 18px;
+}
 
 @media (max-width: 839px) {
   .alerts-summary { grid-template-columns: repeat(2, 1fr); }
@@ -2067,6 +2092,7 @@ body {
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+  min-height: 40px;
   transition: background var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard),
               border-color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard),
               color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
@@ -2079,7 +2105,7 @@ body {
 .alerts-tab[aria-selected="true"] {
   background: var(--bg-card);
   border-color: var(--border-subtle);
-  color: var(--accent-blue);
+  color: var(--md-sys-color-primary);
   box-shadow: 0 4px 14px var(--shadow-sm);
 }
 .alerts-tab__count {
@@ -2097,8 +2123,14 @@ body {
   letter-spacing: 0.3px;
 }
 .alerts-tab[aria-selected="true"] .alerts-tab__count {
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
-  color: var(--accent-blue);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+@media (max-width: 599px) {
+  .alerts-tab {
+    min-height: 48px;
+  }
 }
 .alerts-tab__count--critical {
   background: color-mix(in srgb, var(--accent-red) 18%, transparent) !important;
@@ -2587,7 +2619,7 @@ body {
 }
 .alerts-empty__description {
   font-size: 13px;
-  color: var(--text-muted);
+  color: var(--md-sys-color-on-surface-variant);
 }
 
 /* ── Rules matrix ── desktop table ── */

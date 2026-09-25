@@ -5,6 +5,7 @@ import type { AlertConfigRow } from "@/app/lib/api";
 import { fetcher, getHostAlertConfigsUrl } from "@/app/lib/api";
 import type { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { resolveGlobalRule } from "./rule-summary";
 import type { MetricPrefix } from "./shared";
 
 interface Props {
@@ -96,9 +97,8 @@ function resolveConfig(
   if (hostOverride) {
     return { threshold: hostOverride.threshold, enabled: hostOverride.enabled, overridden: true };
   }
-  const g = globalConfigs.find((c) => c.metric_type === metric && !c.sub_key);
-  if (g) return { threshold: g.threshold, enabled: g.enabled, overridden: false };
-  return null;
+  const global = resolveGlobalRule(globalConfigs, metric);
+  return { threshold: global.threshold, enabled: global.enabled, overridden: false };
 }
 
 function MatrixRow({

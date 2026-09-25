@@ -1,9 +1,10 @@
 "use client";
 
 import { useI18n } from "@/app/i18n/I18nContext";
+import type { GlobalRuleSummary } from "./rule-summary";
 
 interface Props {
-  rulesCount: number | null;
+  rulesSummary: GlobalRuleSummary | null;
   hostsCount: number | null;
   activeCount: number | null;
   channelsCount: number | null;
@@ -14,7 +15,7 @@ function formatCount(value: number | null) {
   return value.toLocaleString();
 }
 
-export function AlertsSummaryBar({ rulesCount, hostsCount, activeCount, channelsCount }: Props) {
+export function AlertsSummaryBar({ rulesSummary, hostsCount, activeCount, channelsCount }: Props) {
   const { t } = useI18n();
   const activeCritical = typeof activeCount === "number" && activeCount > 0;
 
@@ -32,7 +33,20 @@ export function AlertsSummaryBar({ rulesCount, hostsCount, activeCount, channels
       </div>
       <div className="alerts-summary__item">
         <span className="alerts-summary__label">{t.alerts.summary.rules}</span>
-        <span className="alerts-summary__value">{formatCount(rulesCount)}</span>
+        <span className="alerts-summary__value">
+          {rulesSummary
+            ? `${rulesSummary.enabledCount} / ${rulesSummary.totalCount}`
+            : "—"}
+        </span>
+        {rulesSummary && (
+          <span className="alerts-summary__hint">
+            {rulesSummary.provenance === "builtIn"
+              ? t.alerts.summary.rulesBuiltIn
+              : rulesSummary.provenance === "saved"
+                ? t.alerts.summary.rulesSaved
+                : t.alerts.summary.rulesMixed}
+          </span>
+        )}
       </div>
       <div className="alerts-summary__item">
         <span className="alerts-summary__label">{t.alerts.summary.hosts}</span>

@@ -118,6 +118,13 @@ export function RulesPanel() {
           </div>
         )}
 
+        {globalConfigs !== undefined && globalConfigs.length === 0 && (
+          <div className="alerts-defaults-note" role="note">
+            <strong>{t.alerts.rules.builtInDefaultsTitle}</strong>
+            <span>{t.alerts.rules.builtInDefaultsDescription}</span>
+          </div>
+        )}
+
         {globalForm ? (
           <div className="alerts-rule-stack">
             <MetricRuleCard label={t.alerts.cpuAlert} prefix="cpu" form={globalForm} setForm={setGlobalForm} />
@@ -223,8 +230,8 @@ function HostAlertOverride({
       await mutate();
       setMsg(t.alerts.revertedToGlobal);
       setTimeout(() => setMsg(null), 3000);
-    } catch {
-      /* noop */
+    } catch (error) {
+      setMsg(apiErrorMessage(error, t));
     }
   };
 
