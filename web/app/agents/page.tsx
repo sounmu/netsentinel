@@ -231,8 +231,13 @@ export default function AgentsPage() {
             <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
               {editingKey === "new" ? t.agents.addAgentTitle : t.agents.editAgentTitle}
             </h2>
-            <button onClick={closeForm} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, border: "1px solid var(--border-subtle)", background: "transparent", cursor: "pointer", color: "var(--text-muted)" }}>
-              <X size={16} />
+            <button
+              type="button"
+              aria-label={t.agents.cancel}
+              onClick={closeForm}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 48, height: 48, borderRadius: 8, border: "1px solid var(--border-subtle)", background: "transparent", cursor: "pointer", color: "var(--text-muted)" }}
+            >
+              <X size={16} aria-hidden="true" />
             </button>
           </div>
 
@@ -261,19 +266,25 @@ export default function AgentsPage() {
                     value={agentPort}
                     onChange={(e) => setAgentPort(parseInt(e.target.value, 10) || 9101)} />
                 </FormField>
-                <FormField label={t.agents.network} id="agent-network">
-                  <div id="agent-network" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                <FormField label={t.agents.network} id="agent-network" group>
+                  <div
+                    id="agent-network"
+                    role="group"
+                    aria-labelledby="agent-network-label"
+                    style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}
+                  >
                     {(["lan", "tailscale"] as InstallNetwork[]).map((mode) => (
                       <button
                         key={mode}
                         type="button"
+                        aria-pressed={installNetwork === mode}
                         onClick={() => setInstallNetwork(mode)}
                         style={{
-                          height: 36,
+                          height: 48,
                           borderRadius: 8,
                           border: `1px solid ${installNetwork === mode ? "var(--accent-blue)" : "var(--border-subtle)"}`,
                           background: installNetwork === mode ? "var(--status-online-bg)" : "var(--bg-tertiary)",
-                          color: installNetwork === mode ? "var(--accent-blue)" : "var(--text-secondary)",
+                          color: installNetwork === mode ? "var(--text-primary)" : "var(--text-secondary)",
                           fontSize: 12,
                           fontWeight: 700,
                           cursor: "pointer",
@@ -288,7 +299,7 @@ export default function AgentsPage() {
 
               <pre style={{ margin: 0, minHeight: 108, overflowX: "auto", whiteSpace: "pre", padding: 14, borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--bg-primary)", color: "var(--text-primary)", fontSize: 12, lineHeight: 1.6, fontFamily: "var(--font-mono), monospace" }}>{enrollmentLoading ? t.agents.creatingToken : installCommand}</pre>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginTop: 12 }}>
-                <div style={{ color: "var(--text-muted)", fontSize: 12 }}>
+                <div style={{ color: "var(--text-secondary)", fontSize: 12 }}>
                   {enrollment ? t.agents.tokenExpires.replace("{time}", new Date(enrollment.expires_at).toLocaleTimeString()) : t.agents.tokenUnavailable}
                 </div>
                 <button type="button" onClick={copyInstallCommand} disabled={!installCommand || enrollmentLoading} className="md-btn-filled">
@@ -344,11 +355,11 @@ export default function AgentsPage() {
           )}
 
           <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
-            <button onClick={closeForm} style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+            <button type="button" onClick={closeForm} style={{ minHeight: 48, padding: "8px 20px", borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
               {t.agents.cancel}
             </button>
-            <button onClick={handleSave} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 20px", borderRadius: 8, border: "1px solid var(--accent-blue)", background: saving ? "var(--preset-hover-border)" : "var(--accent-blue)", color: "var(--text-on-accent, #fff)", fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}>
-              <Save size={14} /> {saving ? t.agents.saving : t.agents.save}
+            <button type="button" onClick={handleSave} disabled={saving} style={{ minHeight: 48, display: "flex", alignItems: "center", gap: 6, padding: "8px 20px", borderRadius: 8, border: "1px solid var(--md-sys-color-primary)", background: saving ? "var(--preset-hover-border)" : "var(--md-sys-color-primary)", color: "var(--md-sys-color-on-primary)", fontSize: 13, fontWeight: 600, cursor: saving ? "not-allowed" : "pointer" }}>
+              <Save size={14} aria-hidden="true" /> {saving ? t.agents.saving : t.agents.save}
             </button>
           </div>
         </div>
@@ -358,7 +369,7 @@ export default function AgentsPage() {
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
           <h2 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>{t.agents.registeredAgents}</h2>
-          <span style={{ fontSize: 11, color: "var(--text-muted)", background: "var(--bg-card-hover)", padding: "2px 8px", borderRadius: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", background: "var(--bg-card-hover)", padding: "2px 8px", borderRadius: 6 }}>
             {hosts?.length ?? 0} {t.agents.agentCount}
           </span>
         </div>
@@ -393,7 +404,7 @@ export default function AgentsPage() {
                 <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>
                   {host.display_name}
                 </div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono), monospace" }}>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "var(--font-mono), monospace" }}>
                   {host.host_key}
                 </div>
               </div>
@@ -405,8 +416,8 @@ export default function AgentsPage() {
                 <IconButton icon={<Pencil size={14} />} onClick={() => openEdit(host.host_key)} title="Edit" />
                 {deleteConfirm === host.host_key ? (
                   <div style={{ display: "flex", gap: 4 }}>
-                    <button onClick={() => handleDelete(host.host_key)} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--accent-red)", background: "var(--accent-red)", color: "var(--text-on-accent, #fff)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>{t.agents.deleteConfirmText}</button>
-                    <button onClick={() => setDeleteConfirm(null)} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border-subtle)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>{t.agents.cancel}</button>
+                    <button type="button" onClick={() => handleDelete(host.host_key)} style={{ minHeight: 48, padding: "8px 16px", borderRadius: 6, border: "1px solid var(--md-sys-color-error)", background: "var(--md-sys-color-error)", color: "var(--md-sys-color-on-error)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{t.agents.deleteConfirmText}</button>
+                    <button type="button" onClick={() => setDeleteConfirm(null)} style={{ minHeight: 48, padding: "8px 16px", borderRadius: 6, border: "1px solid var(--md-sys-color-outline)", background: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: 12, cursor: "pointer" }}>{t.agents.cancel}</button>
                   </div>
                 ) : (
                   <IconButton icon={<Trash2 size={14} />} onClick={() => setDeleteConfirm(host.host_key)} title="Delete" danger />
@@ -420,12 +431,14 @@ export default function AgentsPage() {
   );
 }
 
-function FormField({ label, required, id, children }: { label: string; required?: boolean; id?: string; children: React.ReactNode }) {
+function FormField({ label, required, id, group = false, children }: { label: string; required?: boolean; id?: string; group?: boolean; children: React.ReactNode }) {
+  const labelContent = <>{label}{required && <span style={{ color: "var(--accent-red)", marginLeft: 2 }}>*</span>}</>;
+  const labelStyle = { display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 };
   return (
     <div>
-      <label htmlFor={id} style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>
-        {label}{required && <span style={{ color: "var(--accent-red)", marginLeft: 2 }}>*</span>}
-      </label>
+      {group
+        ? <span id={id ? `${id}-label` : undefined} style={labelStyle}>{labelContent}</span>
+        : <label id={id ? `${id}-label` : undefined} htmlFor={id} style={labelStyle}>{labelContent}</label>}
       {children}
     </div>
   );
@@ -435,7 +448,7 @@ function IconButton({ icon, onClick, title, danger }: { icon: React.ReactNode; o
   // `title` alone isn't a reliable accessible name (JAWS/NVDA behavior varies);
   // forward it as `aria-label` too per WAI-ARIA APG icon-button pattern.
   return (
-    <button onClick={onClick} title={title} aria-label={title} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, border: "1px solid", borderColor: danger ? "var(--badge-offline-border)" : "var(--border-subtle)", background: danger ? "var(--status-offline-bg)" : "var(--bg-secondary)", color: danger ? "var(--accent-red)" : "var(--text-muted)", cursor: "pointer", transition: "all 0.15s ease" }}>
+    <button type="button" onClick={onClick} title={title} aria-label={title} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 48, height: 48, borderRadius: 8, border: "1px solid", borderColor: danger ? "var(--badge-offline-border)" : "var(--border-subtle)", background: danger ? "var(--status-offline-bg)" : "var(--bg-secondary)", color: danger ? "var(--accent-red)" : "var(--text-muted)", cursor: "pointer", transition: "all 0.15s ease" }}>
       {icon}
     </button>
   );
