@@ -498,6 +498,29 @@ Based on M3 canonical breakpoints, consolidated for dashboard use:
 | Expanded | 840–1199px | Multi-column grid | 3 |
 | Large | ≥ 1200px | Full grid, wider charts | 4 |
 
+On Compact screens, `PageHeader` keeps the icon, title, and badge together
+without breaking Korean words. Actions and summary statistics wrap onto their
+own full-width row below the title.
+
+Compact navigation moves theme, locale, account-link, and logout actions into
+the hamburger menu. Interactive icon, menu, and segmented-choice controls use
+at least a 48×48px target.
+
+### 7.4 Operational-state semantics
+
+- Docker's observed lifecycle state (`running`, `created`, `exited`, and so on)
+  is always shown as reported. Operational classification is separate:
+  actionable failure, running, inactive/intent unknown, or completed.
+- `exited` with exit code 0 is completed, not an incident. `created`, paused,
+  and unclassified stopped states remain visible as intent unknown because the
+  current wire model has no desired-state or age evidence.
+- "Needs attention" is an observed-state count. "Firing" is an emitted alert
+  event count and depends on effective alert rules; the UI must explain this
+  boundary wherever both concepts appear.
+- Chart presets, date inputs, and the X-axis consume the same settled range.
+  Inputs render in browser-local time with an explicit UTC offset; storage and
+  API query timestamps remain UTC.
+
 ---
 
 ## 8. Component Patterns

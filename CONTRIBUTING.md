@@ -129,6 +129,8 @@ The dev server still runs Next.js normally (HMR, fast refresh, dynamic routes). 
 
 Host detail URLs are now part of the static-export contract: use `/host/?key=<host_key>` (trailing slash intentional — `trailingSlash: true` is set for production export) rather than `/host/<host_key>`. The latter may still be served by a generic fallback in local tooling, but it is not the canonical frontend route anymore. The global container inventory lives at `/containers` and is fed entirely from the live SSE snapshots, while per-host historical Docker charts stay on `/host/?key=...`.
 
+Container UI changes must preserve the distinction between Docker's observed lifecycle state and NetSentinel's operational classification. Created/paused/ambiguous stopped objects remain visible as intent unknown, exit-0 jobs are completed, and only evidence-backed failures count as attention. Tests should cover classification, summary counts, search/state filters, default priority ordering, and Compose grouping. Chart controls and axes similarly share one settled range; test future-dated live samples without sleeps.
+
 Useful commands:
 
 ```bash

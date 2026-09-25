@@ -152,7 +152,7 @@ Not trying to replace:
 - **Efficient agent protocol.** Agents serve gzipped `bincode` over HTTP, which keeps scrape payloads small over tunneled links.
 - **SQLite rollups instead of TimescaleDB.** Raw 10-second metrics are retained briefly, 5-minute rollups are kept longer, and long-range charts query the smaller rollup table.
 - **Real-time dashboard.** SSE pushes status and live metrics; the client batches updates to avoid render storms.
-- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, polls resource stats separately, and the dashboard surfaces both a per-host Docker drill-down and an all-containers inventory page.
+- **Docker-aware without heavy polling.** The agent uses Docker events for lifecycle state, captures OOM/exit/restart/health and Compose labels on inspect, polls resource stats separately, and the dashboard surfaces both a per-host Docker drill-down and an all-containers inventory page. The inventory keeps raw Docker state separate from operational classification: unhealthy/OOM/non-zero exits are actionable, exit-0 jobs are completed, and created/paused objects remain visible as intent unknown. Search, raw-state and operational filters, plus Compose stack/service grouping support investigation without hiding residual objects.
 - **Native agents first, Docker agents later.** Native installation gives the most accurate host view. Dockerized agents can be supported as a convenience mode for Linux homelabs.
 
 ---
@@ -276,7 +276,7 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | `METRICS_TOKEN` | No | — | Bearer token for `/metrics` (Prometheus). When set, every scrape must send `Authorization: Bearer <token>`. |
 | `ALLOW_UNAUTHENTICATED_METRICS` | No | `false` | Explicit opt-in to leave `/metrics` open when `METRICS_TOKEN` is unset. |
 
-> **Time & timezones.** NetSentinel stores and transmits every timestamp in **UTC** (epoch integers in SQLite, RFC 3339 `…Z` on the API) — it never assumes KST or the server's local timezone. The dashboard renders times in **your browser's timezone** automatically. Calendar/report grouping (the uptime daily breakdown) uses the configurable `WORKSPACE_TIMEZONE` (default `UTC`).
+> **Time & timezones.** NetSentinel stores and transmits every timestamp in **UTC** (epoch integers in SQLite, RFC 3339 `…Z` on the API) — it never assumes KST or the server's local timezone. The dashboard renders times in **your browser's timezone** automatically and keeps chart presets, date inputs, and axes on one settled range with the browser UTC offset shown beside the controls. Calendar/report grouping (the uptime daily breakdown) uses the configurable `WORKSPACE_TIMEZONE` (default `UTC`).
 
 ### Agent `agent/.env`
 
