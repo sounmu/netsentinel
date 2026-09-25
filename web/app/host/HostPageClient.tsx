@@ -26,7 +26,6 @@ import {
   Activity,
   ArrowLeft,
   Wifi,
-  Network,
   Monitor,
   Clock,
   Globe,
@@ -75,7 +74,7 @@ function SectionCard({
   style,
 }: {
   title: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   children: React.ReactNode;
   style?: React.CSSProperties;
 }) {
@@ -91,7 +90,9 @@ function SectionCard({
           borderBottom: "1px solid var(--border-subtle)",
         }}
       >
-        <span style={{ color: "var(--text-muted)", display: "flex" }}>{icon}</span>
+        {icon && (
+          <span style={{ color: "var(--text-muted)", display: "flex" }}>{icon}</span>
+        )}
         <h2 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>
           {title}
         </h2>
@@ -354,13 +355,12 @@ export default function HostPageClient() {
           {/* Daily uptime breakdown — day boundaries are in the workspace
               timezone reported by the API, labelled accordingly. */}
           <div className="host-detail-half-grid">
-            <SectionCard title={t.host.uptimeHistory} icon={<Activity size={15} />}>
+            <SectionCard title={t.host.uptimeHistory}>
               <UptimeHistory hostKey={decodedHostKey} />
             </SectionCard>
             {ports.length > 0 && (
               <SectionCard
                 title={`${t.host.portStatus} (${ports.length})`}
-                icon={<Network size={15} />}
               >
                 <PortList ports={ports} />
               </SectionCard>
