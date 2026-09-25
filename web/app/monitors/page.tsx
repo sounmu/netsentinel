@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, type KeyboardEvent } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { Globe, Wifi, Plus, Trash2, CheckCircle, XCircle } from "lucide-react";
@@ -27,6 +27,37 @@ type Tab = "http" | "ping";
 export default function MonitorsPage() {
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<Tab>("http");
+  const tabRefs = useRef<Record<Tab, HTMLButtonElement | null>>({
+    http: null,
+    ping: null,
+  });
+
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab);
+    tabRefs.current[tab]?.focus();
+  };
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    let nextTab: Tab | undefined;
+
+    switch (event.key) {
+      case "ArrowRight":
+      case "ArrowLeft":
+        nextTab = activeTab === "http" ? "ping" : "http";
+        break;
+      case "Home":
+        nextTab = "http";
+        break;
+      case "End":
+        nextTab = "ping";
+        break;
+      default:
+        return;
+    }
+
+    event.preventDefault();
+    selectTab(nextTab);
+  };
 
   return (
     <div className="page-content fade-in">
@@ -36,9 +67,22 @@ export default function MonitorsPage() {
       />
 
       {/* Tab buttons */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+      <div
+        role="tablist"
+        aria-label={t.monitors.title}
+        aria-orientation="horizontal"
+        style={{ display: "flex", gap: 8, marginBottom: 24 }}
+      >
         <button
+          ref={(node) => { tabRefs.current.http = node; }}
+          type="button"
+          role="tab"
+          id="monitors-tab-http"
+          aria-selected={activeTab === "http"}
+          aria-controls="monitors-panel-http"
+          tabIndex={activeTab === "http" ? 0 : -1}
           onClick={() => setActiveTab("http")}
+          onKeyDown={handleTabKeyDown}
           style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
             borderRadius: 8, border: `1px solid ${activeTab === "http" ? "var(--accent-blue)" : "var(--border-subtle)"}`,
@@ -47,10 +91,18 @@ export default function MonitorsPage() {
             fontSize: 13, fontWeight: 600, cursor: "pointer",
           }}
         >
-          <Globe size={14} /> {t.monitors.httpMonitors}
+          <Globe size={14} aria-hidden="true" /> {t.monitors.httpMonitors}
         </button>
         <button
+          ref={(node) => { tabRefs.current.ping = node; }}
+          type="button"
+          role="tab"
+          id="monitors-tab-ping"
+          aria-selected={activeTab === "ping"}
+          aria-controls="monitors-panel-ping"
+          tabIndex={activeTab === "ping" ? 0 : -1}
           onClick={() => setActiveTab("ping")}
+          onKeyDown={handleTabKeyDown}
           style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 16px",
             borderRadius: 8, border: `1px solid ${activeTab === "ping" ? "var(--accent-blue)" : "var(--border-subtle)"}`,
@@ -59,12 +111,18 @@ export default function MonitorsPage() {
             fontSize: 13, fontWeight: 600, cursor: "pointer",
           }}
         >
-          <Wifi size={14} /> {t.monitors.pingMonitors}
+          <Wifi size={14} aria-hidden="true" /> {t.monitors.pingMonitors}
         </button>
       </div>
 
       {/* Content */}
-      {activeTab === "http" ? <HttpMonitorsTab /> : <PingMonitorsTab />}
+      <section
+        role="tabpanel"
+        id={`monitors-panel-${activeTab}`}
+        aria-labelledby={`monitors-tab-${activeTab}`}
+      >
+        {activeTab === "http" ? <HttpMonitorsTab /> : <PingMonitorsTab />}
+      </section>
     </div>
   );
 }
