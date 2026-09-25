@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/sse-context";
 import { fetcher, getHostsUrl } from "@/app/lib/api";
 import DockerGrid from "@/app/components/DockerGrid";
+import { getCurrentDockerStats } from "@/app/lib/docker-stats";
 const TimeSeriesChart = dynamic(
   () => import("@/app/components/TimeSeriesChart"),
   { ssr: false, loading: () => <div className="skeleton" style={{ height: 300 }} /> },
@@ -373,7 +374,10 @@ export default function HostPageClient() {
                 title={`${t.host.dockerContainers} (${dockerContainers.length})`}
                 icon={<Box size={15} />}
               >
-                <DockerGrid containers={dockerContainers} />
+                <DockerGrid
+                  containers={dockerContainers}
+                  stats={statusData ? getCurrentDockerStats(liveMetrics ?? undefined, statusData) : undefined}
+                />
               </SectionCard>
             </div>
           )}

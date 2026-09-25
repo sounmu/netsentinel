@@ -1,208 +1,316 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Box } from "lucide-react";
+import { Box, Search } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
-import type { DockerContainer } from "@/app/types/metrics";
+import {
+  assessContainer,
+  operationalCategoryRank,
+  summarizeContainers,
+  type ContainerAssessment,
+  type ContainerOperationalCategory,
+} from "@/app/lib/container-operations";
+import { formatBytes } from "@/app/lib/formatters";
+import type { DockerContainer, DockerContainerStats } from "@/app/types/metrics";
 
 interface DockerGridProps {
-  containers: DockerContainer[];
+  containers: readonly DockerContainer[];
+  /** Live per-container stats (SSE `metrics` falling back to `status`). */
+  stats?: readonly DockerContainerStats[];
 }
 
-type FilterMode = "all" | "running" | "attention";
+type FilterMode = "all" | ContainerOperationalCategory;
 
-export default function DockerGrid({ containers }: DockerGridProps) {
+interface Row {
+  container: DockerContainer;
+  assessment: ContainerAssessment;
+  stat: DockerContainerStats | undefined;
+}
+
+const FILTER_ORDER: readonly ContainerOperationalCategory[] = [
+  "running",
+  "attention",
+  "inactive",
+  "completed",
+];
+
+/** Search box only earns its space once the list stops fitting at a glance. */
+const SEARCH_THRESHOLD = 8;
+
+const MB = 1024 * 1024;
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+export default function DockerGrid({ containers, stats = [] }: DockerGridProps) {
   const { t } = useI18n();
   const [filter, setFilter] = useState<FilterMode>("all");
+  const [query, setQuery] = useState("");
 
-  const summary = useMemo(() => {
-    let running = 0;
-    let attention = 0;
-    for (const container of containers) {
-      const stopped = container.state !== "running";
-      if (stopped) attention += 1;
-      else running += 1;
-    }
-    return { total: containers.length, running, attention };
-  }, [containers]);
+  const summary = useMemo(() => summarizeContainers(containers), [containers]);
 
-  const filteredContainers = useMemo(() => {
-    switch (filter) {
-      case "running":
-        return containers.filter((container) => container.state === "running");
-      case "attention":
-        return containers.filter((container) => container.state !== "running");
-      case "all":
-        return containers;
-    }
-  }, [containers, filter]);
+  const rows = useMemo<Row[]>(() => {
+    const statsByName = new Map(stats.map((s) => [s.container_name, s]));
+    return containers.map((container) => ({
+      container,
+      assessment: assessContainer(container),
+      stat: statsByName.get(container.container_name),
+    }));
+  }, [containers, stats]);
+
+  // A live update can empty the selected bucket (e.g. the one failing
+  // container recovers). Fall back to "all" instead of showing an empty list.
+  const activeFilter: FilterMode =
+    filter !== "all" && summary[filter] === 0 ? "all" : filter;
 
   const groups = useMemo(() => {
-    const map = new Map<string, DockerContainer[]>();
-    for (const container of filteredContainers) {
-      const key = container.compose_project || t.dockerGrid.standalone;
+    const needle = query.trim().toLocaleLowerCase();
+    const visible = rows.filter(({ container, assessment }) => {
+      if (activeFilter !== "all" && assessment.category !== activeFilter) return false;
+      if (!needle) return true;
+      return [container.container_name, container.image, container.compose_service]
+        .some((v) => v?.toLocaleLowerCase().includes(needle));
+    });
+
+    const map = new Map<string, Row[]>();
+    for (const row of visible) {
+      const key = row.container.compose_project?.trim() || "";
       const group = map.get(key);
-      if (group) group.push(container);
-      else map.set(key, [container]);
+      if (group) group.push(row);
+      else map.set(key, [row]);
     }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredContainers, t.dockerGrid.standalone]);
+    for (const group of map.values()) {
+      group.sort(
+        (a, b) =>
+          operationalCategoryRank(a.assessment.category)
+            - operationalCategoryRank(b.assessment.category)
+          || compareText(a.container.container_name, b.container.container_name),
+      );
+    }
+    // Named stacks alphabetically, standalone containers last.
+    return [...map.entries()].sort(([a], [b]) => {
+      if (!a !== !b) return a ? -1 : 1;
+      return compareText(a, b);
+    });
+  }, [rows, activeFilter, query]);
 
   if (containers.length === 0) {
     return (
-      <div
-        style={{
-          textAlign: "center",
-          padding: "24px 0",
-          color: "var(--md-sys-color-on-surface-variant)",
-          fontSize: 13,
-        }}
-      >
-        <Box size={28} style={{ margin: "0 auto 8px", opacity: 0.4 }} />
-        <div>{t.dockerGrid.noContainers}</div>
+      <div className="ctr-list__empty">
+        <Box size={24} aria-hidden="true" />
+        <span>{t.dockerGrid.noContainers}</span>
       </div>
     );
   }
 
+  const showSearch = containers.length > SEARCH_THRESHOLD;
+  const hasGroups = groups.length > 1 || (groups.length === 1 && groups[0][0] !== "");
+
   return (
-    <div style={{ display: "grid", gap: 16 }}>
-      <div className="docker-grid__filters" role="tablist" aria-label={t.host.dockerContainers}>
-        <button
-          type="button"
-          className="docker-grid__filter-btn"
-          data-active={filter === "all"}
-          aria-pressed={filter === "all"}
-          onClick={() => setFilter("all")}
-        >
-          {t.dockerGrid.total.replace("{count}", String(summary.total))}
-        </button>
-        <button
-          type="button"
-          className="docker-grid__filter-btn docker-grid__filter-btn--running"
-          data-active={filter === "running"}
-          aria-pressed={filter === "running"}
-          onClick={() => setFilter("running")}
-        >
-          <span className="pulse-dot green" style={{ width: 6, height: 6 }} />
-          {t.dockerGrid.running.replace("{count}", String(summary.running))}
-        </button>
-        <button
-          type="button"
-          className="docker-grid__filter-btn docker-grid__filter-btn--attention"
-          data-active={filter === "attention"}
-          aria-pressed={filter === "attention"}
-          onClick={() => setFilter("attention")}
-        >
-          {t.dockerGrid.attention.replace("{count}", String(summary.attention))}
-        </button>
+    <div className="ctr-list">
+      <div className="ctr-list__toolbar">
+        <div className="ctr-list__segments" role="group" aria-label={t.host.dockerContainers}>
+          <button
+            type="button"
+            className="ctr-list__segment"
+            aria-pressed={activeFilter === "all"}
+            onClick={() => setFilter("all")}
+          >
+            {t.dockerGrid.all}
+            <span className="ctr-list__segment-count">{summary.total}</span>
+          </button>
+          {FILTER_ORDER.filter((c) => summary[c] > 0).map((category) => (
+            <button
+              key={category}
+              type="button"
+              className="ctr-list__segment"
+              data-category={category}
+              aria-pressed={activeFilter === category}
+              onClick={() => setFilter(category)}
+            >
+              <span className="ctr-list__dot" data-category={category} aria-hidden="true" />
+              {t.containers.categories[category]}
+              <span className="ctr-list__segment-count">{summary[category]}</span>
+            </button>
+          ))}
+        </div>
+
+        {showSearch && (
+          <label className="ctr-list__search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t.dockerGrid.searchPlaceholder}
+              aria-label={t.dockerGrid.searchPlaceholder}
+            />
+          </label>
+        )}
       </div>
 
-      {filteredContainers.length === 0 && (
-        <div className="docker-grid__empty-filter">{t.dockerGrid.noFilterMatches}</div>
-      )}
+      <div className="ctr-list__table" role="table" aria-label={t.host.dockerContainers}>
+        <div className="ctr-list__head" role="row">
+          <span role="columnheader">{t.dockerGrid.colContainer}</span>
+          <span role="columnheader">{t.dockerGrid.colStatus}</span>
+          <span role="columnheader">CPU</span>
+          <span role="columnheader">{t.dockerGrid.colMemory}</span>
+        </div>
 
-      {groups.map(([groupName, groupContainers]) => (
-        <section key={groupName} className="docker-grid__group">
-          <div className="docker-grid__group-head">
-            <div className="docker-grid__group-meta">
-              <div className="docker-grid__group-title">{groupName}</div>
-              <div className="docker-grid__group-subtitle">
-                {t.dockerGrid.groupTotal.replace("{count}", String(groupContainers.length))}
-              </div>
+        {groups.length === 0 && (
+          <div className="ctr-list__no-match">{t.dockerGrid.noFilterMatches}</div>
+        )}
+
+        {groups.map(([project, groupRows]) => {
+          const groupSummary = summarizeContainers(groupRows.map((r) => r.container));
+          return (
+            <div key={project || "__standalone"} role="rowgroup" className="ctr-list__group">
+              {hasGroups && (
+                <div className="ctr-list__group-head" role="row">
+                  <span role="cell" className="ctr-list__group-name">
+                    {project || t.dockerGrid.standalone}
+                  </span>
+                  <span role="cell" className="ctr-list__group-meta">
+                    {t.dockerGrid.groupRunning
+                      .replace("{running}", String(groupSummary.running))
+                      .replace("{total}", String(groupSummary.total))}
+                    {groupSummary.attention > 0 && (
+                      <span className="ctr-list__group-alert">
+                        {t.dockerGrid.groupAttention.replace(
+                          "{count}",
+                          String(groupSummary.attention),
+                        )}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {groupRows.map((row) => (
+                <ContainerRow key={row.container.container_name} row={row} />
+              ))}
             </div>
-            <div className="docker-grid__group-chip">
-              {t.dockerGrid.groupRunning
-                .replace(
-                  "{running}",
-                  String(
-                    groupContainers.filter((container) => container.state === "running").length,
-                  ),
-                )
-                .replace("{total}", String(groupContainers.length))}
-            </div>
+          );
+        })}
+      </div>
+
+      <p className="ctr-list__footnote">
+        {t.dockerGrid.observationNote}{" "}
+        <Link href="/alerts?tab=rules">{t.dockerGrid.reviewRules}</Link>
+      </p>
+    </div>
+  );
+}
+
+function ContainerRow({ row }: { row: Row }) {
+  const { t } = useI18n();
+  const { container, assessment, stat } = row;
+  const category = assessment.category;
+
+  const reasonKey = assessment.attentionReason ?? assessment.inactiveReason;
+  const reason = reasonKey
+    ? t.containers.reasons[reasonKey].replace("{code}", String(container.exit_code ?? ""))
+    : null;
+
+  const meta: string[] = [];
+  if (
+    container.health_status &&
+    assessment.attentionReason !== "unhealthy" &&
+    !container.status.toLowerCase().includes(container.health_status.toLowerCase())
+  ) {
+    meta.push(container.health_status);
+  }
+  if (container.restart_count > 0) {
+    meta.push(t.dockerGrid.restarts.replace("{count}", String(container.restart_count)));
+  }
+  if (container.oom_killed && assessment.attentionReason !== "oom") {
+    meta.push("OOM");
+  }
+
+  const memPct = stat && stat.memory_limit_mb > 0
+    ? (stat.memory_usage_mb / stat.memory_limit_mb) * 100
+    : null;
+  // Live stats only mean something for a live process; a stopped
+  // container can still carry its last sample.
+  const showStats = stat !== undefined && container.state.toLowerCase() === "running";
+
+  return (
+    <div
+      className="ctr-list__row"
+      role="row"
+      data-category={category}
+      data-live={showStats}
+    >
+      <div role="cell" className="ctr-list__cell-name">
+        <div className="ctr-list__name-wrap">
+          <div className="ctr-list__name" title={container.container_name}>
+            {container.container_name}
           </div>
-
-          <div className="docker-grid__cards">
-            {groupContainers.map((container) => {
-              const isRunning = container.state === "running";
-              const health = container.health_status;
-              const tone = container.oom_killed || health === "unhealthy" || !isRunning
-                ? "attention"
-                : "running";
-              const exitCode = container.exit_code;
-              const hasExit = exitCode !== null && exitCode !== undefined;
-              const hasMetaTags = Boolean(container.compose_service)
-                || Boolean(health)
-                || container.oom_killed
-                || hasExit
-                || container.restart_count > 0;
-
-              return (
-                <article
-                  key={container.container_name}
-                  className="docker-grid__card"
-                  data-tone={tone}
-                >
-                  <header className="docker-grid__card-state">
-                    <span
-                      className={`pulse-dot ${isRunning ? "green" : "red"}`}
-                      style={{ width: 6, height: 6 }}
-                      aria-hidden="true"
-                    />
-                    <span className="docker-grid__card-state-text" data-tone={tone}>
-                      {container.state}
-                    </span>
-                  </header>
-
-                  <div className="docker-grid__card-title-wrap">
-                    <div className="docker-grid__card-title" title={container.container_name}>
-                      {container.container_name}
-                    </div>
-                    <div className="docker-grid__card-image" title={container.image}>
-                      {container.image}
-                    </div>
-                  </div>
-
-                  <div className="docker-grid__card-status" title={container.status}>
-                    {container.status}
-                  </div>
-
-                  {hasMetaTags && (
-                    <div className="docker-grid__tag-row">
-                      {container.compose_service && (
-                        <span className="docker-grid__tag">{container.compose_service}</span>
-                      )}
-                      {health && (
-                        <span className="docker-grid__tag" data-tone={health}>
-                          {health}
-                        </span>
-                      )}
-                      {container.oom_killed && (
-                        <span className="docker-grid__tag" data-tone="attention">
-                          OOM
-                        </span>
-                      )}
-                      {hasExit && (
-                        <span className="docker-grid__tag">
-                          {t.dockerGrid.exitCode.replace("{code}", String(exitCode))}
-                        </span>
-                      )}
-                      {container.restart_count > 0 && (
-                        <span className="docker-grid__tag">
-                          {t.dockerGrid.restarts.replace(
-                            "{count}",
-                            String(container.restart_count),
-                          )}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </article>
-              );
-            })}
+          <div className="ctr-list__image" title={container.image}>
+            {container.image}
           </div>
-        </section>
-      ))}
+        </div>
+      </div>
+
+      <div role="cell" className="ctr-list__cell-status">
+        <span className="ctr-list__status" data-category={category}>
+          <span className="ctr-list__dot" data-category={category} aria-hidden="true" />
+          {t.containers.categories[category]}
+        </span>
+        <div className="ctr-list__status-detail" title={container.status}>
+          {container.status}
+        </div>
+        {(reason || meta.length > 0) && (
+          <div className="ctr-list__substatus">
+            {reason && (
+              <span className="ctr-list__reason" data-category={category}>
+                {reason}
+              </span>
+            )}
+            {meta.map((m) => (
+              <span key={m} data-health={m === container.health_status ? m : undefined}>
+                {m}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div role="cell" className="ctr-list__cell-metric">
+        <span className="ctr-list__metric-label">CPU</span>
+        {showStats ? (
+          <span className="ctr-list__metric-value">
+            {stat.cpu_percent.toFixed(1)}%
+          </span>
+        ) : (
+          <span className="ctr-list__metric-empty">—</span>
+        )}
+      </div>
+
+      <div role="cell" className="ctr-list__cell-metric">
+        <span className="ctr-list__metric-label">{t.dockerGrid.colMemory}</span>
+        {showStats ? (
+          <>
+            <span className="ctr-list__metric-value">
+              {formatBytes(stat.memory_usage_mb * MB)}
+              {stat.memory_limit_mb > 0 && (
+                <span className="ctr-list__metric-limit">
+                  {" / "}
+                  {formatBytes(stat.memory_limit_mb * MB)}
+                </span>
+              )}
+            </span>
+            {memPct !== null && (
+              <span className="ctr-list__metric-percent">
+                {memPct.toFixed(1)}%
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="ctr-list__metric-empty">—</span>
+        )}
+      </div>
     </div>
   );
 }

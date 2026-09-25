@@ -192,41 +192,6 @@
   /* Font aliases mirrored from DESIGN.md */
   --font-inter: var(--font-ibm-plex-sans);
   --font-jetbrains-mono: var(--font-mono);
-  /* Docker grid — light mode refinements */
-  --docker-grid-filter-bg: color-mix(in srgb, var(--md-sys-color-primary-container) 22%, var(--md-sys-color-surface-container-high));
-  --docker-grid-filter-hover-bg: color-mix(in srgb, var(--md-sys-color-primary-container) 34%, var(--md-sys-color-surface-container-high));
-  --docker-grid-empty-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--md-sys-color-primary-container) 12%, var(--md-sys-color-surface-container-low)) 0%,
-    var(--md-sys-color-surface-container-low) 100%
-  );
-  --docker-grid-group-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--md-sys-color-primary-container) 18%, var(--md-sys-color-surface-container-low)) 0%,
-    color-mix(in srgb, var(--md-sys-color-tertiary-container) 10%, var(--md-sys-color-surface-container-low)) 100%
-  );
-  --docker-grid-group-chip-bg: color-mix(in srgb, var(--md-sys-color-surface-container-high) 82%, var(--md-sys-color-primary-container));
-  --docker-grid-card-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--md-sys-color-surface-container-high) 68%, white) 0%,
-    color-mix(in srgb, var(--md-sys-color-primary-container) 10%, var(--md-sys-color-surface-container)) 100%
-  );
-  --docker-grid-card-attention-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--md-sys-color-error-container) 18%, white) 0%,
-    color-mix(in srgb, var(--md-sys-color-error-container) 32%, var(--md-sys-color-surface-container)) 100%
-  );
-  --docker-grid-tag-bg: color-mix(in srgb, var(--md-sys-color-surface-container-high) 76%, white);
-  --docker-grid-status-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--md-sys-color-primary-container) 12%, white) 0%,
-    color-mix(in srgb, var(--md-sys-color-surface-container-high) 90%, white) 100%
-  );
-  --docker-grid-status-attention-bg: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--md-sys-color-error-container) 26%, white) 0%,
-    color-mix(in srgb, var(--md-sys-color-error-container) 38%, var(--md-sys-color-surface-container-high)) 100%
-  );
 
   /* ── Typography (M3, dashboard-density) ─── */
   --md-sys-typescale-display-large:  400 2.5rem/3rem var(--font-ibm-plex-sans), -apple-system, BlinkMacSystemFont, sans-serif;
@@ -295,16 +260,6 @@
   --chart-3: hsl(30, 80%, 60%);
   --chart-4: hsl(280, 65%, 65%);
   --chart-5: hsl(340, 75%, 60%);
-  --docker-grid-filter-bg: var(--md-sys-color-surface-container-high);
-  --docker-grid-filter-hover-bg: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, var(--md-sys-color-surface-container-high));
-  --docker-grid-empty-bg: var(--md-sys-color-surface-container-low);
-  --docker-grid-group-bg: var(--md-sys-color-surface-container-low);
-  --docker-grid-group-chip-bg: var(--md-sys-color-surface-container-high);
-  --docker-grid-card-bg: var(--md-sys-color-surface-container);
-  --docker-grid-card-attention-bg: color-mix(in srgb, var(--md-sys-color-error-container) 28%, var(--md-sys-color-surface-container));
-  --docker-grid-tag-bg: var(--md-sys-color-surface-container-high);
-  --docker-grid-status-bg: var(--md-sys-color-surface-container-high);
-  --docker-grid-status-attention-bg: color-mix(in srgb, var(--md-sys-color-error-container) 50%, var(--md-sys-color-surface-container-high));
 
   /* ── Color (M3) — dark theme ─────────────── */
   --md-sys-color-primary: #AAC7FF;
@@ -880,6 +835,163 @@ body {
   margin-bottom: var(--md-sys-spacing-lg);
 }
 
+/* ── Container operations workspace ─── */
+.container-observation-note,
+.alerts-coverage-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--md-sys-spacing-lg);
+  margin-bottom: var(--md-sys-spacing-lg);
+  padding: 14px 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+}
+
+.container-observation-note p,
+.alerts-coverage-note p {
+  margin: 4px 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-body-small);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.container-operations-toolbar {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(150px, 1fr)) auto;
+  align-items: end;
+  gap: var(--md-sys-spacing-md);
+  margin-bottom: var(--md-sys-spacing-lg);
+  padding: 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--bg-card);
+}
+
+.container-filter {
+  display: grid;
+  gap: 6px;
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-medium);
+}
+
+.container-filter input,
+.container-filter select {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--md-sys-color-outline);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  padding: 0 12px;
+  font: var(--md-sys-typescale-body-medium);
+}
+
+.container-search-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.container-search-input svg {
+  position: absolute;
+  left: 12px;
+  color: var(--md-sys-color-on-surface-variant);
+  pointer-events: none;
+}
+
+.container-search-input input {
+  padding-left: 38px;
+}
+
+.container-filter-result {
+  grid-column: 1 / -1;
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-medium);
+}
+
+.container-filter-empty {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+  color: var(--md-sys-color-on-surface-variant);
+  text-align: center;
+}
+
+.container-group-row td {
+  background: var(--md-sys-color-surface-container-low);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  border-bottom: 1px solid var(--md-sys-color-outline-variant);
+  padding: 10px 18px;
+}
+
+.container-group-row td > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.container-group-row span {
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+}
+
+.container-category-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 8px;
+  border-radius: var(--md-sys-shape-corner-full);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-weight: 700;
+  text-transform: none;
+}
+
+.container-inspect-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  color: var(--md-sys-color-primary);
+  font: var(--md-sys-typescale-label-small);
+  text-decoration: none;
+}
+
+.container-inspect-link:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 1024px) {
+  .container-operations-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 599px) {
+  .container-observation-note,
+  .alerts-coverage-note {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .container-operations-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .container-group-row td > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .container-inspect-link {
+    min-height: 48px;
+  }
+}
+
 /* ── Systems table ─── */
 .systems-table {
   width: 100%;
@@ -966,208 +1078,416 @@ body {
               background var(--md-sys-motion-medium2) var(--md-sys-motion-easing-standard);
 }
 
-.docker-grid__filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--md-sys-spacing-sm);
-}
-
-.docker-grid__filter-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: var(--md-sys-shape-corner-full);
-  border: 1px solid var(--md-sys-color-outline-variant);
-  background: var(--docker-grid-filter-bg);
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-small);
-  cursor: pointer;
-  transition:
-    background var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard),
-    border-color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard),
-    color var(--md-sys-motion-short3) var(--md-sys-motion-easing-standard);
-}
-
-.docker-grid__filter-btn:hover {
-  background: var(--docker-grid-filter-hover-bg);
-  color: var(--md-sys-color-on-surface);
-}
-
-.docker-grid__filter-btn[data-active="true"] {
-  background: var(--md-sys-color-primary-container);
-  border-color: var(--md-sys-color-primary);
-  color: var(--md-sys-color-on-primary-container);
-}
-
-.docker-grid__filter-btn--running[data-active="true"] {
-  background: var(--md-custom-color-success-container);
-  border-color: var(--md-custom-color-success);
-  color: var(--md-custom-color-on-success-container);
-}
-
-.docker-grid__filter-btn--attention[data-active="true"] {
-  background: var(--md-sys-color-error-container);
-  border-color: var(--md-sys-color-error);
-  color: var(--md-sys-color-on-error-container);
-}
-
-.docker-grid__empty-filter {
-  padding: var(--md-sys-spacing-lg);
-  border-radius: var(--md-sys-shape-corner-lg);
-  background: var(--docker-grid-empty-bg);
-  border: 1px dashed var(--md-sys-color-outline-variant);
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-body-small);
-}
-
-.docker-grid__group {
+/* ── Container list (host detail → Docker) ───
+   Tonal list inside the host card. Color is reserved for observed status
+   and resource pressure; the rows themselves remain neutral. */
+.ctr-list {
   display: grid;
+  /* minmax(0, …) — without it the implicit track sizes to min-content and
+     long image names push the card past the viewport on phones. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--md-sys-spacing-md);
-  padding: var(--md-sys-spacing-lg);
-  border-radius: var(--md-sys-shape-corner-lg);
-  background: var(--docker-grid-group-bg);
-  border: 1px solid var(--md-sys-color-outline-variant);
 }
 
-.docker-grid__group-head {
+.ctr-list__toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--md-sys-spacing-md);
   flex-wrap: wrap;
+  gap: var(--md-sys-spacing-sm);
 }
 
-.docker-grid__group-meta {
-  display: grid;
+.ctr-list__segments {
+  display: inline-flex;
+  flex-wrap: wrap;
   gap: var(--md-sys-spacing-xs);
+  padding: var(--md-sys-spacing-xs);
+  border-radius: var(--md-sys-shape-corner-medium);
+  background: var(--bg-muted);
 }
 
-.docker-grid__group-title {
-  font: var(--md-sys-typescale-title-small);
+.ctr-list__segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 var(--md-sys-spacing-md);
+  border: 0;
+  border-radius: var(--md-sys-shape-corner-small);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-medium);
+  cursor: pointer;
+  transition:
+    background var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard),
+    color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
+}
+
+.ctr-list__segment:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
   color: var(--md-sys-color-on-surface);
 }
 
-.docker-grid__group-subtitle {
-  font: var(--md-sys-typescale-label-small);
+.ctr-list__segment[aria-pressed="true"] {
+  background: var(--bg-card);
+  color: var(--md-sys-color-on-surface);
+}
+
+.ctr-list__segment:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 1px;
+}
+
+.ctr-list__segment-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--md-sys-color-outline);
+}
+
+.ctr-list__segment[aria-pressed="true"] .ctr-list__segment-count {
   color: var(--md-sys-color-on-surface-variant);
 }
 
-.docker-grid__group-chip {
+.ctr-list__segment[data-category="attention"] .ctr-list__segment-count {
+  color: var(--md-sys-color-error);
+}
+
+.ctr-list__search {
   display: inline-flex;
   align-items: center;
-  padding: 5px 10px;
-  border-radius: var(--md-sys-shape-corner-full);
-  background: var(--docker-grid-group-chip-bg);
+  gap: 6px;
+  min-width: 0;
+  width: 220px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--md-sys-color-outline-variant);
-  color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-small);
-}
-
-.docker-grid__cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: var(--md-sys-spacing-md);
-}
-
-.docker-grid__card {
-  position: relative;
-  display: grid;
-  gap: var(--md-sys-spacing-sm);
-  padding: var(--md-sys-spacing-lg);
-  border-radius: var(--md-sys-shape-corner-large);
-  background: var(--docker-grid-card-bg);
-  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--md-sys-color-surface-container-lowest);
+  color: var(--md-sys-color-outline);
   transition: border-color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
 }
 
-.docker-grid__card:hover {
-  border-color: color-mix(in srgb, var(--md-sys-color-on-surface) 24%, var(--md-sys-color-outline-variant));
+.ctr-list__search:focus-within {
+  border-color: var(--md-sys-color-primary);
 }
 
-.docker-grid__card[data-tone="attention"]::before {
-  content: "";
-  position: absolute;
-  inset: var(--md-sys-spacing-sm) auto var(--md-sys-spacing-sm) 0;
-  width: 3px;
+.ctr-list__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font: var(--md-sys-typescale-body-small);
+}
+
+.ctr-list__dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
   border-radius: var(--md-sys-shape-corner-full);
-  background: var(--md-sys-color-error);
+  background: var(--md-sys-color-outline);
 }
 
-.docker-grid__card-state {
-  display: inline-flex;
+.ctr-list__dot[data-category="running"] { background: var(--md-custom-color-success); }
+.ctr-list__dot[data-category="attention"] { background: var(--md-sys-color-error); }
+.ctr-list__dot[data-category="inactive"] { background: var(--md-custom-color-warning); }
+
+.ctr-list__table {
+  --ctr-cols: minmax(0, 1.8fr) minmax(0, 1.3fr) minmax(100px, 0.75fr) minmax(160px, 1fr);
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: var(--md-sys-shape-corner-large);
+  overflow: hidden;
+}
+
+.ctr-list__head,
+.ctr-list__row {
+  display: grid;
+  grid-template-columns: var(--ctr-cols);
+  column-gap: var(--md-sys-spacing-lg);
   align-items: center;
+  padding: 0 var(--md-sys-spacing-lg);
+}
+
+.ctr-list__head {
+  min-height: 40px;
+  background: var(--bg-muted);
+  color: var(--md-sys-color-on-surface-variant);
+  font: var(--md-sys-typescale-label-small);
+  letter-spacing: 0.02em;
+}
+
+.ctr-list__group-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: var(--md-sys-spacing-sm);
+  min-height: 48px;
+  padding: var(--md-sys-spacing-sm) var(--md-sys-spacing-lg);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  background: var(--bg-muted);
 }
 
-.docker-grid__card-state-text {
-  font: var(--md-sys-typescale-label-medium);
-  text-transform: uppercase;
-  color: var(--md-custom-color-success);
+.ctr-list__group-name {
+  font: var(--md-sys-typescale-label-large);
+  color: var(--md-sys-color-on-surface);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.docker-grid__card-state-text[data-tone="attention"] {
+.ctr-list__group-meta {
+  display: inline-flex;
+  gap: var(--md-sys-spacing-sm);
+  font: var(--md-sys-typescale-label-small);
+  font-variant-numeric: tabular-nums;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.ctr-list__group-alert {
   color: var(--md-sys-color-error);
 }
 
-.docker-grid__card-title-wrap {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
+.ctr-list__row {
+  position: relative;
+  min-height: 76px;
+  padding-top: var(--md-sys-spacing-md);
+  padding-bottom: var(--md-sys-spacing-md);
+  border-top: 1px solid color-mix(in srgb, var(--md-sys-color-outline-variant) 60%, transparent);
+  background: var(--bg-card);
+  transition: background var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard);
 }
 
-.docker-grid__card-title {
+.ctr-list__row:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 4%, transparent);
+}
+
+.ctr-list__row[data-category="attention"] {
+  background: color-mix(in srgb, var(--md-sys-color-error) 5%, var(--bg-card));
+}
+
+.ctr-list__row[data-category="completed"] .ctr-list__name,
+.ctr-list__row[data-category="inactive"] .ctr-list__name {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.ctr-list__cell-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ctr-list__name-wrap {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ctr-list__name {
   font: var(--md-sys-typescale-title-medium);
+  color: var(--md-sys-color-on-surface);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctr-list__image {
+  font: var(--md-sys-typescale-body-small);
+  font-family: var(--font-mono), monospace;
+  color: var(--md-sys-color-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctr-list__cell-status {
+  display: grid;
+  justify-items: start;
+  gap: var(--md-sys-spacing-xs);
+  min-width: 0;
+}
+
+.ctr-list__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--md-sys-spacing-sm);
+  padding: var(--md-sys-spacing-xs) var(--md-sys-spacing-sm);
+  border-radius: var(--md-sys-shape-corner-small);
+  background: var(--bg-muted);
+  font: var(--md-sys-typescale-label-medium);
+  color: var(--md-sys-color-on-surface-variant);
+  white-space: nowrap;
+}
+
+.ctr-list__status[data-category="running"] {
+  background: var(--md-custom-color-success-container);
+  color: var(--md-custom-color-on-success-container);
+}
+
+.ctr-list__status[data-category="attention"] {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.ctr-list__status[data-category="inactive"] {
+  background: var(--md-custom-color-warning-container);
+  color: var(--md-custom-color-on-warning-container);
+}
+
+.ctr-list__status-detail {
+  font: var(--md-sys-typescale-body-small);
+  color: var(--md-sys-color-on-surface-variant);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctr-list__substatus {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--md-sys-spacing-sm);
+  font: var(--md-sys-typescale-label-small);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.ctr-list__substatus > span + span::before {
+  content: "·";
+  margin-right: var(--md-sys-spacing-sm);
+  color: var(--md-sys-color-outline-variant);
+}
+
+.ctr-list__substatus [data-health="healthy"] {
+  color: var(--md-custom-color-success);
+}
+
+.ctr-list__reason[data-category="attention"] {
+  color: var(--md-sys-color-error);
+}
+
+.ctr-list__reason[data-category="inactive"] {
+  color: var(--md-custom-color-warning);
+}
+
+.ctr-list__cell-metric {
+  display: grid;
+  grid-template-columns: auto;
+  align-self: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ctr-list__metric-label {
+  display: none;
+  font: var(--md-sys-typescale-label-small);
+  color: var(--md-sys-color-outline);
+}
+
+.ctr-list__metric-value {
+  font: var(--md-sys-typescale-title-small);
+  font-variant-numeric: tabular-nums;
   color: var(--md-sys-color-on-surface);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.docker-grid__card-image {
-  font: var(--md-sys-typescale-label-small);
+.ctr-list__metric-percent {
+  font: var(--md-sys-typescale-body-small);
+  font-variant-numeric: tabular-nums;
   color: var(--md-sys-color-on-surface-variant);
-  font-family: var(--font-mono), monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.docker-grid__card-status {
+.ctr-list__metric-limit {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.ctr-list__metric-empty {
+  font: var(--md-sys-typescale-label-medium);
+  color: var(--md-sys-color-outline-variant);
+}
+
+.ctr-list__no-match {
+  padding: var(--md-sys-spacing-xl) var(--md-sys-spacing-lg);
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+  text-align: center;
   font: var(--md-sys-typescale-body-small);
   color: var(--md-sys-color-on-surface-variant);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.docker-grid__tag-row {
-  display: flex;
-  flex-wrap: wrap;
+.ctr-list__empty {
+  display: grid;
+  justify-items: center;
   gap: var(--md-sys-spacing-sm);
-}
-
-.docker-grid__tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: var(--md-sys-shape-corner-sm);
-  background: transparent;
-  border: 1px solid var(--md-sys-color-outline-variant);
+  padding: var(--md-sys-spacing-xl) 0;
+  font: var(--md-sys-typescale-body-small);
   color: var(--md-sys-color-on-surface-variant);
-  font: var(--md-sys-typescale-label-small);
-  line-height: 1.4;
 }
 
-.docker-grid__tag[data-tone="healthy"] {
-  border-color: color-mix(in srgb, var(--md-custom-color-success) 50%, var(--md-sys-color-outline-variant));
-  color: var(--md-custom-color-on-success-container);
+.ctr-list__empty svg {
+  color: var(--md-sys-color-outline);
 }
 
-.docker-grid__tag[data-tone="unhealthy"],
-.docker-grid__tag[data-tone="attention"] {
-  border-color: color-mix(in srgb, var(--md-sys-color-error) 50%, var(--md-sys-color-outline-variant));
-  color: var(--md-sys-color-error);
+.ctr-list__footnote {
+  margin: 0;
+  font: var(--md-sys-typescale-body-small);
+  color: var(--md-sys-color-on-surface-variant);
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+
+.ctr-list__footnote a {
+  color: var(--md-sys-color-primary);
+  white-space: nowrap;
+}
+
+@media (max-width: 719px) {
+  .ctr-list__search {
+    width: 100%;
+  }
+
+  .ctr-list__head {
+    display: none;
+  }
+
+  .ctr-list__row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "name name"
+      "status status"
+      "cpu mem";
+    row-gap: var(--md-sys-spacing-sm);
+    padding-top: var(--md-sys-spacing-lg);
+    padding-bottom: var(--md-sys-spacing-lg);
+  }
+
+  .ctr-list__cell-name { grid-area: name; }
+  .ctr-list__cell-status {
+    grid-area: status;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--md-sys-spacing-sm);
+  }
+  .ctr-list__cell-metric { padding-left: 0; }
+  .ctr-list__cell-metric:nth-child(3) { grid-area: cpu; }
+  .ctr-list__cell-metric:nth-child(4) { grid-area: mem; padding-left: 0; }
+
+  .ctr-list__metric-label {
+    display: block;
+  }
+
+  .ctr-list__metric-value {
+    white-space: normal;
+  }
+
+  /* Stopped containers have no live sample — skip the empty "—" line. */
+  .ctr-list__row[data-live="false"] .ctr-list__cell-metric {
+    display: none;
+  }
+
+  .ctr-list__segment {
+    min-height: 48px;
+  }
 }
 
 .meter-green { background: var(--accent-green); }

@@ -648,6 +648,27 @@ M3 top app bar (small):
 }
 ```
 
+The host detail Docker inventory is a compact tonal list inside its existing
+section card. The filter rail, group headers, and completed-state badges use
+the runtime warm-neutral surfaces (`--bg-muted` / `--bg-card`); the example
+M3 palette above is not a replacement for those live theme values. Each row
+leads with the container name and image, shows its operational category as a
+small semantic badge, and keeps Docker's reported lifecycle text separately
+visible. CPU and memory remain aligned numeric columns without redundant
+pressure bars: show CPU as a percentage, and show memory as used / limit with
+its usage percentage on a second line when the limit is known. Keep metric
+numbers in the standard theme text colors regardless of load. On compact
+screens the status and lifecycle text share a line above the paired metrics.
+Do not repeat a health label already contained in Docker's reported status.
+Attention uses a subtle
+tonal wash, never an accent stripe.
+Filter controls retain 48px compact touch targets and visible pressed state.
+
+The global `/containers` inventory also uses numeric-only CPU and memory
+percentages, with memory used / limit beneath the percentage. It does not
+render inline pressure bars or color numbers by pressure. Operational status
+badges retain their semantic colors; sorting uses the underlying metric values.
+
 ### 8.6 Text Input (Outlined)
 
 ```css
