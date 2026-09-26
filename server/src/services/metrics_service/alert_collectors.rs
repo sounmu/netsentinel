@@ -391,8 +391,11 @@ pub(super) fn collect_gpu_alerts(
     }
 
     for gpu in &metrics.system.gpus {
+        let Some(usage) = gpu.gpu_usage_percent else {
+            continue;
+        };
         let name = &gpu.name;
-        let current = gpu.gpu_usage_percent as f32;
+        let current = usage as f32;
         let was_alerted = record
             .alert_state
             .gpu_alerted

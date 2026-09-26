@@ -28,7 +28,7 @@ const MAX_METRICS_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
 /// `models::agent_metrics::CURRENT_WIRE_VERSION`. The header is purely
 /// additive: pre-versioning agents send no header and pre-versioning servers
 /// ignore it, so neither rollout direction breaks.
-pub(crate) const WIRE_VERSION: u8 = 1;
+pub(crate) const WIRE_VERSION: u8 = 2;
 const WIRE_VERSION_HEADER: &str = "x-netsentinel-wire-version";
 
 fn bincode_options() -> impl bincode::Options {

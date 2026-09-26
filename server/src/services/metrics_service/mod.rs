@@ -164,6 +164,7 @@ pub async fn process_metrics(
             network_interface_rates,
             disks: metrics.system.disks.clone(),
             temperatures: metrics.system.temperatures.clone(),
+            gpus: metrics.system.gpus.clone(),
             docker_stats: metrics.docker_stats.clone(),
             timestamp: server_ts.clone(),
         };
@@ -1291,12 +1292,12 @@ mod tests {
         let mut metrics = make_metrics(1.0, 10.0, vec![]);
         metrics.system.gpus = vec![GpuInfo {
             name: "RTX 4090".to_string(),
-            gpu_usage_percent: 95,
-            memory_used_mb: 0,
-            memory_total_mb: 0,
-            temperature_c: 0,
+            gpu_usage_percent: Some(95),
+            memory_used_mb: Some(0),
+            memory_total_mb: Some(0),
+            temperature_c: Some(0),
             power_watts: None,
-            frequency_mhz: None,
+            power_limit_watts: None,
         }];
         let mut actions = Vec::new();
         collect_gpu_alerts(
@@ -1323,12 +1324,12 @@ mod tests {
         let mut metrics = make_metrics(1.0, 10.0, vec![]);
         metrics.system.gpus = vec![GpuInfo {
             name: "RTX 4090".to_string(),
-            gpu_usage_percent: 40,
-            memory_used_mb: 0,
-            memory_total_mb: 0,
-            temperature_c: 0,
+            gpu_usage_percent: Some(40),
+            memory_used_mb: Some(0),
+            memory_total_mb: Some(0),
+            temperature_c: Some(0),
             power_watts: None,
-            frequency_mhz: None,
+            power_limit_watts: None,
         }];
         let mut actions = Vec::new();
         collect_gpu_alerts(
@@ -1341,6 +1342,35 @@ mod tests {
         );
         assert_eq!(actions.len(), 1);
         assert!(matches!(actions[0], AlertAction::GpuRecovery { .. }));
+    }
+
+    #[test]
+    fn gpu_missing_usage_does_not_trigger_recovery() {
+        use crate::models::agent_metrics::GpuInfo;
+        let mut record = make_record();
+        record.alert_state.gpu_alerted.insert("RTX".into(), true);
+        let mut metrics = make_metrics(1.0, 10.0, vec![]);
+        metrics.system.gpus = vec![GpuInfo {
+            name: "RTX".into(),
+            gpu_usage_percent: None,
+            memory_used_mb: Some(1024),
+            memory_total_mb: Some(8192),
+            temperature_c: None,
+            power_watts: None,
+            power_limit_watts: None,
+        }];
+        let mut actions = Vec::new();
+
+        collect_gpu_alerts(
+            &record,
+            TEST_HOSTNAME,
+            &enabled_rule(90.0),
+            &metrics,
+            Instant::now(),
+            &mut actions,
+        );
+
+        assert!(actions.is_empty());
     }
 
     #[test]

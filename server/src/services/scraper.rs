@@ -485,6 +485,9 @@ fn sanitize_metrics(metrics: &mut AgentMetrics) {
         if let Some(power_watts) = gpu.power_watts {
             gpu.power_watts = Some(metrics_service::sanitize_f32(power_watts));
         }
+        if let Some(power_limit_watts) = gpu.power_limit_watts {
+            gpu.power_limit_watts = Some(metrics_service::sanitize_f32(power_limit_watts));
+        }
     }
 
     for stats in &mut metrics.docker_stats {

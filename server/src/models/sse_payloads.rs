@@ -53,6 +53,8 @@ pub struct HostMetricsPayload {
     pub disks: Vec<DiskInfo>,
     /// Temperature sensor readings
     pub temperatures: Vec<TemperatureInfo>,
+    /// Per-device readings, refreshed on every scrape rather than status cadence.
+    pub gpus: Vec<GpuInfo>,
     /// Per-container resource usage (CPU%, memory)
     pub docker_stats: Vec<DockerContainerStats>,
     pub timestamp: String,

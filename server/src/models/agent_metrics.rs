@@ -105,19 +105,18 @@ pub struct TemperatureInfo {
     pub temperature_c: f32,
 }
 
-/// GPU device metrics (NVIDIA, Apple Silicon, or other backends)
+/// GPU device metrics. Missing NVML readings are serialized as JSON null.
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct GpuInfo {
     pub name: String,
-    pub gpu_usage_percent: u32,
-    pub memory_used_mb: u64,
-    pub memory_total_mb: u64,
-    pub temperature_c: u32,
-    // New fields — appended at end for bincode compat with agent
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_usage_percent: Option<u32>,
+    pub memory_used_mb: Option<u64>,
+    pub memory_total_mb: Option<u64>,
+    pub temperature_c: Option<u32>,
+    #[serde(default)]
     pub power_watts: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub frequency_mhz: Option<u32>,
+    #[serde(default)]
+    pub power_limit_watts: Option<f32>,
 }
 
 /// Cumulative traffic totals + bandwidth across physical interfaces.
@@ -168,16 +167,106 @@ struct LegacyGpuInfo {
     temperature_c: u32,
 }
 
+/// Wire version 1 included optional power and graphics frequency after the
+/// five required fields. Keep its exact positional layout for bincode reads.
+#[derive(Deserialize, Serialize)]
+struct V1GpuInfo {
+    name: String,
+    gpu_usage_percent: u32,
+    memory_used_mb: u64,
+    memory_total_mb: u64,
+    temperature_c: u32,
+    power_watts: Option<f32>,
+    frequency_mhz: Option<u32>,
+}
+
+impl From<V1GpuInfo> for GpuInfo {
+    fn from(g: V1GpuInfo) -> Self {
+        Self {
+            name: g.name,
+            gpu_usage_percent: Some(g.gpu_usage_percent),
+            memory_used_mb: Some(g.memory_used_mb),
+            memory_total_mb: Some(g.memory_total_mb),
+            temperature_c: Some(g.temperature_c),
+            power_watts: g.power_watts,
+            power_limit_watts: None,
+        }
+    }
+}
+
 impl From<LegacyGpuInfo> for GpuInfo {
     fn from(g: LegacyGpuInfo) -> Self {
         Self {
             name: g.name,
-            gpu_usage_percent: g.gpu_usage_percent,
-            memory_used_mb: g.memory_used_mb,
-            memory_total_mb: g.memory_total_mb,
-            temperature_c: g.temperature_c,
+            gpu_usage_percent: Some(g.gpu_usage_percent),
+            memory_used_mb: Some(g.memory_used_mb),
+            memory_total_mb: Some(g.memory_total_mb),
+            temperature_c: Some(g.temperature_c),
             power_watts: None,
-            frequency_mhz: None,
+            power_limit_watts: None,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct V1SystemMetrics {
+    cpu_usage_percent: f32,
+    memory_total_mb: u64,
+    memory_used_mb: u64,
+    memory_usage_percent: f32,
+    disks: Vec<DiskInfo>,
+    processes: Vec<ProcessInfo>,
+    temperatures: Vec<TemperatureInfo>,
+    gpus: Vec<V1GpuInfo>,
+}
+
+impl From<V1SystemMetrics> for SystemMetrics {
+    fn from(s: V1SystemMetrics) -> Self {
+        Self {
+            cpu_usage_percent: s.cpu_usage_percent,
+            memory_total_mb: s.memory_total_mb,
+            memory_used_mb: s.memory_used_mb,
+            memory_usage_percent: s.memory_usage_percent,
+            disks: s.disks,
+            processes: s.processes,
+            temperatures: s.temperatures,
+            gpus: s.gpus.into_iter().map(GpuInfo::from).collect(),
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct V1AgentMetrics {
+    hostname: String,
+    timestamp: String,
+    is_online: bool,
+    system: V1SystemMetrics,
+    network: NetworkTotal,
+    load_average: LoadAverage,
+    #[serde(rename = "docker")]
+    docker_containers: Vec<DockerContainer>,
+    ports: Vec<PortStatus>,
+    agent_version: String,
+    cpu_cores: Vec<f32>,
+    network_interfaces: Vec<NetworkInterfaceInfo>,
+    docker_stats: Vec<DockerContainerStats>,
+}
+
+impl From<V1AgentMetrics> for AgentMetrics {
+    fn from(metrics: V1AgentMetrics) -> Self {
+        Self {
+            hostname: metrics.hostname,
+            timestamp: metrics.timestamp,
+            is_online: metrics.is_online,
+            system: metrics.system.into(),
+            network: metrics.network,
+            load_average: metrics.load_average,
+            docker_containers: metrics.docker_containers,
+            ports: metrics.ports,
+            agent_version: metrics.agent_version,
+            cpu_cores: metrics.cpu_cores,
+            network_interfaces: metrics.network_interfaces,
+            docker_stats: metrics.docker_stats,
         }
     }
 }
@@ -430,7 +519,7 @@ impl From<LegacyDockerContainerStats> for DockerContainerStats {
 /// header (see the agent's `handler::WIRE_VERSION`); keep the two in lock-step
 /// and bump whenever the bincode shape of `AgentMetrics` or any nested struct
 /// changes.
-pub const CURRENT_WIRE_VERSION: u8 = 1;
+pub const CURRENT_WIRE_VERSION: u8 = 2;
 
 /// HTTP header an agent uses to advertise its [`CURRENT_WIRE_VERSION`].
 pub const WIRE_VERSION_HEADER: &str = "x-netsentinel-wire-version";
@@ -469,6 +558,14 @@ pub fn deserialize_agent_metrics_versioned(
         return Ok(metrics);
     }
 
+    if wire_version == Some(1) {
+        let mut metrics: AgentMetrics = strict_bincode_options()
+            .deserialize::<V1AgentMetrics>(bytes)?
+            .into();
+        metrics.network.rate_fields_present = true;
+        return Ok(metrics);
+    }
+
     deserialize_agent_metrics(bytes)
 }
 
@@ -490,24 +587,32 @@ pub fn deserialize_agent_metrics(bytes: &[u8]) -> Result<AgentMetrics, bincode::
             metrics.network.rate_fields_present = true;
             Ok(metrics)
         }
-        Err(new_err) => match bincode_options().deserialize::<LegacyGpuAgentMetrics>(bytes) {
-            Ok(mut metrics) => {
+        Err(new_err) => match bincode_options().deserialize::<V1AgentMetrics>(bytes) {
+            Ok(metrics) => {
+                let mut metrics: AgentMetrics = metrics.into();
                 metrics.network.rate_fields_present = true;
                 crate::services::metrics_service::record_legacy_fallback_used();
-                Ok(metrics.into())
+                Ok(metrics)
             }
-            Err(_) => match bincode_options().deserialize::<LegacyDockerAgentMetrics>(bytes) {
+            Err(_) => match bincode_options().deserialize::<LegacyGpuAgentMetrics>(bytes) {
                 Ok(mut metrics) => {
                     metrics.network.rate_fields_present = true;
                     crate::services::metrics_service::record_legacy_fallback_used();
                     Ok(metrics.into())
                 }
-                Err(_) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
-                    Ok(metrics) => {
+                Err(_) => match bincode_options().deserialize::<LegacyDockerAgentMetrics>(bytes) {
+                    Ok(mut metrics) => {
+                        metrics.network.rate_fields_present = true;
                         crate::services::metrics_service::record_legacy_fallback_used();
                         Ok(metrics.into())
                     }
-                    Err(_) => Err(new_err),
+                    Err(_) => match bincode_options().deserialize::<LegacyAgentMetrics>(bytes) {
+                        Ok(metrics) => {
+                            crate::services::metrics_service::record_legacy_fallback_used();
+                            Ok(metrics.into())
+                        }
+                        Err(_) => Err(new_err),
+                    },
                 },
             },
         },
@@ -702,10 +807,97 @@ mod tests {
         assert_eq!(decoded.system.gpus.len(), 1);
         let gpu = &decoded.system.gpus[0];
         assert_eq!(gpu.name, "GeForce RTX");
-        assert_eq!(gpu.gpu_usage_percent, 42);
+        assert_eq!(gpu.gpu_usage_percent, Some(42));
         assert!(gpu.power_watts.is_none());
-        assert!(gpu.frequency_mhz.is_none());
+        assert!(gpu.power_limit_watts.is_none());
         assert!(decoded.network.rate_fields_present);
+    }
+
+    #[test]
+    fn version_one_gpu_payload_preserves_power_without_exposing_frequency() {
+        let legacy = V1AgentMetrics {
+            hostname: "v1-gpu".into(),
+            timestamp: "2026-05-03T00:00:00Z".into(),
+            is_online: true,
+            system: V1SystemMetrics {
+                cpu_usage_percent: 12.5,
+                memory_total_mb: 8192,
+                memory_used_mb: 4096,
+                memory_usage_percent: 50.0,
+                disks: vec![],
+                processes: vec![],
+                temperatures: vec![],
+                gpus: vec![V1GpuInfo {
+                    name: "RTX".into(),
+                    gpu_usage_percent: 35,
+                    memory_used_mb: 1024,
+                    memory_total_mb: 8192,
+                    temperature_c: 62,
+                    power_watts: Some(180.0),
+                    frequency_mhz: Some(1650),
+                }],
+            },
+            network: NetworkTotal::default(),
+            load_average: LoadAverage::default(),
+            docker_containers: vec![],
+            ports: vec![],
+            agent_version: "0.5.0".into(),
+            cpu_cores: vec![],
+            network_interfaces: vec![],
+            docker_stats: vec![],
+        };
+        let bytes = bincode_options().serialize(&legacy).unwrap();
+
+        let decoded = deserialize_agent_metrics_versioned(&bytes, Some(1)).unwrap();
+        let gpu = &decoded.system.gpus[0];
+        assert_eq!(gpu.gpu_usage_percent, Some(35));
+        assert_eq!(gpu.power_watts, Some(180.0));
+        assert_eq!(gpu.power_limit_watts, None);
+        assert!(
+            serde_json::to_value(gpu)
+                .unwrap()
+                .get("frequency_mhz")
+                .is_none()
+        );
+
+        let unversioned = deserialize_agent_metrics_versioned(&bytes, None).unwrap();
+        assert_eq!(unversioned.system.gpus[0].power_watts, Some(180.0));
+    }
+
+    #[test]
+    fn version_two_gpu_payload_preserves_missing_readings() {
+        let mut metrics = current_metrics("v2-gpu");
+        metrics.system.gpus.push(GpuInfo {
+            name: "RTX".into(),
+            gpu_usage_percent: None,
+            memory_used_mb: Some(1024),
+            memory_total_mb: None,
+            temperature_c: None,
+            power_watts: Some(120.0),
+            power_limit_watts: Some(200.0),
+        });
+        let bytes = bincode_options().serialize(&metrics).unwrap();
+
+        let decoded =
+            deserialize_agent_metrics_versioned(&bytes, Some(CURRENT_WIRE_VERSION)).unwrap();
+        let json = serde_json::to_value(&decoded.system.gpus[0]).unwrap();
+        assert!(json["gpu_usage_percent"].is_null());
+        assert_eq!(json["memory_used_mb"], 1024);
+        assert!(json["memory_total_mb"].is_null());
+        assert!(json["temperature_c"].is_null());
+        assert_eq!(json["power_watts"], 120.0);
+        assert_eq!(json["power_limit_watts"], 200.0);
+    }
+
+    #[test]
+    fn persisted_gpu_json_accepts_legacy_shape_and_emits_nulls() {
+        let stored = r#"{"name":"RTX","gpu_usage_percent":35,"memory_used_mb":1024,"memory_total_mb":8192,"temperature_c":62,"power_watts":180.0,"frequency_mhz":1650}"#;
+        let gpu: GpuInfo = serde_json::from_str(stored).unwrap();
+        let json = serde_json::to_value(gpu).unwrap();
+        assert_eq!(json["gpu_usage_percent"], 35);
+        assert_eq!(json["power_watts"], 180.0);
+        assert!(json["power_limit_watts"].is_null());
+        assert!(json.get("frequency_mhz").is_none());
     }
 
     #[test]
