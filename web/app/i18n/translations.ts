@@ -531,7 +531,9 @@ export const translations = {
     // GpuCard
     gpu: {
       noData: "No GPU data",
+      usage: "GPU Usage",
       memory: "VRAM",
+      temperature: "Temperature",
       power: "Power",
     },
     // ErrorBoundary
@@ -1063,7 +1065,9 @@ export const translations = {
     },
     gpu: {
       noData: "GPU 데이터 없음",
+      usage: "GPU 사용률",
       memory: "VRAM",
+      temperature: "온도",
       power: "전력",
     },
     errorBoundary: {

@@ -69,6 +69,7 @@ export function liveMetricsToRow(liveMetrics: HostMetricsPayload): ChartMetricsR
       cpu_percent: s.cpu_percent,
       memory_usage_mb: s.memory_usage_mb,
     })),
+    gpus: liveMetrics.gpus ?? [],
     timestamp: liveMetrics.timestamp,
   };
 }

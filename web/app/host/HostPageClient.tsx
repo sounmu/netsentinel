@@ -36,6 +36,9 @@ import {
   MemoryStick,
 } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
+import type { GpuInfo } from "@/app/types/metrics";
+
+const EMPTY_GPUS: GpuInfo[] = [];
 
 /** Format uptime from boot_time (Unix timestamp seconds).
  *  <24h → "Xh Xm", ≥24h → "Xd Xh"
@@ -139,7 +142,7 @@ export default function HostPageClient() {
   const hasData = liveMetrics !== null || statusData !== null;
 
   const ports = statusData?.ports ?? [];
-  const gpus = statusData?.gpus ?? [];
+  const gpus = liveMetrics?.gpus ?? statusData?.gpus ?? EMPTY_GPUS;
   const dockerContainers = statusData?.docker_containers ?? [];
   const latestTimestamp = liveMetrics?.timestamp ?? statusData?.last_seen ?? null;
   const hasDockerData = dockerContainers.length > 0;
@@ -351,7 +354,7 @@ export default function HostPageClient() {
         <>
           {/* Main time-series charts (CPU, RAM, Network, Temp, Cores, Disk, Processes) */}
           <div style={{ marginBottom: 16 }}>
-            <TimeSeriesChart hostKey={decodedHostKey} />
+            <TimeSeriesChart hostKey={decodedHostKey} gpus={gpus} />
           </div>
 
           {/* Daily uptime breakdown — day boundaries are in the workspace
@@ -383,7 +386,7 @@ export default function HostPageClient() {
             </div>
           )}
 
-          {/* GPU - small info card */}
+          {/* GPU metrics follow the same SSE cadence as the other host metrics. */}
           {gpus.length > 0 && (
             <div className="host-detail-half-grid">
               <SectionCard

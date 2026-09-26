@@ -16,6 +16,7 @@ import {
   ChartDiskInfo,
   ChartDockerStats,
   ChartMetricsRow,
+  GpuInfo,
   TemperatureInfo,
 } from "@/app/types/metrics";
 import { formatNetworkSpeed, formatNetworkSpeedTick } from "@/app/lib/formatters";
@@ -36,6 +37,7 @@ const PALETTE = [
   "hsl(280, 65%, 60%)", "hsl(340, 75%, 55%)", "hsl(190, 70%, 45%)",
   "hsl(50, 80%, 50%)", "hsl(0, 70%, 55%)",
 ];
+const EMPTY_GPUS: GpuInfo[] = [];
 
 // Recharts hands the tick formatter a numeric epoch ms (the value
 // from the X-axis `domain`). The previous shape converted that number
@@ -134,12 +136,13 @@ interface ChartCardProps {
   span2?: boolean;
   height?: number;
   curveType?: "monotone" | "linear" | "stepAfter";
+  connectNulls?: boolean;
 }
 
 const ChartCard = memo(function ChartCard({
   title, color, isLoading, data, dataKey, colors, rangeHours, timeTicks,
   yTickFormatter, tooltipFormatter, yUnit, yDomain, span2 = false, height = 192,
-  curveType = "monotone",
+  curveType = "monotone", connectNulls = true,
 }: ChartCardProps) {
   const { t, locale } = useI18n();
   // Stringify the dataKey into a stable dep so `useMemo` recomputes only
@@ -250,7 +253,7 @@ const ChartCard = memo(function ChartCard({
                 dot={false}
                 activeDot={{ r: 3, fill: lineColors[idx % lineColors.length] ?? color, stroke: "var(--bg-card)", strokeWidth: 2 }}
                 isAnimationActive={false}
-                connectNulls
+                connectNulls={connectNulls}
               />
             ))}
           </AreaChart>
@@ -264,9 +267,10 @@ const ChartCard = memo(function ChartCard({
 
 interface TimeSeriesChartProps {
   hostKey: string;
+  gpus?: GpuInfo[];
 }
 
-export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
+export default function TimeSeriesChart({ hostKey, gpus = EMPTY_GPUS }: TimeSeriesChartProps) {
   const { t } = useI18n();
   const [range, setRange] = useState<TimeRange>(
     () => getPresetRangeAt(60, "1h", Date.now()),
@@ -426,6 +430,13 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     const dockerCpuData: Record<string, number>[] = [];
     const dockerMemNames = new Set<string>();
     const dockerMemData: Record<string, number>[] = [];
+    const gpuData = gpus.map(() => ({
+      usage: [] as { ts: number; Usage: number | null }[],
+      memory: [] as { ts: number; Used: number | null; Total: number | null }[],
+      occupancy: [] as { ts: number; Occupancy: number | null }[],
+      temperature: [] as { ts: number; Temperature: number | null }[],
+      power: [] as { ts: number; Current: number | null; Limit: number | null }[],
+    }));
 
     for (let i = 0; i < s.length; i++) {
       const r = s[i];
@@ -433,6 +444,16 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
       cpu.push({ ts: tsMs, "CPU (%)": +r.cpu_usage_percent.toFixed(1) });
       ram.push({ ts: tsMs, "RAM (%)": +r.memory_usage_percent.toFixed(1) });
+      for (let index = 0; index < gpuData.length; index++) {
+        const series = gpuData[index];
+        const gpu = r.gpus?.[index];
+        series.usage.push({ ts: tsMs, Usage: gpu?.gpu_usage_percent ?? null });
+        series.memory.push({ ts: tsMs, Used: gpu?.memory_used_mb ?? null, Total: gpu?.memory_total_mb ?? null });
+        series.occupancy.push({ ts: tsMs, Occupancy: gpu?.memory_used_mb != null && gpu.memory_total_mb != null && gpu.memory_total_mb > 0
+          ? (gpu.memory_used_mb / gpu.memory_total_mb) * 100 : null });
+        series.temperature.push({ ts: tsMs, Temperature: gpu?.temperature_c ?? null });
+        series.power.push({ ts: tsMs, Current: gpu?.power_watts ?? null, Limit: gpu?.power_limit_watts ?? null });
+      }
 
       // Network Bandwidth — backend-provided rate preferred.
       //
@@ -518,12 +539,12 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       diskIo,
       dockerCpuData, dockerCpuKeys: [...dockerCpuNames],
       dockerMemData, dockerMemKeys: [...dockerMemNames],
-      tempData,
+      tempData, gpuData,
     };
     // `displayedRows` is the lag-state snapshot of `allRows` (which itself
     // is derived from `[rows, liveMetrics, effectiveRange]`). Depending on
     // it directly is enough — every identity change flows through.
-  }, [displayedRows]);
+  }, [displayedRows, gpus]);
 
   const cpuDomain = useMemo(() => autoYDomainMulti(chartData.cpu, ["CPU (%)"], 0), [chartData.cpu]);
   const ramDomain = useMemo(() => autoYDomainMulti(chartData.ram, ["RAM (%)"], 0), [chartData.ram]);
@@ -669,6 +690,31 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             curveType={curveType}
           />
         )}
+        {gpus.map((gpu, index) => {
+          const series = chartData.gpuData[index];
+          const label = `${gpu.name || `GPU ${index}`} #${index + 1}`;
+          return series && (
+            <div key={`${gpu.name}-${index}`} style={{ display: "contents" }}>
+              <ChartCard title={`${label} · ${t.gpu.usage}`} color="var(--accent-blue)" isLoading={isInitialLoading}
+                data={series.usage} dataKey="Usage" rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtPercent} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.memory} (MB)`} color="var(--accent-purple)"
+                colors={["var(--accent-purple)", "var(--accent-cyan)"]} isLoading={isInitialLoading}
+                data={series.memory} dataKey={["Used", "Total"]} rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtMb} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.memory} (%)`} color="var(--accent-purple)" isLoading={isInitialLoading}
+                data={series.occupancy} dataKey="Occupancy" rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtPercent} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.temperature}`} color="var(--accent-red)" isLoading={isInitialLoading}
+                data={series.temperature} dataKey="Temperature" rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtTemp} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.power} (W)`} color="var(--accent-yellow)"
+                colors={["var(--accent-yellow)", "var(--accent-green)"]} isLoading={isInitialLoading}
+                data={series.power} dataKey={["Current", "Limit"]} rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={(value) => `${value.toFixed(0)}W`} curveType={curveType} connectNulls={false} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );
