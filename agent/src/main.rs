@@ -19,11 +19,15 @@ use axum::extract::Query;
 use axum::middleware;
 use axum::routing::get;
 use bollard::Docker;
+use hyper_util::rt::{TokioIo, TokioTimer};
+use hyper_util::service::TowerToHyperService;
+use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use sysinfo::System;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 
 use crate::docker_cache::{
     DockerCache, DockerMetricsMode, DockerStatsCache, docker_event_listener, docker_stats_poller,
@@ -143,6 +147,9 @@ async fn main() -> anyhow::Result<()> {
             }),
         )
         .route("/system-info", get(system_info_handler))
+        // Innermost: sign the uncompressed body. Outermost: auth, so an
+        // unauthenticated request never reaches collection or signing.
+        .layer(middleware::from_fn(auth::sign_response_middleware))
         .layer(compression)
         .layer(middleware::from_fn(auth::auth_middleware));
 
@@ -191,10 +198,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Agent exporter running on http://{}", addr);
     tracing::info!("Scrape endpoint: GET http://{}/metrics", addr);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("Agent server encountered a fatal error")?;
+    serve(listener, app).await;
 
     tracing::info!("🛑 Shutting down agent...");
     if let Some((docker_handle, stats_handle)) = docker_tasks {
@@ -222,6 +226,103 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Total simultaneous connections. The hub needs one or two.
+const MAX_CONNECTIONS: usize = 128;
+/// Simultaneous connections from a single address, so one client cannot hold
+/// every slot and starve the hub.
+const MAX_CONNECTIONS_PER_IP: usize = 8;
+/// How long a client may take to send a request head. Also reaps idle
+/// keep-alive connections; the hub simply reconnects.
+const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Releases a per-IP connection slot when the connection task ends.
+struct IpSlot {
+    counts: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    ip: IpAddr,
+}
+
+impl IpSlot {
+    fn acquire(counts: &Arc<Mutex<HashMap<IpAddr, usize>>>, ip: IpAddr) -> Option<Self> {
+        let mut map = counts.lock().ok()?;
+        let count = map.entry(ip).or_insert(0);
+        if *count >= MAX_CONNECTIONS_PER_IP {
+            return None;
+        }
+        *count += 1;
+        Some(Self {
+            counts: Arc::clone(counts),
+            ip,
+        })
+    }
+}
+
+impl Drop for IpSlot {
+    fn drop(&mut self) {
+        if let Ok(mut map) = self.counts.lock()
+            && let Some(count) = map.get_mut(&self.ip)
+        {
+            *count -= 1;
+            if *count == 0 {
+                map.remove(&self.ip);
+            }
+        }
+    }
+}
+
+/// Accept loop with bounded resource use.
+///
+/// `axum::serve` sets no header-read timeout and no connection cap, so anyone
+/// who can reach the port could park sockets until the process runs out of
+/// file descriptors and the hub's scrapes start failing. Here connections
+/// beyond the caps are dropped at accept, and one that does not send a
+/// request head in time is closed.
+async fn serve(listener: TcpListener, app: Router) {
+    let total = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+    let per_ip: Arc<Mutex<HashMap<IpAddr, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    // HTTP/1 only, on purpose: the auto (h1/h2) builder waits for the first
+    // bytes to sniff the protocol before any timeout applies, so a silent
+    // socket would never be reaped.
+    let mut builder = hyper::server::conn::http1::Builder::new();
+    builder
+        .timer(TokioTimer::new())
+        .header_read_timeout(HEADER_READ_TIMEOUT);
+
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
+
+    loop {
+        let (stream, peer) = tokio::select! {
+            _ = &mut shutdown => break,
+            accepted = listener.accept() => match accepted {
+                Ok(pair) => pair,
+                Err(e) => {
+                    // Typically EMFILE/ENFILE; back off instead of spinning.
+                    tracing::warn!(err = ?e, "⚠️ accept() failed");
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+            },
+        };
+
+        let Ok(permit) = Arc::clone(&total).try_acquire_owned() else {
+            continue; // over the global cap: drop the socket
+        };
+        let Some(ip_slot) = IpSlot::acquire(&per_ip, peer.ip()) else {
+            continue; // this address already holds its share
+        };
+
+        let service = TowerToHyperService::new(app.clone());
+        let builder = builder.clone();
+        tokio::spawn(async move {
+            let _ = builder
+                .serve_connection(TokioIo::new(stream), service)
+                .await;
+            drop(ip_slot);
+            drop(permit);
+        });
+    }
 }
 
 async fn shutdown_signal() {

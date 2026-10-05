@@ -106,13 +106,18 @@ EOM
   exit 1
 fi
 
-# Load saved credentials. CONFIG_FILE format is plain KEY=VALUE.
-AGENT_AUTH_SECRET=""
-JWT_SECRET=""
-AGENT_PORT=""
-AGENT_BIND=""
-# shellcheck disable=SC1090
-. "$CONFIG_FILE"
+# Load saved credentials. CONFIG_FILE format is plain KEY=VALUE. The file is
+# parsed, never `.`-sourced: this script runs as root, and sourcing would
+# execute anything that ever landed in a value.
+read_config_value() {
+  local line
+  line="$(grep -E "^$1=" "$CONFIG_FILE" | tail -n1 || true)"
+  printf '%s' "${line#*=}"
+}
+AGENT_AUTH_SECRET="$(read_config_value AGENT_AUTH_SECRET)"
+JWT_SECRET="$(read_config_value JWT_SECRET)"
+AGENT_PORT="$(read_config_value AGENT_PORT)"
+AGENT_BIND="$(read_config_value AGENT_BIND)"
 
 AUTH_SECRET="${AGENT_AUTH_SECRET:-${JWT_SECRET:-}}"
 if [[ -z "${AUTH_SECRET}" ]]; then
@@ -120,7 +125,11 @@ if [[ -z "${AUTH_SECRET}" ]]; then
   exit 1
 fi
 
-cmd=(--jwt-secret "$AUTH_SECRET" --ref "$REF")
+# The secret travels in the environment (install-host.sh reads
+# NS_JWT_SECRET), not on the command line where any local user could read it
+# from `ps` for as long as the install runs.
+export NS_JWT_SECRET="$AUTH_SECRET"
+cmd=(--ref "$REF")
 [[ -n "${AGENT_PORT}" ]] && cmd+=(--port "$AGENT_PORT")
 [[ -n "${AGENT_BIND}" ]] && cmd+=(--bind "$AGENT_BIND")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then

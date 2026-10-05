@@ -9,7 +9,7 @@ use super::tiers::{CHART_RAW_BOUNDARY_SECS, ROLLUP_BOUNDARY_SECS};
 ///
 /// This is intentionally narrower than `fetch_metrics_range`: it keeps the
 /// scalar time series and the small chart-only projections for disk,
-/// temperature, and Docker graphs, while omitting large snapshot fields that
+/// temperature, GPU, and Docker graphs, while omitting large snapshot fields that
 /// belong to status/detail panels.
 pub async fn fetch_chart_metrics_range(
     pool: &DbPool,
@@ -44,6 +44,7 @@ pub async fn fetch_chart_metrics_range(
                    tx_bytes_per_sec,
                    disks,
                    temperatures,
+                   gpus,
                    docker_stats,
                    timestamp
             FROM metrics
@@ -78,6 +79,7 @@ pub async fn fetch_chart_metrics_range(
                 avg_tx_bytes_per_sec AS tx_bytes_per_sec,
                 disks,
                 temperatures,
+                gpus,
                 docker_stats,
                 bucket AS timestamp
             FROM metrics_5min
@@ -108,7 +110,7 @@ pub async fn fetch_chart_metrics_range(
                 load_1min, load_5min, load_15min,
                 total_rx_bytes, total_tx_bytes,
                 avg_rx_bytes_per_sec, avg_tx_bytes_per_sec,
-                disks, temperatures, docker_stats,
+                disks, temperatures, gpus, docker_stats,
                 ROW_NUMBER() OVER (
                     PARTITION BY host_key, (bucket / 900) * 900
                     ORDER BY bucket DESC
@@ -134,6 +136,7 @@ pub async fn fetch_chart_metrics_range(
             CAST(AVG(avg_tx_bytes_per_sec) AS REAL) AS tx_bytes_per_sec,
             MAX(CASE WHEN rn = 1 THEN disks END) AS disks,
             MAX(CASE WHEN rn = 1 THEN temperatures END) AS temperatures,
+            MAX(CASE WHEN rn = 1 THEN gpus END) AS gpus,
             MAX(CASE WHEN rn = 1 THEN docker_stats END) AS docker_stats,
             bucket_15m AS timestamp
         FROM tagged

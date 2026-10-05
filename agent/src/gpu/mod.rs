@@ -1,5 +1,3 @@
-#[cfg(feature = "gpu-apple")]
-mod apple;
 #[cfg(feature = "gpu-nvidia")]
 mod nvidia;
 
@@ -13,9 +11,6 @@ pub fn collect_gpu_info() -> Vec<GpuInfo> {
 
     #[cfg(feature = "gpu-nvidia")]
     gpus.extend(nvidia::collect());
-
-    #[cfg(feature = "gpu-apple")]
-    gpus.extend(apple::collect());
 
     gpus
 }

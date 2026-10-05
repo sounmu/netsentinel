@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { Bell } from "lucide-react";
 import {
@@ -16,6 +17,7 @@ import { useI18n } from "@/app/i18n/I18nContext";
 import { PageHeader } from "@/app/components/PageHeader";
 import { AlertsTabs, type AlertTab, useAlertsTab } from "./components/AlertsTabs";
 import { AlertsSummaryBar } from "./components/AlertsSummaryBar";
+import { summarizeGlobalRules } from "./components/rule-summary";
 import { ActiveAlertsPanel } from "./components/ActiveAlertsPanel";
 import { RulesPanel } from "./components/RulesPanel";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -57,7 +59,7 @@ function AlertsPageInner() {
   const handleActiveCount = useCallback((n: number | null) => setActiveCount(n), []);
   const handleChannelsCount = useCallback((n: number | null) => setChannelsCount(n), []);
 
-  const rulesCount = globalConfigs ? globalConfigs.filter((c) => c.enabled).length : null;
+  const rulesSummary = globalConfigs ? summarizeGlobalRules(globalConfigs) : null;
   const hostsCount = hosts?.length ?? null;
   const channelsLive = channels?.length ?? channelsCount;
 
@@ -69,7 +71,7 @@ function AlertsPageInner() {
   };
 
   return (
-    <div className="page-content fade-in alerts-page">
+    <div className="page-content fade-in">
       <PageHeader
         icon={<Bell size={18} aria-hidden="true" />}
         title={t.alerts.title}
@@ -77,11 +79,28 @@ function AlertsPageInner() {
       />
 
       <AlertsSummaryBar
-        rulesCount={rulesCount}
+        rulesSummary={rulesSummary}
         hostsCount={hostsCount}
         activeCount={activeCount}
         channelsCount={channelsLive}
       />
+
+      {rulesSummary && (
+        <div className="alerts-coverage-note" role="note">
+          <div>
+            <strong>{t.alerts.coverage.title}</strong>
+            <p>
+              {rulesSummary.dockerEnabled
+                ? t.alerts.coverage.dockerEnabled
+                : t.alerts.coverage.dockerDisabled}
+            </p>
+            <p>{t.alerts.coverage.hostOverrides}</p>
+          </div>
+          <Link href="/containers" className="btn btn--secondary btn--sm">
+            {t.alerts.coverage.reviewContainers}
+          </Link>
+        </div>
+      )}
 
       <AlertsTabs current={tab} onChange={setTab} counts={counts} />
 

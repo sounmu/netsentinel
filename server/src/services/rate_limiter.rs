@@ -22,6 +22,25 @@ impl LoginRateLimiter {
     /// Check if a login attempt from the given IP is allowed.
     /// Returns `Ok(())` if allowed, `Err` with remaining seconds if rate-limited.
     pub fn check(&self, ip: &str) -> Result<(), u64> {
+        self.evaluate(ip, true)
+    }
+
+    /// Like [`check`](Self::check) but does not count this call. Pair with
+    /// [`record`](Self::record) to count only some outcomes (failed logins).
+    pub fn is_allowed(&self, key: &str) -> Result<(), u64> {
+        self.evaluate(key, false)
+    }
+
+    /// Count one event for `key` without checking the limit.
+    pub fn record(&self, key: &str) {
+        if let Ok(mut map) = self.attempts.write() {
+            map.entry(key.to_string())
+                .or_insert_with(VecDeque::new)
+                .push_back(Instant::now());
+        }
+    }
+
+    fn evaluate(&self, key: &str, count: bool) -> Result<(), u64> {
         let mut map = match self.attempts.write() {
             Ok(m) => m,
             Err(_) => {
@@ -33,7 +52,10 @@ impl LoginRateLimiter {
             }
         };
         let now = Instant::now();
-        let entry = map.entry(ip.to_string()).or_insert_with(VecDeque::new);
+        if !count && !map.contains_key(key) {
+            return Ok(());
+        }
+        let entry = map.entry(key.to_string()).or_insert_with(VecDeque::new);
 
         // Remove expired attempts
         while let Some(front) = entry.front() {
@@ -49,11 +71,16 @@ impl LoginRateLimiter {
             let oldest = entry
                 .front()
                 .expect("deque non-empty (guarded by len check)");
-            let retry_after = self.window.as_secs() - now.duration_since(*oldest).as_secs();
+            let retry_after = self
+                .window
+                .as_secs()
+                .saturating_sub(now.duration_since(*oldest).as_secs());
             return Err(retry_after.max(1));
         }
 
-        entry.push_back(now);
+        if count {
+            entry.push_back(now);
+        }
         Ok(())
     }
 
@@ -81,6 +108,20 @@ impl LoginRateLimiter {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn is_allowed_does_not_consume_budget_and_record_does() {
+        let limiter = LoginRateLimiter::new(2, Duration::from_secs(60));
+        for _ in 0..10 {
+            assert!(limiter.is_allowed("alice").is_ok());
+        }
+        limiter.record("alice");
+        assert!(limiter.is_allowed("alice").is_ok());
+        limiter.record("alice");
+        assert!(limiter.is_allowed("alice").is_err());
+        // Other keys are unaffected.
+        assert!(limiter.is_allowed("bob").is_ok());
+    }
 
     #[test]
     fn rate_limiter_allows_within_limit() {

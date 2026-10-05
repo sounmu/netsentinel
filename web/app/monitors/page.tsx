@@ -129,13 +129,20 @@ export default function MonitorsPage() {
           setShowForm(false);
         }}
         ariaLabel={t.monitors.title}
+        idPrefix="monitors"
       />
 
-      {activeTab === "http" ? (
-        <HttpMonitorsTab showForm={showForm} onCloseForm={() => setShowForm(false)} />
-      ) : (
-        <PingMonitorsTab showForm={showForm} onCloseForm={() => setShowForm(false)} />
-      )}
+      <section
+        role="tabpanel"
+        id={`monitors-panel-${activeTab}`}
+        aria-labelledby={`monitors-tab-${activeTab}`}
+      >
+        {activeTab === "http" ? (
+          <HttpMonitorsTab showForm={showForm} onCloseForm={() => setShowForm(false)} />
+        ) : (
+          <PingMonitorsTab showForm={showForm} onCloseForm={() => setShowForm(false)} />
+        )}
+      </section>
     </div>
   );
 }

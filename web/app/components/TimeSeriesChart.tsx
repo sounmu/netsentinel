@@ -16,48 +16,28 @@ import {
   ChartDiskInfo,
   ChartDockerStats,
   ChartMetricsRow,
+  GpuInfo,
   TemperatureInfo,
 } from "@/app/types/metrics";
 import { formatNetworkSpeed, formatNetworkSpeedTick } from "@/app/lib/formatters";
 import { mergeMetricsRows } from "@/app/lib/live-metrics";
 import { useHostLiveRows } from "@/app/lib/live-metrics-store";
-import DateTimePicker from "./DateTimePicker";
+import {
+  getPresetRangeAt,
+  isLivePreset,
+  resolveEffectiveRange,
+  type PresetKey,
+  type TimeRange,
+} from "@/app/lib/time-range";
+import { TimeRangeControls } from "./TimeRangeControls";
 import { useI18n } from "@/app/i18n/I18nContext";
 
-// ─── Types ───────────────────────────────────
-
-type PresetKey = "1m" | "5m" | "1h" | "6h" | "12h" | "24h" | "7d" | "30d" | "custom";
-
-interface TimeRange {
-  start: Date;
-  end: Date;
-  preset: PresetKey;
-}
-
-type PresetButtonKey = Exclude<PresetKey, "custom">;
-
-const PRESET_CONFIG: { key: PresetButtonKey; minutes: number }[] = [
-  { key: "1m", minutes: 1 },
-  { key: "5m", minutes: 5 },
-  { key: "1h", minutes: 60 },
-  { key: "6h", minutes: 60 * 6 },
-  { key: "12h", minutes: 60 * 12 },
-  { key: "24h", minutes: 60 * 24 },
-  { key: "7d", minutes: 60 * 24 * 7 },
-  { key: "30d", minutes: 60 * 24 * 30 },
-];
+const EMPTY_GPUS: GpuInfo[] = [];
 
 const PALETTE = [
   "var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)",
   "var(--chart-5)", "var(--chart-6)", "var(--chart-7)", "var(--chart-8)",
 ];
-
-// ─── Utilities ───────────────────────────────
-
-function getPresetRange(minutes: number): { start: Date; end: Date } {
-  const end = new Date();
-  return { start: new Date(end.getTime() - minutes * 60 * 1000), end };
-}
 
 // Recharts hands the tick formatter a numeric epoch ms (the value
 // from the X-axis `domain`). The previous shape converted that number
@@ -159,12 +139,13 @@ interface ChartCardProps {
   span2?: boolean;
   height?: number;
   curveType?: "monotone" | "linear" | "stepAfter";
+  connectNulls?: boolean;
 }
 
 const ChartCard = memo(function ChartCard({
   title, color, isLoading, data, dataKey, colors, rangeHours, timeTicks,
   yTickFormatter, tooltipFormatter, yUnit, yDomain, span2 = false, height = 192,
-  curveType = "monotone",
+  curveType = "monotone", connectNulls = true,
 }: ChartCardProps) {
   const { t, locale } = useI18n();
   // Stringify the dataKey into a stable dep so `useMemo` recomputes only
@@ -199,7 +180,7 @@ const ChartCard = memo(function ChartCard({
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={height}>
-          <AreaChart data={data} margin={{ top: 4, right: 6, bottom: 0, left: -8 }}>
+          <AreaChart data={data} margin={{ top: 4, right: 24, bottom: 0, left: 0 }}>
             <defs>
               {keys.map((k, idx) => {
                 const c = lineColors[idx % lineColors.length] ?? color;
@@ -227,12 +208,12 @@ const ChartCard = memo(function ChartCard({
               // window for a 1 min chart. The ticks landed in the
               // middle of the expanded domain instead of spanning it.
               allowDataOverflow={true}
-              // Disable the tick auto-drop heuristic (default
-              // `preserveEnd` drops labels on width fluctuations,
-              // producing a 5→3→5 flicker). `generateTimeTicks`
-              // produces ~6 ticks so physical overlap is a non-issue.
-              interval={0}
-              minTickGap={40}
+              // Preserve the selected range endpoints while letting Recharts
+              // reduce intermediate labels when localized timestamps would
+              // overlap on compact screens.
+              interval="preserveStartEnd"
+              minTickGap={24}
+              tickMargin={8}
               tickFormatter={(val) => formatAxisTime(val as number, rangeHours, locale)}
               tick={{ fill: "var(--muted)", fontSize: 10 }}
               tickLine={false}
@@ -275,7 +256,7 @@ const ChartCard = memo(function ChartCard({
                 dot={false}
                 activeDot={{ r: 3, fill: lineColors[idx % lineColors.length] ?? color, stroke: "var(--bg-card)", strokeWidth: 2 }}
                 isAnimationActive={false}
-                connectNulls
+                connectNulls={connectNulls}
               />
             ))}
           </AreaChart>
@@ -289,14 +270,14 @@ const ChartCard = memo(function ChartCard({
 
 interface TimeSeriesChartProps {
   hostKey: string;
+  gpus?: GpuInfo[];
 }
 
-export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
+export default function TimeSeriesChart({ hostKey, gpus = EMPTY_GPUS }: TimeSeriesChartProps) {
   const { t } = useI18n();
-  const [range, setRange] = useState<TimeRange>(() => {
-    const { start, end } = getPresetRange(60);
-    return { start, end, preset: "1h" };
-  });
+  const [range, setRange] = useState<TimeRange>(
+    () => getPresetRangeAt(60, "1h", Date.now()),
+  );
 
   const liveRows = useHostLiveRows(hostKey);
   const latestLiveTimestamp = liveRows.at(-1)?.timestamp ?? null;
@@ -317,25 +298,17 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   // Initial mount fallback uses `Date.now()` captured by the lazy
   // `useState` initializer; once an SSE event lands the anchor jumps
   // to that timestamp and stays in sync from there.
-  const isLivePreset = range.preset === "1m" || range.preset === "5m";
+  const livePresetSelected = isLivePreset(range.preset);
   const [initialAnchorTs] = useState<number>(() => Date.now());
-  const liveAnchorTs = useMemo(() => {
-    if (!isLivePreset) return null;
-    if (latestLiveTimestamp) {
-      return new Date(latestLiveTimestamp).getTime();
-    }
-    return initialAnchorTs;
-  }, [isLivePreset, latestLiveTimestamp, initialAnchorTs]);
 
-  const effectiveRange = useMemo<TimeRange>(() => {
-    if (!isLivePreset || liveAnchorTs == null) return range;
-    const windowMs = range.preset === "1m" ? 60_000 : 300_000;
-    return {
-      start: new Date(liveAnchorTs - windowMs),
-      end: new Date(liveAnchorTs),
-      preset: range.preset,
-    };
-  }, [range, isLivePreset, liveAnchorTs]);
+  const effectiveRange = useMemo(
+    () => resolveEffectiveRange(
+      range,
+      latestLiveTimestamp,
+      initialAnchorTs,
+    ),
+    [range, latestLiveTimestamp, initialAnchorTs],
+  );
 
   const swrKey = useMemo(
     () =>
@@ -355,9 +328,9 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
         // SSE samples are held in a tiny per-chart ring buffer, so the
         // REST baseline can lag briefly without dropping an in-between
         // point from the visible series.
-        isLivePreset ? 30 : 60,
+        livePresetSelected ? 30 : 60,
       ),
-    [hostKey, effectiveRange, isLivePreset]
+    [hostKey, effectiveRange, livePresetSelected]
   );
 
   const { data: rows = [], isValidating } = useSWR<ChartMetricsRow[]>(swrKey, fetcher, {
@@ -426,21 +399,21 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
   // `displayedRange` re-syncs to the rolling `effectiveRange` on every
   // settled render.
   const timeTicks = useMemo(
-    () => generateTimeTicks(displayedRange.start, displayedRange.end, 5),
-    [displayedRange]
+    () => generateTimeTicks(
+      displayedRange.start,
+      displayedRange.end,
+      5,
+    ),
+    [displayedRange],
   );
 
+  const rangeIsSettling =
+    displayedRange.preset !== effectiveRange.preset
+    || displayedRange.start.getTime() !== effectiveRange.start.getTime()
+    || displayedRange.end.getTime() !== effectiveRange.end.getTime();
+
   const onPresetClick = useCallback((minutes: number, key: PresetKey) => {
-    const { start, end } = getPresetRange(minutes);
-    setRange({ start, end, preset: key });
-  }, []);
-
-  const onCustomStartChange = useCallback((date: Date) => {
-    setRange((prev) => ({ ...prev, start: date, preset: "custom" }));
-  }, []);
-
-  const onCustomEndChange = useCallback((date: Date) => {
-    setRange((prev) => ({ ...prev, end: date, preset: "custom" }));
+    setRange(getPresetRangeAt(minutes, key, Date.now()));
   }, []);
 
   // ─── Data extraction (single pass) ──────────────
@@ -460,6 +433,13 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
     const dockerCpuData: Record<string, number>[] = [];
     const dockerMemNames = new Set<string>();
     const dockerMemData: Record<string, number>[] = [];
+    const gpuData = gpus.map(() => ({
+      usage: [] as { ts: number; Usage: number | null }[],
+      memory: [] as { ts: number; Used: number | null; Total: number | null }[],
+      occupancy: [] as { ts: number; Occupancy: number | null }[],
+      temperature: [] as { ts: number; Temperature: number | null }[],
+      power: [] as { ts: number; Current: number | null; Limit: number | null }[],
+    }));
 
     for (let i = 0; i < s.length; i++) {
       const r = s[i];
@@ -467,6 +447,16 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
       cpu.push({ ts: tsMs, "CPU (%)": +r.cpu_usage_percent.toFixed(1) });
       ram.push({ ts: tsMs, "RAM (%)": +r.memory_usage_percent.toFixed(1) });
+      for (let index = 0; index < gpuData.length; index++) {
+        const series = gpuData[index];
+        const gpu = r.gpus?.[index];
+        series.usage.push({ ts: tsMs, Usage: gpu?.gpu_usage_percent ?? null });
+        series.memory.push({ ts: tsMs, Used: gpu?.memory_used_mb ?? null, Total: gpu?.memory_total_mb ?? null });
+        series.occupancy.push({ ts: tsMs, Occupancy: gpu?.memory_used_mb != null && gpu.memory_total_mb != null && gpu.memory_total_mb > 0
+          ? (gpu.memory_used_mb / gpu.memory_total_mb) * 100 : null });
+        series.temperature.push({ ts: tsMs, Temperature: gpu?.temperature_c ?? null });
+        series.power.push({ ts: tsMs, Current: gpu?.power_watts ?? null, Limit: gpu?.power_limit_watts ?? null });
+      }
 
       // Network Bandwidth — backend-provided rate preferred.
       //
@@ -552,12 +542,12 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
       diskIo,
       dockerCpuData, dockerCpuKeys: [...dockerCpuNames],
       dockerMemData, dockerMemKeys: [...dockerMemNames],
-      tempData,
+      tempData, gpuData,
     };
     // `displayedRows` is the lag-state snapshot of `allRows` (which itself
     // is derived from `[rows, liveMetrics, effectiveRange]`). Depending on
     // it directly is enough — every identity change flows through.
-  }, [displayedRows]);
+  }, [displayedRows, gpus]);
 
   const cpuDomain = useMemo(() => autoYDomainMulti(chartData.cpu, ["CPU (%)"], 0), [chartData.cpu]);
   const ramDomain = useMemo(() => autoYDomainMulti(chartData.ram, ["RAM (%)"], 0), [chartData.ram]);
@@ -571,27 +561,17 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
 
   return (
     <div>
-      {/* Time range controls */}
-      <div className="time-controls">
-        <div className="segmented" role="tablist" aria-label={t.chart.timeRange}>
-          {PRESET_CONFIG.map(({ key, minutes }) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={range.preset === key}
-              className="segmented__item"
-              onClick={() => onPresetClick(minutes, key)}
-            >
-              {t.chart.presets[key]}
-            </button>
-          ))}
-        </div>
-        <div className="toolbar-divider" />
-        <DateTimePicker value={range.start} onChange={onCustomStartChange} />
-        <span className="toolbar-tilde">~</span>
-        <DateTimePicker value={range.end} onChange={onCustomEndChange} />
-      </div>
+      <TimeRangeControls
+        displayedRange={displayedRange}
+        rangeIsSettling={rangeIsSettling}
+        presetLabels={t.chart.presets}
+        browserTimeTemplate={t.chart.browserTime}
+        utcStorageLabel={t.chart.utcStorage}
+        rangeUpdatingLabel={t.chart.rangeUpdating}
+        rangeLabel={t.chart.timeRange}
+        onPresetClick={onPresetClick}
+        onRangeChange={setRange}
+      />
 
       {/* Chart grid */}
       <div className="chart-grid">
@@ -714,6 +694,31 @@ export default function TimeSeriesChart({ hostKey }: TimeSeriesChartProps) {
             curveType={curveType}
           />
         )}
+        {gpus.map((gpu, index) => {
+          const series = chartData.gpuData[index];
+          const label = `${gpu.name || `GPU ${index}`} #${index + 1}`;
+          return series && (
+            <div key={`${gpu.name}-${index}`} style={{ display: "contents" }}>
+              <ChartCard title={`${label} · ${t.gpu.usage}`} color="var(--chart-1)" isLoading={isInitialLoading}
+                data={series.usage} dataKey="Usage" rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtPercent} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.memory} (MB)`} color="var(--chart-2)"
+                colors={["var(--chart-2)", "var(--chart-3)"]} isLoading={isInitialLoading}
+                data={series.memory} dataKey={["Used", "Total"]} rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtMb} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.memory} (%)`} color="var(--chart-2)" isLoading={isInitialLoading}
+                data={series.occupancy} dataKey="Occupancy" rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtPercent} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.temperature}`} color="var(--chart-4)" isLoading={isInitialLoading}
+                data={series.temperature} dataKey="Temperature" rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={fmtTemp} curveType={curveType} connectNulls={false} />
+              <ChartCard title={`${label} · ${t.gpu.power} (W)`} color="var(--chart-5)"
+                colors={["var(--chart-5)", "var(--chart-3)"]} isLoading={isInitialLoading}
+                data={series.power} dataKey={["Current", "Limit"]} rangeHours={rangeHours} timeTicks={timeTicks}
+                yTickFormatter={(value) => `${value.toFixed(0)}W`} curveType={curveType} connectNulls={false} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

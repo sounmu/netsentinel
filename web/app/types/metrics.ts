@@ -97,6 +97,7 @@ export interface ChartMetricsRow {
   disks: ChartDiskInfo[];
   temperatures: TemperatureInfo[];
   docker_stats: ChartDockerStats[];
+  gpus?: GpuInfo[];
   timestamp: string;
 }
 
@@ -165,6 +166,7 @@ export interface HostMetricsPayload {
   disks: DiskInfo[];
   temperatures: TemperatureInfo[];
   docker_stats: DockerContainerStats[];
+  gpus?: GpuInfo[];
   timestamp: string;
 }
 
@@ -206,11 +208,12 @@ export interface TemperatureInfo {
 
 export interface GpuInfo {
   name: string;
-  gpu_usage_percent: number;
-  memory_used_mb: number;
-  memory_total_mb: number;
-  temperature_c: number;
-  power_watts?: number;
+  gpu_usage_percent: number | null;
+  memory_used_mb: number | null;
+  memory_total_mb: number | null;
+  temperature_c: number | null;
+  power_watts?: number | null;
+  power_limit_watts?: number | null;
   frequency_mhz?: number;
 }
 

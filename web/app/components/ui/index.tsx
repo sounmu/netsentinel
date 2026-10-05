@@ -12,7 +12,9 @@
  * See DESIGN.md for the rules these components encode.
  */
 
-import { useEffect, type ReactNode } from "react";
+import {
+  useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode,
+} from "react";
 import { X } from "lucide-react";
 import { meterTone, type MeterTone } from "@/app/lib/status";
 
@@ -157,22 +159,67 @@ export function Segmented<T extends string>({
   value,
   onChange,
   ariaLabel,
+  idPrefix,
 }: {
   options: readonly SegmentedOption<T>[];
   value: T;
   onChange: (next: T) => void;
   ariaLabel: string;
+  /** When set, each tab gets `${idPrefix}-tab-${value}` and points at
+   *  `${idPrefix}-panel-${value}`, so a page can label its tabpanel. */
+  idPrefix?: string;
 }) {
+  const tabRefs = useRef(new Map<T, HTMLButtonElement | null>());
+
+  // WAI-ARIA tabs pattern: one tab stop for the whole list, arrows move
+  // between tabs, Home/End jump to the ends. Selection follows focus.
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const index = options.findIndex((opt) => opt.value === value);
+    let next: number;
+    switch (event.key) {
+      case "ArrowRight":
+        next = (index + 1) % options.length;
+        break;
+      case "ArrowLeft":
+        next = (index - 1 + options.length) % options.length;
+        break;
+      case "Home":
+        next = 0;
+        break;
+      case "End":
+        next = options.length - 1;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    const target = options[next].value;
+    onChange(target);
+    tabRefs.current.get(target)?.focus();
+  };
+
   return (
-    <div className="segmented" role="tablist" aria-label={ariaLabel}>
+    <div
+      className="segmented"
+      role="tablist"
+      aria-label={ariaLabel}
+      aria-orientation="horizontal"
+    >
       {options.map((opt) => (
         <button
           key={opt.value}
+          ref={(node) => {
+            tabRefs.current.set(opt.value, node);
+          }}
           type="button"
           role="tab"
+          id={idPrefix ? `${idPrefix}-tab-${opt.value}` : undefined}
+          aria-controls={idPrefix ? `${idPrefix}-panel-${opt.value}` : undefined}
           aria-selected={value === opt.value}
+          tabIndex={value === opt.value ? 0 : -1}
           className="segmented__item"
           onClick={() => onChange(opt.value)}
+          onKeyDown={handleKeyDown}
         >
           {opt.icon}
           {opt.label}

@@ -11,6 +11,7 @@ import {
 } from "@/app/lib/sse-context";
 import { fetcher, getHostsUrl } from "@/app/lib/api";
 import DockerGrid from "@/app/components/DockerGrid";
+import { getCurrentDockerStats } from "@/app/lib/docker-stats";
 const TimeSeriesChart = dynamic(
   () => import("@/app/components/TimeSeriesChart"),
   { ssr: false, loading: () => <div className="skeleton" style={{ height: 300 }} /> },
@@ -33,6 +34,9 @@ import {
   MemoryStick,
 } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
+import type { GpuInfo } from "@/app/types/metrics";
+
+const EMPTY_GPUS: GpuInfo[] = [];
 
 /** Maps host status onto the shared dot tones. */
 const DOT_TONE = { online: "ok", pending: "warn", offline: "off" } as const;
@@ -121,7 +125,7 @@ export default function HostPageClient() {
   const hasData = liveMetrics !== null || statusData !== null;
 
   const ports = statusData?.ports ?? [];
-  const gpus = statusData?.gpus ?? [];
+  const gpus = liveMetrics?.gpus ?? statusData?.gpus ?? EMPTY_GPUS;
   const dockerContainers = statusData?.docker_containers ?? [];
   const latestTimestamp = liveMetrics?.timestamp ?? statusData?.last_seen ?? null;
   const hasDockerData = dockerContainers.length > 0;
@@ -261,7 +265,7 @@ export default function HostPageClient() {
 
       {hasData && (
         <>
-          <TimeSeriesChart hostKey={decodedHostKey} />
+          <TimeSeriesChart hostKey={decodedHostKey} gpus={gpus} />
 
           {/* Daily uptime breakdown — day boundaries are in the workspace
               timezone reported by the API, labelled accordingly. */}
@@ -278,10 +282,14 @@ export default function HostPageClient() {
 
           {hasDockerData && (
             <SectionCard title={`${t.host.dockerContainers} (${dockerContainers.length})`}>
-              <DockerGrid containers={dockerContainers} />
+              <DockerGrid
+                containers={dockerContainers}
+                stats={statusData ? getCurrentDockerStats(liveMetrics ?? undefined, statusData) : undefined}
+              />
             </SectionCard>
           )}
 
+          {/* GPU metrics follow the same SSE cadence as the other host metrics. */}
           {gpus.length > 0 && (
             <div className="host-detail-half-grid">
               <SectionCard title={`${t.host.gpu} (${gpus.length})`}>

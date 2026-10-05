@@ -22,8 +22,8 @@ mod sqlite_tests {
     use super::*;
     use crate::db::DbPool;
     use crate::models::agent_metrics::{
-        AgentMetrics, DiskInfo, DockerContainer, DockerContainerStats, LoadAverage, NetworkTotal,
-        PortStatus, SystemMetrics, TemperatureInfo,
+        AgentMetrics, DiskInfo, DockerContainer, DockerContainerStats, GpuInfo, LoadAverage,
+        NetworkTotal, PortStatus, SystemMetrics, TemperatureInfo,
     };
     use chrono::Utc;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -243,6 +243,15 @@ mod sqlite_tests {
             label: "CPU".into(),
             temperature_c: 55.0,
         }];
+        m.system.gpus = vec![GpuInfo {
+            name: "GPU 0".into(),
+            gpu_usage_percent: Some(72),
+            memory_used_mb: Some(2048),
+            memory_total_mb: Some(8192),
+            temperature_c: Some(65),
+            power_watts: Some(125.5),
+            power_limit_watts: Some(200.0),
+        }];
         m.docker_stats = vec![DockerContainerStats {
             container_name: "app".into(),
             cpu_percent: 7.5,
@@ -275,6 +284,14 @@ mod sqlite_tests {
         assert_eq!(row.disks[0].mount_point, "/");
         assert!((row.disks[0].usage_percent - 60.0).abs() < 0.01);
         assert_eq!(row.temperatures[0].label, "CPU");
+        assert_eq!(row.gpus[0].name, "GPU 0");
+        assert_eq!(row.gpus[0].gpu_usage_percent, Some(72));
+        assert_eq!(row.gpus[0].power_watts, Some(125.5));
+        assert_eq!(row.gpus[0].power_limit_watts, Some(200.0));
+        assert_eq!(
+            serde_json::to_value(row).unwrap()["gpus"][0]["memory_used_mb"],
+            2048
+        );
         assert_eq!(row.docker_stats[0].container_name, "app");
         assert!((row.docker_stats[0].cpu_percent - 7.5).abs() < 0.01);
         assert_eq!(row.networks.as_ref().unwrap().total_rx_bytes, 1_000_000);
@@ -292,7 +309,7 @@ mod sqlite_tests {
             INSERT INTO metrics_5min (
                 host_key, bucket, cpu_usage_percent, memory_usage_percent,
                 load_1min, load_5min, load_15min, is_online, sample_count,
-                total_rx_bytes, total_tx_bytes, disks, temperatures, docker_stats,
+                total_rx_bytes, total_tx_bytes, disks, temperatures, gpus, docker_stats,
                 avg_rx_bytes_per_sec, avg_tx_bytes_per_sec
             )
             VALUES (
@@ -301,6 +318,7 @@ mod sqlite_tests {
                 12345, 67890,
                 '[{"name":"disk0","mount_point":"/","total_gb":100,"available_gb":50,"usage_percent":50,"read_bytes_per_sec":1,"write_bytes_per_sec":2}]',
                 '[{"label":"CPU","temperature_c":44}]',
+                '[{"name":"GPU 1","gpu_usage_percent":35,"memory_used_mb":1024,"memory_total_mb":4096,"temperature_c":52}]',
                 '[{"container_name":"app","cpu_percent":3.5,"memory_usage_mb":64,"memory_limit_mb":1024,"net_rx_bytes":1,"net_tx_bytes":2}]',
                 111.0, 222.0
             )
@@ -325,6 +343,9 @@ mod sqlite_tests {
         assert!((rows[0].cpu_usage_percent - 12.5).abs() < 0.01);
         assert_eq!(rows[0].networks.as_ref().unwrap().rx_bytes_per_sec, 111.0);
         assert_eq!(rows[0].disks[0].mount_point, "/");
+        assert_eq!(rows[0].gpus[0].name, "GPU 1");
+        assert_eq!(rows[0].gpus[0].memory_total_mb, Some(4096));
+        assert_eq!(rows[0].gpus[0].power_watts, None);
     }
 
     #[tokio::test]
@@ -348,7 +369,7 @@ mod sqlite_tests {
             INSERT INTO metrics_5min (
                 host_key, bucket, cpu_usage_percent, memory_usage_percent,
                 load_1min, load_5min, load_15min, is_online, sample_count,
-                total_rx_bytes, total_tx_bytes, disks, temperatures, docker_stats,
+                total_rx_bytes, total_tx_bytes, disks, temperatures, gpus, docker_stats,
                 avg_rx_bytes_per_sec, avg_tx_bytes_per_sec
             )
             VALUES (
@@ -357,6 +378,7 @@ mod sqlite_tests {
                 100, 200,
                 '[{"name":"older","mount_point":"/older","total_gb":50,"available_gb":25,"usage_percent":50,"read_bytes_per_sec":1,"write_bytes_per_sec":2}]',
                 '[{"label":"OLD","temperature_c":30}]',
+                '[{"name":"older GPU","gpu_usage_percent":10,"memory_used_mb":512,"memory_total_mb":4096,"temperature_c":40}]',
                 '[{"container_name":"old","cpu_percent":1.0,"memory_usage_mb":10,"memory_limit_mb":256,"net_rx_bytes":1,"net_tx_bytes":2}]',
                 100.0, 200.0
             )
@@ -375,7 +397,7 @@ mod sqlite_tests {
             INSERT INTO metrics_5min (
                 host_key, bucket, cpu_usage_percent, memory_usage_percent,
                 load_1min, load_5min, load_15min, is_online, sample_count,
-                total_rx_bytes, total_tx_bytes, disks, temperatures, docker_stats,
+                total_rx_bytes, total_tx_bytes, disks, temperatures, gpus, docker_stats,
                 avg_rx_bytes_per_sec, avg_tx_bytes_per_sec
             )
             VALUES (
@@ -384,6 +406,7 @@ mod sqlite_tests {
                 500, 700,
                 '[{"name":"newer","mount_point":"/newer","total_gb":100,"available_gb":40,"usage_percent":60,"read_bytes_per_sec":3,"write_bytes_per_sec":4}]',
                 '[{"label":"NEW","temperature_c":55}]',
+                '[{"name":"newer GPU","gpu_usage_percent":85,"memory_used_mb":3072,"memory_total_mb":4096,"temperature_c":75,"power_watts":140.5,"power_limit_watts":200}]',
                 '[{"container_name":"new","cpu_percent":7.5,"memory_usage_mb":128,"memory_limit_mb":1024,"net_rx_bytes":9,"net_tx_bytes":10}]',
                 300.0, 400.0
             )
@@ -435,6 +458,9 @@ mod sqlite_tests {
         assert_eq!(row.disks.len(), 1);
         assert_eq!(row.disks[0].mount_point, "/newer");
         assert_eq!(row.temperatures[0].label, "NEW");
+        assert_eq!(row.gpus[0].name, "newer GPU");
+        assert_eq!(row.gpus[0].gpu_usage_percent, Some(85));
+        assert_eq!(row.gpus[0].power_watts, Some(140.5));
         assert_eq!(row.docker_stats[0].container_name, "new");
     }
 

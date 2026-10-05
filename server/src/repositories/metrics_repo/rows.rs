@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::models::agent_metrics::{DiskInfo, DockerContainerStats, TemperatureInfo};
+use crate::models::agent_metrics::{DiskInfo, DockerContainerStats, GpuInfo, TemperatureInfo};
 
 // All API timestamps are serialized as canonical **UTC RFC 3339** (e.g.
 // `2026-06-16T11:20:30Z`) via chrono's default `DateTime<Utc>` Serialize impl —
@@ -79,6 +79,7 @@ pub struct ChartMetricsRow {
     pub networks: Option<ChartNetwork>,
     pub disks: Vec<ChartDiskInfo>,
     pub temperatures: Vec<TemperatureInfo>,
+    pub gpus: Vec<GpuInfo>,
     pub docker_stats: Vec<ChartDockerStats>,
     pub timestamp: DateTime<Utc>,
 }
@@ -261,6 +262,7 @@ pub(super) struct ChartMetricsRowRaw {
     tx_bytes_per_sec: Option<f64>,
     disks: Option<String>,
     temperatures: Option<String>,
+    gpus: Option<String>,
     docker_stats: Option<String>,
     timestamp: DateTime<Utc>,
 }
@@ -314,6 +316,7 @@ impl TryFrom<ChartMetricsRowRaw> for ChartMetricsRow {
                 })
                 .collect(),
             temperatures: parse_json_vec(raw.temperatures)?,
+            gpus: parse_json_vec(raw.gpus)?,
             docker_stats: docker_stats
                 .into_iter()
                 .map(|s| ChartDockerStats {

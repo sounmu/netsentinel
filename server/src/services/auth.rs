@@ -15,6 +15,19 @@ pub struct Claims {
     /// Audience claim — "agent" for agent tokens (token type separation)
     #[serde(default)]
     pub aud: String,
+    /// Target `host_key`. Makes tokens for different hosts distinct even when
+    /// legacy hosts share one secret.
+    #[serde(default)]
+    pub sub: String,
+    /// Random per-scrape id. The agent signs its response over the token, so
+    /// a unique token ties each response to exactly one request.
+    #[serde(default)]
+    pub jti: String,
+    /// Hex SHA-256 of the request target (path and query) this token was
+    /// minted for. The agent refuses the token for any other target, so the
+    /// monitored ports and containers cannot be rewritten in transit.
+    #[serde(default)]
+    pub rq: String,
 }
 
 // Visibility is `pub(crate)` — only `services::user_auth` needs these, and
@@ -22,8 +35,17 @@ pub struct Claims {
 // "within this crate only" protects against a well-meaning contributor
 // re-exporting them from a test/example crate and leaking key material
 // through a dependency graph.
+//
+// These sign and verify **user** sessions only. They are deliberately not
+// derived from `JWT_SECRET`: legacy agents hold that value, and anything
+// derivable from it could be recomputed on a monitored host.
 pub(crate) static ENCODING_KEY: OnceLock<EncodingKey> = OnceLock::new();
 pub(crate) static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
+
+/// `JWT_SECRET` as shared with legacy agents (hosts without a per-agent
+/// enrollment secret). Used for their scrape tokens and response signatures,
+/// never for user sessions.
+static LEGACY_AGENT_SECRET: OnceLock<String> = OnceLock::new();
 
 /// Per-user "tokens issued before this instant are invalid" cutoff cache.
 ///
@@ -32,11 +54,68 @@ pub(crate) static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
 /// A new write is kept only if it is strictly later than the existing entry.
 static TOKEN_REVOCATION_CACHE: OnceLock<Arc<RwLock<HashMap<i32, i64>>>> = OnceLock::new();
 
-pub fn init_encoding_key(secret: &str) {
+/// Initialize the key that signs user access tokens.
+pub fn init_user_signing_key(secret: &str) {
     let key = EncodingKey::from_secret(secret.as_bytes());
     let _ = ENCODING_KEY.set(key);
     let dk = DecodingKey::from_secret(secret.as_bytes());
     let _ = DECODING_KEY.set(dk);
+}
+
+/// Initialize the secret shared with legacy agents (`JWT_SECRET`).
+pub fn init_legacy_agent_secret(secret: &str) {
+    let _ = LEGACY_AGENT_SECRET.set(secret.to_string());
+}
+
+/// The secret shared with legacy agents, if initialized.
+pub fn legacy_agent_secret() -> Option<&'static str> {
+    LEGACY_AGENT_SECRET.get().map(String::as_str)
+}
+
+const USER_JWT_SECRET_NAME: &str = "user_jwt_secret";
+
+/// Resolve the user-session signing secret.
+///
+/// `USER_JWT_SECRET` wins when set (operators who want the key outside the
+/// database). Otherwise a random 256-bit key is generated on first boot and
+/// persisted in `server_secrets`, so sessions survive restarts with no extra
+/// configuration.
+pub async fn resolve_user_jwt_secret(
+    pool: &crate::db::DbPool,
+    legacy_agent_secret: &str,
+) -> anyhow::Result<String> {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+    use base64::Engine;
+
+    if let Ok(from_env) = std::env::var("USER_JWT_SECRET") {
+        let from_env = from_env.trim().to_string();
+        if !from_env.is_empty() {
+            if from_env.len() < 32 {
+                anyhow::bail!("USER_JWT_SECRET must be ≥ 32 bytes");
+            }
+            if from_env == legacy_agent_secret {
+                anyhow::bail!(
+                    "USER_JWT_SECRET must differ from JWT_SECRET — the point of the \
+                     separate key is that agents never hold it."
+                );
+            }
+            return Ok(from_env);
+        }
+    }
+
+    let mut raw = [0_u8; 32];
+    OsRng.fill_bytes(&mut raw);
+    let candidate = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+    sqlx::query("INSERT OR IGNORE INTO server_secrets (name, value) VALUES (?1, ?2)")
+        .bind(USER_JWT_SECRET_NAME)
+        .bind(&candidate)
+        .execute(pool)
+        .await?;
+    let stored: String = sqlx::query_scalar("SELECT value FROM server_secrets WHERE name = ?1")
+        .bind(USER_JWT_SECRET_NAME)
+        .fetch_one(pool)
+        .await?;
+    Ok(stored)
 }
 
 /// Initialize the token revocation cache reference (called from main.rs).
@@ -107,26 +186,92 @@ pub(crate) fn is_token_iat_still_valid(user_id: i32, iat: usize) -> bool {
     }
 }
 
-fn encode_agent_jwt(key: &EncodingKey) -> Result<String, AppError> {
-    let exp = Utc::now().timestamp() as usize + 60;
+/// Hex SHA-256 of a request target, as carried in the `rq` claim.
+pub fn request_target_digest(request_target: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(request_target.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Mint a 60 s scrape token for one request to `host_key`, signed with that
+/// agent's secret. `request_target` is the path and query exactly as sent.
+pub fn generate_agent_jwt_with_secret(
+    secret: &str,
+    host_key: &str,
+    request_target: &str,
+) -> Result<String, AppError> {
+    use argon2::password_hash::rand_core::{OsRng, RngCore};
+
+    let mut nonce = [0_u8; 16];
+    OsRng.fill_bytes(&mut nonce);
     let claims = Claims {
-        exp,
+        exp: Utc::now().timestamp() as usize + 60,
         aud: "agent".to_string(),
+        sub: host_key.to_string(),
+        jti: nonce.iter().map(|b| format!("{b:02x}")).collect(),
+        rq: request_target_digest(request_target),
     };
-    encode(&Header::new(Algorithm::HS256), &claims, key)
+    let key = EncodingKey::from_secret(secret.as_bytes());
+    encode(&Header::new(Algorithm::HS256), &claims, &key)
         .map_err(|e| AppError::Internal(format!("JWT encoding failed: {e}")))
 }
 
-pub fn generate_jwt() -> Result<String, AppError> {
-    let key = ENCODING_KEY
-        .get()
-        .ok_or_else(|| AppError::Internal("JWT encoding key not initialized".into()))?;
-    encode_agent_jwt(key)
+/// Header carrying the agent's response signature: `v1=<hex hmac-sha256>`.
+pub const RESPONSE_SIGNATURE_HEADER: &str = "x-netsentinel-signature";
+
+/// Result of checking an agent response against its signature header.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ResponseSignature {
+    Valid,
+    /// No signature header — an agent that predates response signing.
+    Missing,
+    Invalid,
 }
 
-pub fn generate_agent_jwt_with_secret(secret: &str) -> Result<String, AppError> {
-    let key = EncodingKey::from_secret(secret.as_bytes());
-    encode_agent_jwt(&key)
+/// Verify `HMAC-SHA256(secret, token || 0x00 || body)` from the agent.
+///
+/// The scrape channel is plain HTTP, so without this an on-path attacker can
+/// rewrite metrics (hide an outage, fake a recovery). Binding the MAC to the
+/// request token stops an old response being replayed for a new scrape.
+pub fn verify_agent_response_signature(
+    secret: &str,
+    token: &str,
+    body: &[u8],
+    header: Option<&str>,
+) -> ResponseSignature {
+    use hmac::{Hmac, Mac};
+
+    let Some(header) = header else {
+        return ResponseSignature::Missing;
+    };
+    let Some(expected) = header.trim().strip_prefix("v1=").and_then(decode_hex) else {
+        return ResponseSignature::Invalid;
+    };
+    let Ok(mut mac) = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()) else {
+        return ResponseSignature::Invalid;
+    };
+    mac.update(token.as_bytes());
+    mac.update(&[0]);
+    mac.update(body);
+    match mac.verify_slice(&expected) {
+        Ok(()) => ResponseSignature::Valid,
+        Err(_) => ResponseSignature::Invalid,
+    }
+}
+
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    s.as_bytes()
+        .chunks(2)
+        .map(|pair| match pair {
+            [_, _] => u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok(),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Axum extractor that only accepts **user** JWTs (aud: "user").
@@ -296,8 +441,8 @@ mod tests {
 
     #[test]
     fn test_generate_jwt_produces_three_part_token() {
-        init_encoding_key(TEST_SECRET);
-        let token = generate_jwt().expect("JWT generation failed");
+        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101", "/metrics")
+            .expect("JWT generation failed");
         assert!(!token.is_empty());
         assert_eq!(
             token.split('.').count(),
@@ -308,8 +453,8 @@ mod tests {
 
     #[test]
     fn test_generated_jwt_is_decodable_with_correct_secret() {
-        init_encoding_key(TEST_SECRET);
-        let token = generate_jwt().expect("JWT generation failed");
+        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101", "/metrics")
+            .expect("JWT generation failed");
         let result = decode::<Claims>(&token, &test_decoding_key(), &test_validation());
         assert!(
             result.is_ok(),
@@ -326,6 +471,9 @@ mod tests {
             &Claims {
                 exp: usize::MAX,
                 aud: "agent".to_string(),
+                sub: String::new(),
+                jti: String::new(),
+                rq: String::new(),
             },
             &EncodingKey::from_secret(b"correct-secret"),
         )
@@ -347,8 +495,8 @@ mod tests {
     #[test]
     fn test_generated_jwt_exp_is_in_future() {
         use chrono::Utc;
-        init_encoding_key(TEST_SECRET);
-        let token = generate_jwt().expect("JWT generation failed");
+        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101", "/metrics")
+            .expect("JWT generation failed");
         let data = decode::<Claims>(&token, &test_decoding_key(), &test_validation())
             .expect("Decoding failed");
         let now = Utc::now().timestamp() as usize;
@@ -369,4 +517,115 @@ mod tests {
     // rather than ported — the `user_auth` tests already cover the same
     // code path (`decode_user_jwt`) and there is no longer a query-parameter
     // JWT acceptance point to exercise.
+
+    #[tokio::test]
+    async fn user_signing_secret_is_generated_once_and_never_the_agent_secret() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        let options = SqliteConnectOptions::from_str("sqlite::memory:").unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let first = resolve_user_jwt_secret(&pool, TEST_SECRET).await.unwrap();
+        let second = resolve_user_jwt_secret(&pool, TEST_SECRET).await.unwrap();
+        assert_eq!(first, second, "the key must survive restarts");
+        assert_ne!(first, TEST_SECRET);
+        assert!(first.len() >= 32);
+    }
+
+    #[test]
+    fn request_digest_matches_the_agent_format() {
+        // Pinned value: the agent asserts the same digest in its own tests.
+        assert_eq!(
+            request_target_digest("/metrics"),
+            "b4bbca6caf5247626ee41b68231d40e1c1977ec9c3d0fc26b6809e1c703ca2b7"
+        );
+    }
+
+    #[test]
+    fn agent_tokens_are_bound_to_the_request_target() {
+        let claims_for = |target: &str| {
+            let token =
+                generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101", target).unwrap();
+            decode::<Claims>(&token, &test_decoding_key(), &test_validation())
+                .unwrap()
+                .claims
+        };
+        let ports = claims_for("/metrics?ports=80,443");
+        assert_eq!(ports.rq, request_target_digest("/metrics?ports=80,443"));
+        assert_eq!(ports.rq.len(), 64);
+        // A different port list, or a different endpoint, is a different token.
+        assert_ne!(ports.rq, claims_for("/metrics?ports=80").rq);
+        assert_ne!(ports.rq, claims_for("/system-info").rq);
+    }
+
+    #[test]
+    fn agent_tokens_are_bound_to_host_and_unique_per_scrape() {
+        let a = generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101", "/metrics").unwrap();
+        let b = generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101", "/metrics").unwrap();
+        assert_ne!(a, b, "jti must make every scrape token distinct");
+        let claims = decode::<Claims>(&a, &test_decoding_key(), &test_validation())
+            .unwrap()
+            .claims;
+        assert_eq!(claims.sub, "10.0.0.1:9101");
+        assert_eq!(claims.jti.len(), 32);
+    }
+
+    fn sign(secret: &str, token: &str, body: &[u8]) -> String {
+        use hmac::{Hmac, Mac};
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(token.as_bytes());
+        mac.update(&[0]);
+        mac.update(body);
+        let hex: String = mac
+            .finalize()
+            .into_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        format!("v1={hex}")
+    }
+
+    #[test]
+    fn response_signature_accepts_only_matching_secret_token_and_body() {
+        let header = sign("agent-secret", "token-1", b"payload");
+        let check = |secret, token, body: &[u8], header: Option<&str>| {
+            verify_agent_response_signature(secret, token, body, header)
+        };
+        assert_eq!(
+            check("agent-secret", "token-1", b"payload", Some(&header)),
+            ResponseSignature::Valid
+        );
+        // Tampered body, replay against another request, wrong key.
+        assert_eq!(
+            check("agent-secret", "token-1", b"payl0ad", Some(&header)),
+            ResponseSignature::Invalid
+        );
+        assert_eq!(
+            check("agent-secret", "token-2", b"payload", Some(&header)),
+            ResponseSignature::Invalid
+        );
+        assert_eq!(
+            check("other-secret", "token-1", b"payload", Some(&header)),
+            ResponseSignature::Invalid
+        );
+        // Malformed headers never verify; an absent header is reported apart
+        // so the caller can apply its pinning policy.
+        assert_eq!(
+            check("agent-secret", "token-1", b"payload", Some("v1=zz")),
+            ResponseSignature::Invalid
+        );
+        assert_eq!(
+            check("agent-secret", "token-1", b"payload", Some("deadbeef")),
+            ResponseSignature::Invalid
+        );
+        assert_eq!(
+            check("agent-secret", "token-1", b"payload", None),
+            ResponseSignature::Missing
+        );
+    }
 }

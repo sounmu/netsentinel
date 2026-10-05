@@ -58,6 +58,15 @@ function restRow(timestamp: string, id = 1): ChartMetricsRow {
 }
 
 describe("appendLiveMetricRow", () => {
+  it("keeps separate NVIDIA GPU samples and unavailable values on the live chart", () => {
+    const reading = payload("2026-04-25T00:00:12.000Z");
+    reading.gpus = [
+      { name: "NVIDIA A", gpu_usage_percent: 35, memory_used_mb: 2048, memory_total_mb: 8192, temperature_c: 60, power_watts: 80, power_limit_watts: 200 },
+      { name: "NVIDIA B", gpu_usage_percent: null, memory_used_mb: null, memory_total_mb: null, temperature_c: null, power_watts: null, power_limit_watts: null },
+    ];
+    const rows = appendLiveMetricRow([], reading);
+    expect(rows[0].gpus).toEqual(reading.gpus);
+  });
   it("keeps intermediate SSE samples until REST catches up", () => {
     let rows: readonly ChartMetricsRow[] = [];
     rows = appendLiveMetricRow(rows, payload("2026-04-25T00:00:02.000Z", 2));

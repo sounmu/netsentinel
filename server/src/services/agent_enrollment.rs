@@ -19,6 +19,11 @@ const MAX_TTL_SECS: i64 = 24 * 60 * 60;
 pub struct CreateEnrollmentRequest {
     pub label: Option<String>,
     pub ttl_secs: Option<i64>,
+    /// Let the claim replace the secret of a host that is already registered
+    /// (reinstalling an agent). Off by default so a leaked install command
+    /// cannot be used to take over an existing host.
+    #[serde(default)]
+    pub allow_existing_host: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,14 +75,15 @@ pub async fn create_enrollment(
     sqlx::query(
         r#"
         INSERT INTO agent_enrollment_tokens
-            (label, token_hash, expires_at, created_by_user_id)
-        VALUES (?1, ?2, ?3, ?4)
+            (label, token_hash, expires_at, created_by_user_id, allow_existing_host)
+        VALUES (?1, ?2, ?3, ?4, ?5)
         "#,
     )
     .bind(request.label)
     .bind(hash)
     .bind(expires_at.timestamp())
     .bind(user_id)
+    .bind(request.allow_existing_host)
     .execute(pool)
     .await?;
 
@@ -104,7 +110,7 @@ pub async fn claim_enrollment(
 
     let mut tx = pool.begin().await?;
 
-    let consumed_id: Option<i64> = sqlx::query_scalar(
+    let allow_existing_host: Option<bool> = sqlx::query_scalar(
         r#"
         UPDATE agent_enrollment_tokens
         SET used_at = ?2,
@@ -112,7 +118,7 @@ pub async fn claim_enrollment(
         WHERE token_hash = ?1
           AND used_at IS NULL
           AND expires_at >= ?2
-        RETURNING id
+        RETURNING allow_existing_host
         "#,
     )
     .bind(token_hash(request.token.trim()))
@@ -121,10 +127,27 @@ pub async fn claim_enrollment(
     .fetch_optional(&mut *tx)
     .await?;
 
-    if consumed_id.is_none() {
+    let Some(allow_existing_host) = allow_existing_host else {
         return Err(AppError::Unauthorized(
             "Enrollment token is invalid, expired, or already used".to_string(),
         ));
+    };
+
+    // Without this, any unused token could rotate the secret of an arbitrary
+    // registered host: the real agent would start failing auth and whoever
+    // answers on that address would be trusted instead. Returning here drops
+    // the transaction, so the token is not consumed and stays usable.
+    if !allow_existing_host {
+        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM hosts WHERE host_key = ?1")
+            .bind(host_key)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if exists.is_some() {
+            return Err(AppError::Conflict(format!(
+                "Host {host_key} is already registered. To reinstall its agent, create \
+                 the install command with \"Re-enroll an existing host\" enabled."
+            )));
+        }
     }
 
     sqlx::query(
@@ -136,6 +159,7 @@ pub async fn claim_enrollment(
         ON CONFLICT(host_key) DO UPDATE SET
             display_name = excluded.display_name,
             agent_auth_secret = excluded.agent_auth_secret,
+            agent_signs_responses = 0,
             updated_at = strftime('%s','now')
         "#,
     )
@@ -164,4 +188,111 @@ pub async fn claim_enrollment(
         agent_auth_secret: auth_secret,
         host,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use std::str::FromStr;
+
+    async fn fresh_pool() -> DbPool {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(false)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Memory);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    async fn new_token(pool: &DbPool, allow_existing_host: bool) -> String {
+        create_enrollment(
+            pool,
+            1,
+            CreateEnrollmentRequest {
+                label: None,
+                ttl_secs: None,
+                allow_existing_host,
+            },
+        )
+        .await
+        .unwrap()
+        .token
+    }
+
+    fn claim(token: &str, host_key: &str) -> ClaimEnrollmentRequest {
+        ClaimEnrollmentRequest {
+            token: token.to_string(),
+            host_key: host_key.to_string(),
+            display_name: Some("box".to_string()),
+            network_mode: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn claim_cannot_take_over_an_existing_host_by_default() {
+        let pool = fresh_pool().await;
+        let first = new_token(&pool, false).await;
+        let original = claim_enrollment(&pool, claim(&first, "192.168.1.10:9101"))
+            .await
+            .unwrap();
+
+        let second = new_token(&pool, false).await;
+        let err = claim_enrollment(&pool, claim(&second, "192.168.1.10:9101"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)));
+
+        let host = hosts_repo::get_host(&pool, "192.168.1.10:9101")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            host.agent_auth_secret.as_deref(),
+            Some(original.agent_auth_secret.as_str()),
+            "the existing secret must be untouched"
+        );
+
+        // The rejected claim did not burn the token: it still works for a new host.
+        claim_enrollment(&pool, claim(&second, "192.168.1.11:9101"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn reenroll_token_rotates_secret_and_clears_signing_pin() {
+        let pool = fresh_pool().await;
+        let first = new_token(&pool, false).await;
+        let original = claim_enrollment(&pool, claim(&first, "192.168.1.10:9101"))
+            .await
+            .unwrap();
+        hosts_repo::mark_agent_signs_responses(&pool, "192.168.1.10:9101")
+            .await
+            .unwrap();
+
+        let reenroll = new_token(&pool, true).await;
+        let replaced = claim_enrollment(&pool, claim(&reenroll, "192.168.1.10:9101"))
+            .await
+            .unwrap();
+        assert_ne!(replaced.agent_auth_secret, original.agent_auth_secret);
+        assert!(!replaced.host.agent_signs_responses);
+    }
+
+    #[tokio::test]
+    async fn token_is_single_use() {
+        let pool = fresh_pool().await;
+        let token = new_token(&pool, true).await;
+        claim_enrollment(&pool, claim(&token, "192.168.1.10:9101"))
+            .await
+            .unwrap();
+        let err = claim_enrollment(&pool, claim(&token, "192.168.1.12:9101"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::Unauthorized(_)));
+    }
 }

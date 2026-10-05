@@ -73,13 +73,12 @@ pub(crate) struct TemperatureInfo {
 #[derive(Serialize, Clone)]
 pub(crate) struct GpuInfo {
     pub name: String,
-    pub gpu_usage_percent: u32,
-    pub memory_used_mb: u64,
-    pub memory_total_mb: u64,
-    pub temperature_c: u32,
-    // New fields — appended at end for bincode compat with server
+    pub gpu_usage_percent: Option<u32>,
+    pub memory_used_mb: Option<u64>,
+    pub memory_total_mb: Option<u64>,
+    pub temperature_c: Option<u32>,
     pub power_watts: Option<f32>,
-    pub frequency_mhz: Option<u32>,
+    pub power_limit_watts: Option<f32>,
 }
 
 /// Physical-interface traffic totals + bandwidth (after agent-side filtering).
@@ -295,16 +294,17 @@ mod tests {
     fn gpu_info_optional_fields() {
         let gpu = GpuInfo {
             name: "RTX 4090".into(),
-            gpu_usage_percent: 85,
-            memory_used_mb: 8192,
-            memory_total_mb: 24576,
-            temperature_c: 72,
+            gpu_usage_percent: Some(85),
+            memory_used_mb: Some(8192),
+            memory_total_mb: Some(24576),
+            temperature_c: Some(72),
             power_watts: Some(350.0),
-            frequency_mhz: None,
+            power_limit_watts: None,
         };
         let json = serde_json::to_value(&gpu).unwrap();
         assert_eq!(json["power_watts"], 350.0);
-        assert!(json["frequency_mhz"].is_null());
+        assert!(json["power_limit_watts"].is_null());
+        assert!(json.get("frequency_mhz").is_none());
     }
 
     #[test]

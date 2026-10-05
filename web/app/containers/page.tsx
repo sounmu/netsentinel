@@ -1,62 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Box, Server } from "lucide-react";
+import { Fragment, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Box, RotateCcw, Search, Server } from "lucide-react";
 import { PageHeader } from "@/app/components/PageHeader";
-import { EmptyState, Meter } from "@/app/components/ui";
+import { EmptyState } from "@/app/components/ui";
 import { useI18n } from "@/app/i18n/I18nContext";
 import {
   useSSEConnection,
   useSSEMetricsMap,
   useSSEStatusMap,
 } from "@/app/lib/sse-context";
+import { getCurrentDockerStats } from "@/app/lib/docker-stats";
+import {
+  assessContainer,
+  filterContainerRecords,
+  groupContainerRecords,
+  operationalCategoryRank,
+  summarizeContainers,
+  type ContainerGroupMode,
+  type ContainerOperationRecord,
+  type ContainerOperationalCategory,
+} from "@/app/lib/container-operations";
 import { formatBytes } from "@/app/lib/formatters";
 import {
   getHostStatus,
   STATUS_DOT_CLASS,
   type HostStatus,
 } from "@/app/lib/status";
-import type { DockerContainer, DockerContainerStats } from "@/app/types/metrics";
+import type { DockerContainerStats } from "@/app/types/metrics";
 
-type ContainerHealth = "attention" | "running" | "stopped";
 type SortKey = "container" | "host" | "status" | "cpu" | "memory" | "network" | "storage" | "image";
 type SortDirection = "asc" | "desc";
 
-interface ContainerRow {
-  key: string;
-  hostKey: string;
-  hostDisplayName: string;
+interface ContainerRow extends ContainerOperationRecord {
   hostStatus: HostStatus;
-  container: DockerContainer;
   stat?: DockerContainerStats;
   memoryPercent: number | null;
-  health: ContainerHealth;
-}
-
-function getContainerHealth(container: DockerContainer): ContainerHealth {
-  if (
-    container.state !== "running"
-    || container.health_status === "unhealthy"
-    || container.oom_killed
-  ) {
-    return "attention";
-  }
-  if (container.state === "running") {
-    return "running";
-  }
-  return "stopped";
-}
-
-function healthRank(health: ContainerHealth): number {
-  switch (health) {
-    case "attention":
-      return 0;
-    case "running":
-      return 1;
-    case "stopped":
-      return 2;
-  }
 }
 
 function hostStatusRank(status: HostStatus): number {
@@ -70,14 +50,16 @@ function hostStatusRank(status: HostStatus): number {
   }
 }
 
-function healthToneClass(health: ContainerHealth): string {
-  switch (health) {
+function categoryToneClass(category: ContainerOperationalCategory): string {
+  switch (category) {
     case "attention":
       return "text-[var(--md-sys-color-error)]";
     case "running":
       return "text-[var(--md-custom-color-success)]";
-    case "stopped":
-      return "text-[var(--md-sys-color-outline)]";
+    case "inactive":
+      return "text-[var(--md-custom-color-warning)]";
+    case "completed":
+      return "text-[var(--md-sys-color-on-surface-variant)]";
   }
 }
 
@@ -90,8 +72,9 @@ function compareNumber(a: number, b: number): number {
 }
 
 function compareStatus(a: ContainerRow, b: ContainerRow): number {
-  const healthDiff = healthRank(a.health) - healthRank(b.health);
-  if (healthDiff !== 0) return healthDiff;
+  const categoryDiff = operationalCategoryRank(a.assessment.category)
+    - operationalCategoryRank(b.assessment.category);
+  if (categoryDiff !== 0) return categoryDiff;
   const hostDiff = hostStatusRank(a.hostStatus) - hostStatusRank(b.hostStatus);
   if (hostDiff !== 0) return hostDiff;
   return compareText(a.container.state, b.container.state);
@@ -164,7 +147,7 @@ function SortHeader({
           transition:
             "background var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard), color var(--md-sys-motion-duration-short3) var(--md-sys-motion-easing-standard)",
         }}
-        className={`group inline-flex w-full items-center gap-1.5 rounded-[var(--md-sys-shape-corner-small)] px-1 py-1 text-left hover:bg-[color-mix(in_srgb,var(--md-sys-color-on-surface)_8%,transparent)] focus:outline-none focus-visible:[outline:2px_solid_var(--md-sys-color-primary)] focus-visible:[outline-offset:2px] ${
+        className={`group inline-flex min-h-12 w-full items-center gap-1.5 rounded-[var(--md-sys-shape-corner-small)] px-1 py-1 text-left hover:bg-[color-mix(in_srgb,var(--md-sys-color-on-surface)_8%,transparent)] focus:outline-none focus-visible:[outline:2px_solid_var(--md-sys-color-primary)] focus-visible:[outline-offset:2px] ${
           active ? "text-[var(--md-sys-color-on-surface)]" : "text-[var(--md-sys-color-on-surface-variant)]"
         }`}
       >
@@ -194,11 +177,15 @@ export default function ContainersPage() {
   const isConnected = useSSEConnection();
   const [sortKey, setSortKey] = useState<SortKey>("status");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [query, setQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<
+    ContainerOperationalCategory | "all"
+  >("all");
+  const [observedStateFilter, setObservedStateFilter] = useState("all");
+  const [groupMode, setGroupMode] = useState<ContainerGroupMode>("stack");
 
-  const { rows, total, running, attention, hostCount } = useMemo(() => {
+  const { rows, hostCount } = useMemo(() => {
     const collected: ContainerRow[] = [];
-    let runningCount = 0;
-    let attentionCount = 0;
 
     for (const status of Object.values(statusMap)) {
       const metrics = metricsMap[status.host_key];
@@ -206,7 +193,7 @@ export default function ContainersPage() {
       const isOnline = metrics?.is_online ?? status.is_online ?? false;
       const hostStatus = getHostStatus(lastSeen, isOnline, status.scrape_interval_secs);
       const statsByName = new Map<string, DockerContainerStats>();
-      for (const stat of status.docker_stats ?? []) {
+      for (const stat of getCurrentDockerStats(metrics, status)) {
         statsByName.set(stat.container_name, stat);
       }
 
@@ -215,13 +202,6 @@ export default function ContainersPage() {
         const memoryPercent = stat && stat.memory_limit_mb > 0
           ? (stat.memory_usage_mb / stat.memory_limit_mb) * 100
           : null;
-        const health = getContainerHealth(container);
-        if (health === "running") {
-          runningCount += 1;
-        }
-        if (health === "attention") {
-          attentionCount += 1;
-        }
         collected.push({
           key: `${status.host_key}::${container.container_name}`,
           hostKey: status.host_key,
@@ -230,28 +210,49 @@ export default function ContainersPage() {
           container,
           stat,
           memoryPercent,
-          health,
+          assessment: assessContainer(container),
         });
       }
     }
 
     return {
       rows: collected,
-      total: collected.length,
-      running: runningCount,
-      attention: attentionCount,
       hostCount: new Set(collected.map((row) => row.hostKey)).size,
     };
   }, [metricsMap, statusMap]);
 
+  const summary = useMemo(
+    () => summarizeContainers(rows.map((row) => row.container)),
+    [rows],
+  );
+
+  const observedStates = useMemo(
+    () => [...new Set(rows.map((row) => row.container.state.toLowerCase()))].sort(compareText),
+    [rows],
+  );
+
+  const filteredRows = useMemo(
+    () => filterContainerRecords(rows, {
+      query,
+      category: categoryFilter,
+      observedState: observedStateFilter,
+    }),
+    [rows, query, categoryFilter, observedStateFilter],
+  );
+
   const sortedRows = useMemo(() => {
     const factor = sortDirection === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
+    return [...filteredRows].sort((a, b) => {
       const primary = compareByKey(a, b, sortKey);
       if (primary !== 0) return primary * factor;
       return compareText(a.container.container_name, b.container.container_name);
     });
-  }, [rows, sortDirection, sortKey]);
+  }, [filteredRows, sortDirection, sortKey]);
+
+  const groupedRows = useMemo(
+    () => groupContainerRecords(sortedRows, groupMode),
+    [sortedRows, groupMode],
+  );
 
   const isLoading = !isConnected && Object.keys(statusMap).length === 0;
 
@@ -264,24 +265,36 @@ export default function ContainersPage() {
     setSortDirection(key === "container" || key === "host" || key === "image" ? "asc" : "desc");
   };
 
+  const resetFilters = () => {
+    setQuery("");
+    setCategoryFilter("all");
+    setObservedStateFilter("all");
+  };
+
   return (
     <div className="page-content fade-in">
       <PageHeader
         icon={<Box size={18} aria-hidden="true" />}
         title={t.containers.title}
-        badge={total}
+        badge={summary.total}
         description={t.containers.description}
         right={
-          (total > 0 || attention > 0) ? (
+          summary.total > 0 ? (
             <div className="page-header__stats">
               <span className="page-header__stats-item">
-                {t.containers.summary.total.replace("{count}", String(total))}
+                {t.containers.summary.total.replace("{count}", String(summary.total))}
               </span>
               <span className="page-header__stats-item">
-                {t.containers.summary.running.replace("{count}", String(running))}
+                {t.containers.summary.running.replace("{count}", String(summary.running))}
               </span>
               <span className="page-header__stats-item">
-                {t.containers.summary.attention.replace("{count}", String(attention))}
+                {t.containers.summary.attention.replace("{count}", String(summary.attention))}
+              </span>
+              <span className="page-header__stats-item">
+                {t.containers.summary.inactive.replace("{count}", String(summary.inactive))}
+              </span>
+              <span className="page-header__stats-item">
+                {t.containers.summary.completed.replace("{count}", String(summary.completed))}
               </span>
               <span className="page-header__stats-item">
                 {t.containers.summary.hosts.replace("{count}", String(hostCount))}
@@ -290,6 +303,83 @@ export default function ContainersPage() {
           ) : undefined
         }
       />
+
+      <div className="container-observation-note" role="note">
+        <div>
+          <strong>{t.containers.observation.title}</strong>
+          <p>{t.containers.observation.description}</p>
+        </div>
+        <Link href="/alerts?tab=rules" className="md-btn-tonal">
+          {t.containers.observation.reviewRules}
+        </Link>
+      </div>
+
+      <div className="container-operations-toolbar" aria-label={t.containers.filters.title}>
+        <label className="container-filter container-filter--search">
+          <span>{t.containers.filters.search}</span>
+          <span className="container-search-input">
+            <Search size={16} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t.containers.filters.searchPlaceholder}
+            />
+          </span>
+        </label>
+
+        <label className="container-filter">
+          <span>{t.containers.filters.operational}</span>
+          <select
+            value={categoryFilter}
+            onChange={(event) => setCategoryFilter(
+              event.target.value as ContainerOperationalCategory | "all",
+            )}
+          >
+            <option value="all">{t.containers.filters.allOperational}</option>
+            <option value="attention">{t.containers.categories.attention}</option>
+            <option value="running">{t.containers.categories.running}</option>
+            <option value="inactive">{t.containers.categories.inactive}</option>
+            <option value="completed">{t.containers.categories.completed}</option>
+          </select>
+        </label>
+
+        <label className="container-filter">
+          <span>{t.containers.filters.observed}</span>
+          <select
+            value={observedStateFilter}
+            onChange={(event) => setObservedStateFilter(event.target.value)}
+          >
+            <option value="all">{t.containers.filters.allObserved}</option>
+            {observedStates.map((state) => (
+              <option key={state} value={state}>{state}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="container-filter">
+          <span>{t.containers.filters.groupBy}</span>
+          <select
+            value={groupMode}
+            onChange={(event) => setGroupMode(event.target.value as ContainerGroupMode)}
+          >
+            <option value="stack">{t.containers.filters.groupStack}</option>
+            <option value="service">{t.containers.filters.groupService}</option>
+            <option value="none">{t.containers.filters.groupNone}</option>
+          </select>
+        </label>
+
+        <button type="button" className="md-btn-tonal" onClick={resetFilters}>
+          <RotateCcw size={16} aria-hidden="true" />
+          {t.containers.filters.reset}
+        </button>
+
+        <div className="container-filter-result" aria-live="polite">
+          {t.containers.filters.results
+            .replace("{visible}", String(filteredRows.length))
+            .replace("{total}", String(rows.length))}
+        </div>
+      </div>
 
       <div className="glass-card overflow-hidden">
         {isLoading && (
@@ -308,7 +398,18 @@ export default function ContainersPage() {
           />
         )}
 
-        {!isLoading && rows.length > 0 && (
+        {!isLoading && rows.length > 0 && filteredRows.length === 0 && (
+          <div className="container-filter-empty">
+            <strong>{t.containers.filters.noResults}</strong>
+            <span>{t.containers.filters.noResultsHint}</span>
+            <button type="button" className="md-btn-tonal" onClick={resetFilters}>
+              <RotateCcw size={16} aria-hidden="true" />
+              {t.containers.filters.reset}
+            </button>
+          </div>
+        )}
+
+        {!isLoading && filteredRows.length > 0 && (
           <div className="systems-table-wrap">
             <table className="systems-table">
               <thead>
@@ -390,21 +491,54 @@ export default function ContainersPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row) => {
-                  const { container, stat } = row;
-                  const healthClass = healthToneClass(row.health);
-
-                  const titleStyle = { font: "var(--md-sys-typescale-title-small)" };
-                  const bodySmallStyle = { font: "var(--md-sys-typescale-body-small)" };
-                  const labelSmallStyle = { font: "var(--md-sys-typescale-label-small)" };
-                  const labelMedStyle = { font: "var(--md-sys-typescale-label-medium)" };
-                  const monoLabelSmall = {
-                    font: "var(--md-sys-typescale-label-small)",
-                    fontFamily: "var(--font-mono), monospace",
-                  };
-
+                {groupedRows.map((group) => {
+                  const groupSummary = summarizeContainers(
+                    group.rows.map((row) => row.container),
+                  );
                   return (
-                    <tr key={row.key}>
+                    <Fragment key={group.key}>
+                      {groupMode !== "none" && (
+                        <tr className="container-group-row">
+                          <td colSpan={8}>
+                            <div>
+                              <strong>
+                                {group.key
+                                  .replace("standalone", t.containers.groups.standalone)
+                                  .replace("unlabelled", t.containers.groups.unlabelled)}
+                              </strong>
+                              <span>
+                                {t.containers.groups.summary
+                                  .replace("{total}", String(groupSummary.total))
+                                  .replace("{attention}", String(groupSummary.attention))
+                                  .replace("{running}", String(groupSummary.running))}
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      {group.rows.map((row) => {
+                        const { container, stat, assessment } = row;
+                        const categoryClass = categoryToneClass(assessment.category);
+                        const reason = assessment.attentionReason
+                          ? t.containers.reasons[assessment.attentionReason].replace(
+                            "{code}",
+                            String(container.exit_code ?? ""),
+                          )
+                          : assessment.inactiveReason
+                            ? t.containers.reasons[assessment.inactiveReason]
+                            : null;
+
+                        const titleStyle = { font: "var(--md-sys-typescale-title-small)" };
+                        const bodySmallStyle = { font: "var(--md-sys-typescale-body-small)" };
+                        const labelSmallStyle = { font: "var(--md-sys-typescale-label-small)" };
+                        const labelMedStyle = { font: "var(--md-sys-typescale-label-medium)" };
+                        const monoLabelSmall = {
+                          font: "var(--md-sys-typescale-label-small)",
+                          fontFamily: "var(--font-mono), monospace",
+                        };
+
+                        return (
+                          <tr key={row.key}>
                       <td>
                         <div className="grid min-w-0 gap-1 rounded-[var(--md-sys-shape-corner-medium)] px-1 py-0.5">
                           <div
@@ -415,7 +549,7 @@ export default function ContainersPage() {
                             {container.container_name}
                           </div>
                           <div
-                            className="flex flex-wrap gap-1.5 text-[var(--md-sys-color-outline)]"
+                            className="flex flex-wrap gap-1.5 text-[var(--md-sys-color-on-surface-variant)]"
                             style={labelSmallStyle}
                           >
                             {container.compose_project && <span>{container.compose_project}</span>}
@@ -436,14 +570,14 @@ export default function ContainersPage() {
                             <Link
                               href={`/host/?key=${encodeURIComponent(row.hostKey)}`}
                               prefetch={false}
-                              className="truncate whitespace-nowrap text-[var(--md-sys-color-on-surface)] no-underline"
+                              className="inline-flex min-h-12 items-center truncate whitespace-nowrap text-[var(--md-sys-color-on-surface)] no-underline"
                               style={titleStyle}
                             >
                               {row.hostDisplayName}
                             </Link>
                           </div>
                           <div
-                            className="truncate whitespace-nowrap text-[var(--md-sys-color-outline)]"
+                            className="truncate whitespace-nowrap text-[var(--md-sys-color-on-surface-variant)]"
                             style={monoLabelSmall}
                             title={row.hostKey}
                           >
@@ -453,22 +587,38 @@ export default function ContainersPage() {
                       </td>
                       <td>
                         <div className="grid gap-1">
-                          <div
-                            className={`uppercase leading-tight ${healthClass}`}
-                            style={labelMedStyle}
-                          >
-                            {container.state}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className="uppercase leading-tight text-[var(--md-sys-color-on-surface)]"
+                              style={labelMedStyle}
+                            >
+                              {container.state}
+                            </span>
+                            <span
+                              className={`container-category-badge ${categoryClass}`}
+                              style={labelSmallStyle}
+                            >
+                              {t.containers.categories[assessment.category]}
+                            </span>
                           </div>
+                          {reason && (
+                            <div
+                              className={`leading-tight ${categoryClass}`}
+                              style={labelSmallStyle}
+                            >
+                              {reason}
+                            </div>
+                          )}
                           {container.health_status && (
                             <div
-                              className="leading-tight text-[var(--md-sys-color-outline)]"
+                              className="leading-tight text-[var(--md-sys-color-on-surface-variant)]"
                               style={labelSmallStyle}
                             >
                               {container.health_status}
                             </div>
                           )}
                           <div
-                            className="flex flex-wrap gap-1.5 text-[var(--md-sys-color-outline)]"
+                            className="flex flex-wrap gap-1.5 text-[var(--md-sys-color-on-surface-variant)]"
                             style={labelSmallStyle}
                           >
                             {container.oom_killed && (
@@ -476,14 +626,17 @@ export default function ContainersPage() {
                                 {t.containers.flags.oom}
                               </span>
                             )}
-                            {container.exit_code !== null && container.exit_code !== undefined && (
+                            {container.exit_code !== null
+                              && container.exit_code !== undefined
+                              && (container.state.toLowerCase() !== "running" || container.exit_code !== 0)
+                              && (
                               <span>
                                 {t.containers.flags.exit.replace(
                                   "{code}",
                                   String(container.exit_code),
                                 )}
                               </span>
-                            )}
+                              )}
                             {container.restart_count > 0 && (
                               <span>
                                 {t.containers.flags.restarts.replace(
@@ -493,14 +646,26 @@ export default function ContainersPage() {
                               </span>
                             )}
                           </div>
+                          <Link
+                            href={`/host/?key=${encodeURIComponent(row.hostKey)}`}
+                            prefetch={false}
+                            className="container-inspect-link"
+                          >
+                            {t.containers.inspectHost}
+                          </Link>
                         </div>
                       </td>
                       <td>
                         {stat ? (
-                          <Meter value={stat.cpu_percent} />
+                          <span
+                            className="tabular-nums"
+                            style={titleStyle}
+                          >
+                            {stat.cpu_percent.toFixed(1)}%
+                          </span>
                         ) : (
                           <span
-                            className="text-[var(--md-sys-color-outline)]"
+                            className="text-[var(--md-sys-color-on-surface-variant)]"
                             style={bodySmallStyle}
                           >
                             {t.containers.noLiveStats}
@@ -511,17 +676,22 @@ export default function ContainersPage() {
                         {stat ? (
                           <div className="grid gap-1.5">
                             {row.memoryPercent !== null ? (
-                              <Meter value={row.memoryPercent} />
+                              <span
+                                className="tabular-nums"
+                                style={titleStyle}
+                              >
+                                {row.memoryPercent.toFixed(1)}%
+                              </span>
                             ) : (
                               <div
                                 className="tabular-nums text-[var(--md-sys-color-on-surface)]"
-                                style={labelMedStyle}
+                                style={titleStyle}
                               >
                                 {stat.memory_usage_mb} MB
                               </div>
                             )}
                             <div
-                              className="text-[var(--md-sys-color-outline)]"
+                              className="whitespace-nowrap text-[var(--md-sys-color-on-surface-variant)]"
                               style={monoLabelSmall}
                             >
                               {stat.memory_limit_mb > 0
@@ -531,7 +701,7 @@ export default function ContainersPage() {
                           </div>
                         ) : (
                           <span
-                            className="text-[var(--md-sys-color-outline)]"
+                            className="text-[var(--md-sys-color-on-surface-variant)]"
                             style={bodySmallStyle}
                           >
                             {t.containers.noLiveStats}
@@ -542,13 +712,13 @@ export default function ContainersPage() {
                         {stat ? (
                           <div className="grid gap-1" style={monoLabelSmall}>
                             <span>
-                              <span className="text-[var(--md-sys-color-outline)]">RX </span>
+                              <span className="text-[var(--md-sys-color-on-surface-variant)]">RX </span>
                               <span className="text-[var(--md-sys-color-on-surface)]">
                                 {formatBytes(stat.net_rx_bytes)}
                               </span>
                             </span>
                             <span>
-                              <span className="text-[var(--md-sys-color-outline)]">TX </span>
+                              <span className="text-[var(--md-sys-color-on-surface-variant)]">TX </span>
                               <span className="text-[var(--md-sys-color-on-surface)]">
                                 {formatBytes(stat.net_tx_bytes)}
                               </span>
@@ -556,7 +726,7 @@ export default function ContainersPage() {
                           </div>
                         ) : (
                           <span
-                            className="text-[var(--md-sys-color-outline)]"
+                            className="text-[var(--md-sys-color-on-surface-variant)]"
                             style={bodySmallStyle}
                           >
                             {t.containers.noLiveStats}
@@ -567,13 +737,13 @@ export default function ContainersPage() {
                         {stat && (stat.block_read_bytes > 0 || stat.block_write_bytes > 0) ? (
                           <div className="grid gap-1" style={monoLabelSmall}>
                             <span>
-                              <span className="text-[var(--md-sys-color-outline)]">R </span>
+                              <span className="text-[var(--md-sys-color-on-surface-variant)]">R </span>
                               <span className="text-[var(--md-sys-color-on-surface)]">
                                 {formatBytes(stat.block_read_bytes)}
                               </span>
                             </span>
                             <span>
-                              <span className="text-[var(--md-sys-color-outline)]">W </span>
+                              <span className="text-[var(--md-sys-color-on-surface-variant)]">W </span>
                               <span className="text-[var(--md-sys-color-on-surface)]">
                                 {formatBytes(stat.block_write_bytes)}
                               </span>
@@ -581,7 +751,7 @@ export default function ContainersPage() {
                           </div>
                         ) : (
                           <span
-                            className="text-[var(--md-sys-color-outline)]"
+                            className="text-[var(--md-sys-color-on-surface-variant)]"
                             style={bodySmallStyle}
                           >
                             {t.containers.noIo}
@@ -598,7 +768,7 @@ export default function ContainersPage() {
                             {container.image}
                           </div>
                           <div
-                            className="flex items-center gap-1.5 text-[var(--md-sys-color-outline)]"
+                            className="flex items-center gap-1.5 text-[var(--md-sys-color-on-surface-variant)]"
                             style={labelSmallStyle}
                           >
                             <Server size={12} />
@@ -606,7 +776,10 @@ export default function ContainersPage() {
                           </div>
                         </div>
                       </td>
-                    </tr>
+                          </tr>
+                        );
+                      })}
+                    </Fragment>
                   );
                 })}
               </tbody>

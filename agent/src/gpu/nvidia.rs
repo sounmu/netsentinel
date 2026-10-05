@@ -19,22 +19,22 @@ pub fn collect() -> Vec<GpuInfo> {
             // still spot which device is misbehaving even without a real
             // product name.
             let name = device.name().unwrap_or_else(|_| format!("GPU {i}"));
-            let utilization = device.utilization_rates().ok()?;
-            let memory = device.memory_info().ok()?;
+            let utilization = device.utilization_rates().ok();
+            let memory = device.memory_info().ok();
             let temp = device
                 .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
-                .unwrap_or(0);
-            let power_mw = device.power_usage().ok();
+                .ok();
             Some(GpuInfo {
                 name,
-                gpu_usage_percent: utilization.gpu,
-                memory_used_mb: memory.used / 1024 / 1024,
-                memory_total_mb: memory.total / 1024 / 1024,
+                gpu_usage_percent: utilization.map(|rates| rates.gpu),
+                memory_used_mb: memory.as_ref().map(|info| info.used / 1024 / 1024),
+                memory_total_mb: memory.map(|info| info.total / 1024 / 1024),
                 temperature_c: temp,
-                power_watts: power_mw.map(|mw| mw as f32 / 1000.0),
-                frequency_mhz: device
-                    .clock_info(nvml_wrapper::enum_wrappers::device::Clock::Graphics)
-                    .ok(),
+                power_watts: device.power_usage().ok().map(|mw| mw as f32 / 1000.0),
+                power_limit_watts: device
+                    .power_management_limit()
+                    .ok()
+                    .map(|mw| mw as f32 / 1000.0),
             })
         })
         .collect()

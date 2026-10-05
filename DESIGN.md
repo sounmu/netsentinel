@@ -193,6 +193,38 @@ never means two different things on two pages.
 
 ---
 
+### 7.1 Operational-state semantics
+
+- Docker's observed lifecycle state (`running`, `created`, `exited`, and so on)
+  is always shown as reported. Operational classification is separate:
+  actionable failure, running, inactive/intent unknown, or completed.
+- `exited` with exit code 0 is completed, not an incident. `created`, paused,
+  and unclassified stopped states remain visible as intent unknown because the
+  current wire model has no desired-state or age evidence.
+- "Needs attention" is an observed-state count. "Firing" is an emitted alert
+  event count and depends on effective alert rules; the UI must explain this
+  boundary wherever both concepts appear.
+- Chart presets, date inputs, and the X-axis consume the same settled range.
+  Inputs render in browser-local time with an explicit UTC offset; storage and
+  API query timestamps remain UTC.
+
+The host detail Docker inventory is a compact list inside its section panel.
+Each row leads with the container name and image, shows its operational
+category as a status dot plus label, and keeps Docker's reported lifecycle text
+separately visible. CPU and memory are aligned numeric columns without pressure
+bars: CPU as a percentage, memory as used / limit with its usage percentage on
+a second line when the limit is known. Metric numbers stay in `--ink`
+regardless of load; hue is spent on the category only. On compact screens the
+status and lifecycle text share a line above the paired metrics. Do not repeat
+a health label already contained in Docker's reported status. Attention uses
+the `--crit-bg` wash, never an accent stripe.
+
+The global `/containers` inventory follows the same rule: numeric-only CPU and
+memory percentages, with memory used / limit beneath the percentage. Sorting
+uses the underlying metric values.
+
+---
+
 ## 8. Rules
 
 Violations should be fixed before merge.

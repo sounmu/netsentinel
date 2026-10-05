@@ -14,6 +14,7 @@ use crate::models::app_state::{AlertConfig, AppState, HostRecord};
 use crate::models::sse_payloads::{HostStatusPayload, SseBroadcast};
 use crate::repositories::{alert_configs_repo, hosts_repo, metrics_repo};
 use crate::services::alert_service;
+use crate::services::auth::RESPONSE_SIGNATURE_HEADER;
 use crate::services::hosts_snapshot;
 use crate::services::metrics_service::{self, STATUS_PERIODIC_INTERVAL_SECS};
 use chrono::DateTime;
@@ -24,6 +25,11 @@ enum ScrapeOutcome {
     Online(Box<AgentMetrics>),
     /// Agent unreachable; an offline record should be batch-inserted.
     Offline,
+    /// The agent answered, but the answer cannot be trusted (bad or missing
+    /// response signature). Recorded and alerted exactly like `Offline`:
+    /// otherwise anyone able to corrupt responses could hold a host at its
+    /// last known "online" status with no Host Down alert.
+    Rejected(String),
     /// Non-recoverable error (e.g., deserialization); no DB insert needed.
     Failed(String),
 }
@@ -51,37 +57,134 @@ const SCRAPE_TIMEOUT_SECS: u64 = 5;
 const FLAP_COOLDOWN_SECS: u64 = 60;
 /// Maximum backoff multiplier (2^4 = 16x base interval → 160s at 10s interval)
 const MAX_BACKOFF_POWER: u32 = 4;
-/// Reuse the agent scrape JWT until it is older than this. Agent tokens expire
-/// after 60s (see `auth::generate_jwt`); rotating at 40s leaves a 20s safety
-/// window for clock drift and in-flight requests.
-const JWT_ROTATE_AFTER_SECS: u64 = 40;
 /// Cap the decoded agent response body before deserialization.
 const MAX_AGENT_PAYLOAD_BYTES: usize = 10 * 1024 * 1024;
+/// `/system-info` is five short fields; anything larger is not a real agent.
+const MAX_SYSTEM_INFO_BYTES: usize = 64 * 1024;
+/// Upper bound for any agent-supplied string that is stored or broadcast.
+const MAX_AGENT_STRING_BYTES: usize = 256;
 
-/// Cached legacy agent JWT shared across hosts without per-agent secrets.
-struct JwtCache {
-    token: String,
-    minted_at: Instant,
+/// Read a response body, failing as soon as it exceeds `max_bytes`. The cap
+/// applies to the decompressed stream, so a gzip bomb cannot be buffered.
+async fn read_capped_body(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len().saturating_add(chunk.len()) > max_bytes {
+                    return Err(format!("Payload too large: exceeds {max_bytes} bytes"));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => return Ok(bytes),
+            Err(e) => return Err(format!("Failed to read response body chunk: {e}")),
+        }
+    }
 }
 
-impl JwtCache {
-    fn get_or_refresh(slot: &mut Option<JwtCache>) -> Result<&str, String> {
-        let needs_refresh = slot
-            .as_ref()
-            .is_none_or(|c| c.minted_at.elapsed() >= Duration::from_secs(JWT_ROTATE_AFTER_SECS));
-        if needs_refresh {
-            let token = crate::services::auth::generate_jwt()
-                .map_err(|e| format!("JWT Generation Error: {}", e))?;
-            *slot = Some(JwtCache {
-                token,
-                minted_at: Instant::now(),
-            });
+/// Truncate to at most `max_bytes`, on a char boundary.
+fn clamp_string(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+}
+
+/// Decide whether an agent response may be trusted.
+///
+/// A valid signature always passes and reports whether this is the first one
+/// seen for the host (so the caller can pin it). An invalid signature always
+/// fails. A missing signature passes only for hosts that have never signed —
+/// agents older than response signing — and fails once the host is pinned.
+fn check_response_signature(
+    auth: &AgentAuth,
+    token: &str,
+    body: &[u8],
+    header: Option<&str>,
+) -> Result<bool, String> {
+    use crate::services::auth::ResponseSignature;
+    match crate::services::auth::verify_agent_response_signature(&auth.secret, token, body, header)
+    {
+        ResponseSignature::Valid => Ok(!auth.signs_responses),
+        ResponseSignature::Invalid => Err("Response signature mismatch".to_string()),
+        ResponseSignature::Missing if auth.signs_responses => {
+            Err("Unsigned response from an agent that previously signed its responses".to_string())
         }
-        Ok(slot
-            .as_ref()
-            .expect("slot always Some after refresh above")
-            .token
-            .as_str())
+        ResponseSignature::Missing => Ok(false),
+    }
+}
+
+/// Persist and cache the "this agent signs its responses" pin.
+async fn pin_response_signing(state: &Arc<AppState>, target: &str) {
+    if let Err(e) = hosts_repo::mark_agent_signs_responses(&state.db_pool, target).await {
+        tracing::warn!(target = %target, err = %e, "⚠️ [Scraper] Failed to persist response-signing pin");
+        return;
+    }
+    hosts_snapshot::apply_response_signing(&state.hosts_snapshot, target);
+    tracing::info!(target = %target, "🔏 [Scraper] Agent signs its responses — unsigned responses are now rejected");
+}
+
+/// Credentials for talking to one host.
+#[derive(Clone)]
+struct AgentAuth {
+    /// Per-agent secret, or `JWT_SECRET` for legacy hosts.
+    secret: String,
+    /// Whether the host is pinned to signed responses.
+    signs_responses: bool,
+}
+
+/// One outbound request to an agent: the URL and the token minted for it.
+struct AgentRequest {
+    url: reqwest::Url,
+    token: String,
+}
+
+impl AgentRequest {
+    /// Build the request for `path_and_query` on `host_key`. The token is
+    /// bound to the request target exactly as it will appear on the wire
+    /// (after URL normalisation), which is what the agent hashes on its side.
+    fn new(auth: &AgentAuth, host_key: &str, path_and_query: &str) -> Result<Self, String> {
+        let url = reqwest::Url::parse(&format!("http://{host_key}{path_and_query}"))
+            .map_err(|e| format!("Invalid agent URL: {e}"))?;
+        let target = &url[url::Position::BeforePath..url::Position::AfterQuery];
+        let token =
+            crate::services::auth::generate_agent_jwt_with_secret(&auth.secret, host_key, target)
+                .map_err(|e| format!("Failed to mint agent JWT: {e}"))?;
+        Ok(Self { url, token })
+    }
+}
+
+/// Path and query for a metrics scrape of the given ports and containers.
+fn metrics_request_target(ports: &[u16], containers: &[String]) -> String {
+    let mut params = Vec::new();
+    if !ports.is_empty() {
+        let ports = ports.iter().map(u16::to_string).collect::<Vec<_>>();
+        params.push(format!("ports={}", ports.join(",")));
+    }
+    if !containers.is_empty() {
+        params.push(format!("containers={}", containers.join(",")));
+    }
+    if params.is_empty() {
+        "/metrics".to_string()
+    } else {
+        format!("/metrics?{}", params.join("&"))
+    }
+}
+
+/// Credentials for the `/system-info` fetch that follows a scrape. A valid
+/// signature on that scrape means the host is pinned as of now, even though
+/// the snapshot this context was built from still says otherwise.
+fn auth_after_scrape(auth: &AgentAuth, response_signed: bool) -> AgentAuth {
+    AgentAuth {
+        secret: auth.secret.clone(),
+        signs_responses: auth.signs_responses || response_signed,
     }
 }
 
@@ -97,6 +200,13 @@ pub fn start_scraper(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let client = match Client::builder()
             .timeout(Duration::from_secs(SCRAPE_TIMEOUT_SECS))
+            // An agent (or anything answering on its address) must not be
+            // able to bounce the hub to another URL, e.g. cloud metadata or
+            // a loopback admin port.
+            .redirect(reqwest::redirect::Policy::none())
+            // Agents close connections idle for 15 s; let go of ours first so
+            // a scrape never races the agent's close.
+            .pool_idle_timeout(Duration::from_secs(12))
             .build()
         {
             Ok(c) => c,
@@ -118,18 +228,10 @@ pub fn start_scraper(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
 
         let mut backoff_map: HashMap<String, HostBackoff> = HashMap::new();
         let mut last_scrape_attempt: HashMap<String, Instant> = HashMap::new();
-        let mut jwt_cache: Option<JwtCache> = None;
 
         loop {
             interval.tick().await;
-            scrape_all(
-                &client,
-                &state,
-                &mut backoff_map,
-                &mut last_scrape_attempt,
-                &mut jwt_cache,
-            )
-            .await;
+            scrape_all(&client, &state, &mut backoff_map, &mut last_scrape_attempt).await;
         }
     })
 }
@@ -139,7 +241,6 @@ async fn scrape_all(
     state: &Arc<AppState>,
     backoff_map: &mut HashMap<String, HostBackoff>,
     last_scrape_attempt: &mut HashMap<String, Instant>,
-    jwt_cache: &mut Option<JwtCache>,
 ) {
     // Read hosts + alert_configs from the in-memory snapshot instead of
     // hitting the DB every 10 s. The snapshot is refreshed synchronously
@@ -199,29 +300,21 @@ async fn scrape_all(
             }
         }
 
-        let jwt_token = match host.agent_auth_secret.as_deref() {
-            Some(secret) => match crate::services::auth::generate_agent_jwt_with_secret(secret) {
-                Ok(token) => token,
-                Err(e) => {
-                    tracing::error!(
-                        host_key = %host.host_key,
-                        err = %e,
-                        "❌ [Scraper] Failed to mint per-agent JWT"
-                    );
-                    continue;
-                }
-            },
-            None => match JwtCache::get_or_refresh(jwt_cache) {
-                Ok(t) => t.to_string(),
-                Err(e) => {
-                    tracing::error!(
-                        host_key = %host.host_key,
-                        err = %e,
-                        "❌ [Scraper] Failed to mint legacy agent JWT"
-                    );
-                    continue;
-                }
-            },
+        // Hosts without a per-agent enrollment secret still authenticate
+        // with the shared `JWT_SECRET`. Tokens are minted per request either
+        // way (see `AgentRequest`), so one captured token is never valid
+        // elsewhere as-is and every response can be tied to its request.
+        let Some(secret) = host
+            .agent_auth_secret
+            .as_deref()
+            .or_else(|| crate::services::auth::legacy_agent_secret())
+        else {
+            tracing::error!(host_key = %host.host_key, "❌ [Scraper] No agent secret available");
+            continue;
+        };
+        let auth = AgentAuth {
+            secret: secret.to_string(),
+            signs_responses: host.agent_signs_responses,
         };
 
         last_scrape_attempt.insert(host.host_key.clone(), Instant::now());
@@ -237,7 +330,7 @@ async fn scrape_all(
                 &snapshot.alert_map,
             ),
             state: state.clone(),
-            jwt_token: jwt_token.clone(),
+            auth,
             system_info_updated_at: host.system_info_updated_at,
             scrape_interval_secs,
         });
@@ -267,6 +360,17 @@ async fn scrape_all(
                 online_batch.push((url, *metrics));
             }
             ScrapeOutcome::Offline => {
+                fail_count += 1;
+                let entry = backoff_map.entry(url.clone()).or_insert(HostBackoff {
+                    consecutive_failures: 0,
+                    last_attempt: Instant::now(),
+                });
+                entry.consecutive_failures += 1;
+                entry.last_attempt = Instant::now();
+                offline_batch.push((url, display_name));
+            }
+            ScrapeOutcome::Rejected(reason) => {
+                tracing::warn!(url = %url, reason = %reason, "🔴 [Scraper] Response rejected — treating host as down");
                 fail_count += 1;
                 let entry = backoff_map.entry(url.clone()).or_insert(HostBackoff {
                     consecutive_failures: 0,
@@ -338,32 +442,25 @@ struct ScrapeContext {
     containers: Vec<String>,
     alert_config: AlertConfig,
     state: Arc<AppState>,
-    jwt_token: String,
+    auth: AgentAuth,
     system_info_updated_at: Option<DateTime<Utc>>,
     scrape_interval_secs: u64,
 }
 
 async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
-    let ports_str = ctx
-        .ports
-        .iter()
-        .map(|p| p.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let containers_str = ctx.containers.join(",");
-
-    let mut url_str = format!("http://{}/metrics?", ctx.target);
-    if !ports_str.is_empty() {
-        url_str.push_str(&format!("ports={}&", ports_str));
-    }
-    if !containers_str.is_empty() {
-        url_str.push_str(&format!("containers={}", containers_str));
-    }
+    let request = match AgentRequest::new(
+        &ctx.auth,
+        &ctx.target,
+        &metrics_request_target(&ctx.ports, &ctx.containers),
+    ) {
+        Ok(request) => request,
+        Err(e) => return ScrapeOutcome::Failed(e),
+    };
 
     match ctx
         .client
-        .get(&url_str)
-        .header("Authorization", format!("Bearer {}", ctx.jwt_token))
+        .get(request.url.clone())
+        .header("Authorization", format!("Bearer {}", request.token))
         .send()
         .await
     {
@@ -376,29 +473,33 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                 .get(WIRE_VERSION_HEADER)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|s| s.trim().parse::<u8>().ok());
-            let mut bytes = Vec::new();
-            let mut resp = resp;
-            loop {
-                match resp.chunk().await {
-                    Ok(Some(chunk)) => {
-                        let next_len = bytes.len().saturating_add(chunk.len());
-                        if next_len > MAX_AGENT_PAYLOAD_BYTES {
-                            return ScrapeOutcome::Failed(format!(
-                                "Payload too large: exceeds {} bytes",
-                                MAX_AGENT_PAYLOAD_BYTES
-                            ));
-                        }
-                        bytes.extend_from_slice(&chunk);
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        return ScrapeOutcome::Failed(format!(
-                            "Failed to read response body chunk: {}",
-                            e
-                        ));
-                    }
+            let signature = resp
+                .headers()
+                .get(RESPONSE_SIGNATURE_HEADER)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
+            let bytes = match read_capped_body(resp, MAX_AGENT_PAYLOAD_BYTES).await {
+                Ok(bytes) => bytes,
+                Err(e) => return ScrapeOutcome::Failed(e),
+            };
+            match check_response_signature(&ctx.auth, &request.token, &bytes, signature.as_deref())
+            {
+                Ok(true) => pin_response_signing(&ctx.state, &ctx.target).await,
+                Ok(false) => {}
+                Err(reason) => {
+                    handle_down(
+                        &ctx.target,
+                        &ctx.display_name,
+                        ctx.scrape_interval_secs,
+                        &ctx.state,
+                        &format!("response rejected ({reason})"),
+                    )
+                    .await;
+                    return ScrapeOutcome::Rejected(reason);
                 }
             }
+            // A signature header that got this far verified.
+            let response_signed = signature.is_some();
 
             match deserialize_agent_metrics_versioned(&bytes, wire_version) {
                 Ok(mut metrics) => {
@@ -406,7 +507,12 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                     metrics.cpu_cores.truncate(1024);
                     metrics.network_interfaces.truncate(256);
                     metrics.docker_stats.truncate(512);
+                    metrics.docker_containers.truncate(512);
+                    metrics.ports.truncate(256);
                     metrics.system.processes.truncate(100);
+                    metrics.system.disks.truncate(256);
+                    metrics.system.temperatures.truncate(256);
+                    metrics.system.gpus.truncate(64);
 
                     sanitize_metrics(&mut metrics);
 
@@ -421,7 +527,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                             "⚠️ [Scraper] Agent version below minimum — consider upgrading"
                         );
                     }
-                    handle_success(metrics, ctx).await
+                    handle_success(metrics, ctx, response_signed).await
                 }
                 Err(e) => ScrapeOutcome::Failed(format!("Bincode deserialization error: {}", e)),
             }
@@ -432,6 +538,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                 &ctx.display_name,
                 ctx.scrape_interval_secs,
                 &ctx.state,
+                "no response",
             )
             .await;
             ScrapeOutcome::Offline
@@ -442,6 +549,7 @@ async fn scrape_one(ctx: &ScrapeContext) -> ScrapeOutcome {
                 &ctx.display_name,
                 ctx.scrape_interval_secs,
                 &ctx.state,
+                "no response",
             )
             .await;
             ScrapeOutcome::Offline
@@ -485,6 +593,9 @@ fn sanitize_metrics(metrics: &mut AgentMetrics) {
         if let Some(power_watts) = gpu.power_watts {
             gpu.power_watts = Some(metrics_service::sanitize_f32(power_watts));
         }
+        if let Some(power_limit_watts) = gpu.power_limit_watts {
+            gpu.power_limit_watts = Some(metrics_service::sanitize_f32(power_limit_watts));
+        }
     }
 
     for stats in &mut metrics.docker_stats {
@@ -493,6 +604,52 @@ fn sanitize_metrics(metrics: &mut AgentMetrics) {
 
     for process in &mut metrics.system.processes {
         process.cpu_usage = metrics_service::sanitize_f32(process.cpu_usage);
+    }
+
+    clamp_agent_strings(metrics);
+}
+
+/// Bound every agent-supplied string. These are persisted on each scrape,
+/// broadcast over SSE and interpolated into alert messages, so an agent must
+/// not be able to grow them without limit.
+fn clamp_agent_strings(metrics: &mut AgentMetrics) {
+    const MAX: usize = MAX_AGENT_STRING_BYTES;
+    clamp_string(&mut metrics.hostname, MAX);
+    clamp_string(&mut metrics.timestamp, 64);
+    clamp_string(&mut metrics.agent_version, 64);
+    for disk in &mut metrics.system.disks {
+        clamp_string(&mut disk.name, MAX);
+        clamp_string(&mut disk.mount_point, MAX);
+    }
+    for process in &mut metrics.system.processes {
+        clamp_string(&mut process.name, MAX);
+    }
+    for temperature in &mut metrics.system.temperatures {
+        clamp_string(&mut temperature.label, MAX);
+    }
+    for gpu in &mut metrics.system.gpus {
+        clamp_string(&mut gpu.name, MAX);
+    }
+    for iface in &mut metrics.network_interfaces {
+        clamp_string(&mut iface.name, MAX);
+    }
+    for stats in &mut metrics.docker_stats {
+        clamp_string(&mut stats.container_name, MAX);
+    }
+    for container in &mut metrics.docker_containers {
+        clamp_string(&mut container.container_name, MAX);
+        clamp_string(&mut container.image, MAX);
+        clamp_string(&mut container.state, 64);
+        clamp_string(&mut container.status, MAX);
+        for label in [
+            &mut container.compose_project,
+            &mut container.compose_service,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            clamp_string(label, MAX);
+        }
     }
 }
 
@@ -503,7 +660,11 @@ fn sanitize_metrics(metrics: &mut AgentMetrics) {
 /// System info refresh interval: 24 hours
 const SYSTEM_INFO_REFRESH_SECS: i64 = 24 * 3600;
 
-async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> ScrapeOutcome {
+async fn handle_success(
+    mut metrics: AgentMetrics,
+    ctx: &ScrapeContext,
+    response_signed: bool,
+) -> ScrapeOutcome {
     match metrics_service::process_metrics(
         &metrics,
         &ctx.target,
@@ -616,10 +777,10 @@ async fn handle_success(mut metrics: AgentMetrics, ctx: &ScrapeContext) -> Scrap
     if was_offline || sys_info_stale {
         let target_owned = ctx.target.clone();
         let client = ctx.client.clone();
-        let jwt = ctx.jwt_token.clone();
+        let auth = auth_after_scrape(&ctx.auth, response_signed);
         let state = Arc::clone(&ctx.state);
         tokio::spawn(async move {
-            fetch_and_store_system_info(&client, &target_owned, &jwt, &state).await;
+            fetch_and_store_system_info(&client, &target_owned, &auth, &state).await;
         });
     }
 
@@ -655,13 +816,19 @@ fn mark_recovery_if_cooldown_passed(
 async fn fetch_and_store_system_info(
     client: &Client,
     target: &str,
-    jwt_token: &str,
+    auth: &AgentAuth,
     state: &Arc<AppState>,
 ) {
-    let url = format!("http://{}/system-info", target);
+    let request = match AgentRequest::new(auth, target, "/system-info") {
+        Ok(request) => request,
+        Err(e) => {
+            tracing::warn!(target = %target, err = %e, "⚠️ [SystemInfo] Could not build request");
+            return;
+        }
+    };
     let resp = match client
-        .get(&url)
-        .header("Authorization", format!("Bearer {}", jwt_token))
+        .get(request.url.clone())
+        .header("Authorization", format!("Bearer {}", request.token))
         .timeout(Duration::from_secs(SCRAPE_TIMEOUT_SECS))
         .send()
         .await
@@ -677,13 +844,32 @@ async fn fetch_and_store_system_info(
         }
     };
 
-    let info: SystemInfoResponse = match resp.json().await {
+    let signature = resp
+        .headers()
+        .get(RESPONSE_SIGNATURE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let bytes = match read_capped_body(resp, MAX_SYSTEM_INFO_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(target = %target, err = %e, "⚠️ [SystemInfo] Response rejected");
+            return;
+        }
+    };
+    if let Err(e) = check_response_signature(auth, &request.token, &bytes, signature.as_deref()) {
+        tracing::warn!(target = %target, err = %e, "⚠️ [SystemInfo] Response rejected");
+        return;
+    }
+    let mut info: SystemInfoResponse = match serde_json::from_slice(&bytes) {
         Ok(i) => i,
         Err(e) => {
             tracing::warn!(target = %target, err = %e, "⚠️ [SystemInfo] JSON parse failed");
             return;
         }
     };
+    clamp_string(&mut info.os, MAX_AGENT_STRING_BYTES);
+    clamp_string(&mut info.cpu_model, MAX_AGENT_STRING_BYTES);
+    clamp_string(&mut info.ip_address, 64);
 
     // Persist to DB
     if let Err(e) = hosts_repo::update_system_info(
@@ -727,6 +913,7 @@ async fn handle_down(
     display_name: &str,
     scrape_interval_secs: u64,
     state: &Arc<AppState>,
+    reason: &str,
 ) {
     let now = Instant::now();
     let host_key = target.to_string();
@@ -775,8 +962,8 @@ async fn handle_down(
                 record.alert_state.offline_alerted = true;
                 record.alert_state.last_offline_alert = Some(now);
                 Some(format!(
-                    "🔴 **[Host Down]** `{}` (target: `{}`) — no response",
-                    hostname, target
+                    "🔴 **[Host Down]** `{}` (target: `{}`) — {}",
+                    hostname, target, reason
                 ))
             } else {
                 None
@@ -857,6 +1044,253 @@ async fn handle_down(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TOKEN: &str = "scrape-token";
+
+    fn auth(signs_responses: bool) -> AgentAuth {
+        AgentAuth {
+            secret: "agent-secret-agent-secret-agent-secret".to_string(),
+            signs_responses,
+        }
+    }
+
+    fn signature(auth: &AgentAuth, body: &[u8]) -> String {
+        use hmac::{Hmac, Mac};
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(auth.secret.as_bytes()).unwrap();
+        mac.update(TOKEN.as_bytes());
+        mac.update(&[0]);
+        mac.update(body);
+        let hex: String = mac
+            .finalize()
+            .into_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        format!("v1={hex}")
+    }
+
+    #[test]
+    fn unsigned_response_is_accepted_only_before_the_host_is_pinned() {
+        assert_eq!(
+            check_response_signature(&auth(false), TOKEN, b"body", None),
+            Ok(false)
+        );
+        assert!(check_response_signature(&auth(true), TOKEN, b"body", None).is_err());
+    }
+
+    #[test]
+    fn valid_signature_pins_once_and_tampering_is_always_rejected() {
+        let unpinned = auth(false);
+        let sig = signature(&unpinned, b"body");
+        // First valid signature asks the caller to pin; later ones do not.
+        assert_eq!(
+            check_response_signature(&unpinned, TOKEN, b"body", Some(&sig)),
+            Ok(true)
+        );
+        assert_eq!(
+            check_response_signature(&auth(true), TOKEN, b"body", Some(&sig)),
+            Ok(false)
+        );
+        // A bad signature fails even for a host that never signed before.
+        assert!(check_response_signature(&unpinned, TOKEN, b"tampered", Some(&sig)).is_err());
+    }
+
+    // ── Regression tests against a fake agent ───────────────────────
+
+    /// Serve `app` on an ephemeral loopback port and return its `host:port`.
+    async fn spawn_fake_agent(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        addr.to_string()
+    }
+
+    fn context(state: &Arc<AppState>, target: &str, signs_responses: bool) -> ScrapeContext {
+        ScrapeContext {
+            client: Client::new(),
+            target: target.to_string(),
+            display_name: "box".to_string(),
+            ports: vec![80],
+            containers: vec![],
+            alert_config: alert_configs_repo::resolve_alert_config(target, 4.0, &HashMap::new()),
+            state: Arc::clone(state),
+            auth: auth(signs_responses),
+            system_info_updated_at: Some(Utc::now()),
+            scrape_interval_secs: 10,
+        }
+    }
+
+    fn host_is_marked_down(state: &Arc<AppState>, target: &str) -> bool {
+        let alerted = state
+            .store
+            .read()
+            .unwrap()
+            .hosts
+            .get(target)
+            .is_some_and(|record| record.alert_state.offline_alerted);
+        let offline = state
+            .last_known_status
+            .read()
+            .unwrap()
+            .get(target)
+            .is_some_and(|status| !status.is_online);
+        alerted && offline
+    }
+
+    #[tokio::test]
+    async fn response_with_bad_signature_marks_the_host_down() {
+        use axum::routing::get;
+        let target = spawn_fake_agent(axum::Router::new().route(
+            "/metrics",
+            get(|| async {
+                (
+                    [(RESPONSE_SIGNATURE_HEADER, format!("v1={}", "00".repeat(32)))],
+                    "forged",
+                )
+            }),
+        ))
+        .await;
+        let state = AppState::for_tests().await;
+
+        let outcome = scrape_one(&context(&state, &target, false)).await;
+
+        // Before: `Failed`, which only logged — no offline record, no alert.
+        assert!(matches!(outcome, ScrapeOutcome::Rejected(_)));
+        assert!(host_is_marked_down(&state, &target));
+    }
+
+    #[tokio::test]
+    async fn unsigned_response_from_a_pinned_host_marks_the_host_down() {
+        use axum::routing::get;
+        let target =
+            spawn_fake_agent(axum::Router::new().route("/metrics", get(|| async { "unsigned" })))
+                .await;
+        let state = AppState::for_tests().await;
+
+        let outcome = scrape_one(&context(&state, &target, true)).await;
+
+        assert!(matches!(outcome, ScrapeOutcome::Rejected(_)));
+        assert!(host_is_marked_down(&state, &target));
+    }
+
+    const SYSTEM_INFO_JSON: &str = r#"{"os":"FakeOS","cpu_model":"Fake CPU","memory_total_mb":1,"boot_time":1,"ip_address":"192.0.2.1"}"#;
+
+    async fn stored_os_info(state: &Arc<AppState>, target: &str) -> Option<String> {
+        hosts_repo::get_host(&state.db_pool, target)
+            .await
+            .unwrap()
+            .unwrap()
+            .os_info
+    }
+
+    async fn register_host(state: &Arc<AppState>, target: &str) {
+        hosts_repo::create_host(
+            &state.db_pool,
+            &hosts_repo::CreateHostRequest {
+                host_key: target.to_string(),
+                display_name: "box".to_string(),
+                scrape_interval_secs: 10,
+                load_threshold: 4.0,
+                ports: vec![],
+                containers: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn system_info_after_the_pinning_scrape_must_be_signed() {
+        use axum::routing::get;
+        let target = spawn_fake_agent(
+            axum::Router::new().route("/system-info", get(|| async { SYSTEM_INFO_JSON })),
+        )
+        .await;
+        let state = AppState::for_tests().await;
+        register_host(&state, &target).await;
+
+        // The scrape context was built before the host was pinned, but its
+        // response carried a valid signature: the follow-up fetch must
+        // already enforce signatures.
+        let pinned_now = auth_after_scrape(&auth(false), true);
+        assert!(pinned_now.signs_responses);
+        fetch_and_store_system_info(&Client::new(), &target, &pinned_now, &state).await;
+        assert_eq!(stored_os_info(&state, &target).await, None);
+
+        // Control: a host that has never signed still gets its info stored,
+        // so the assertion above is about the signature and nothing else.
+        let never_signed = auth_after_scrape(&auth(false), false);
+        assert!(!never_signed.signs_responses);
+        fetch_and_store_system_info(&Client::new(), &target, &never_signed, &state).await;
+        assert_eq!(
+            stored_os_info(&state, &target).await.as_deref(),
+            Some("FakeOS")
+        );
+    }
+
+    #[test]
+    fn metrics_request_target_lists_only_what_is_monitored() {
+        assert_eq!(metrics_request_target(&[], &[]), "/metrics");
+        assert_eq!(
+            metrics_request_target(&[80, 443], &[]),
+            "/metrics?ports=80,443"
+        );
+        assert_eq!(
+            metrics_request_target(&[80], &["web".to_string(), "db".to_string()]),
+            "/metrics?ports=80&containers=web,db"
+        );
+    }
+
+    #[test]
+    fn request_token_is_bound_to_the_target_as_sent_on_the_wire() {
+        use crate::services::auth::{Claims, request_target_digest};
+        use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+
+        let auth = auth(false);
+        let rq_of = |path_and_query: &str| {
+            let request = AgentRequest::new(&auth, "10.0.0.1:9101", path_and_query).unwrap();
+            let mut validation = Validation::new(Algorithm::HS256);
+            validation.set_audience(&["agent"]);
+            let claims = decode::<Claims>(
+                &request.token,
+                &DecodingKey::from_secret(auth.secret.as_bytes()),
+                &validation,
+            )
+            .unwrap()
+            .claims;
+            (request.url, claims.rq)
+        };
+
+        let (url, rq) = rq_of("/metrics?ports=80,443");
+        assert_eq!(url.as_str(), "http://10.0.0.1:9101/metrics?ports=80,443");
+        assert_eq!(rq, request_target_digest("/metrics?ports=80,443"));
+
+        // Changing the monitored ports in transit no longer matches the token.
+        assert_ne!(rq, rq_of("/metrics?ports=80").1);
+
+        // The digest covers the normalised form the agent actually receives.
+        let (url, rq) = rq_of("/metrics?containers=my app");
+        assert_eq!(url.query(), Some("containers=my%20app"));
+        assert_eq!(rq, request_target_digest("/metrics?containers=my%20app"));
+    }
+
+    #[test]
+    fn clamp_string_truncates_on_a_char_boundary() {
+        let mut ascii = "a".repeat(300);
+        clamp_string(&mut ascii, 256);
+        assert_eq!(ascii.len(), 256);
+
+        // 'é' is two bytes; cutting at an odd byte must back off, not panic.
+        let mut multibyte = "é".repeat(10);
+        clamp_string(&mut multibyte, 5);
+        assert_eq!(multibyte, "éé");
+
+        let mut short = "ok".to_string();
+        clamp_string(&mut short, 256);
+        assert_eq!(short, "ok");
+    }
 
     #[test]
     fn recovery_cooldown_uses_last_recovery_alert() {

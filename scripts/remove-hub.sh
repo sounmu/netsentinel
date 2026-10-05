@@ -86,6 +86,15 @@ if [[ ! -f "$INSTALL_DIR/docker-compose.yml" ]]; then
   exit 1
 fi
 
+# Resolve to an absolute path before anything is deleted. The purge step
+# runs after `cd /`, so a relative --install-dir (".", "netsentinel") would
+# otherwise point at /data, /.env and friends.
+INSTALL_DIR="$(cd "$INSTALL_DIR" && pwd -P)"
+if [[ "$INSTALL_DIR" == "/" || "$INSTALL_DIR" == "$(cd "$HOME" 2>/dev/null && pwd -P)" ]]; then
+  echo "❌ Refusing to treat '$INSTALL_DIR' as the install dir." >&2
+  exit 1
+fi
+
 # ── confirmation banner ─────────────────────────────────────────────
 cat <<EOM
 About to remove the NetSentinel hub at:

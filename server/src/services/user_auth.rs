@@ -101,7 +101,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::auth::init_encoding_key;
+    use crate::services::auth::init_user_signing_key;
     use jsonwebtoken::EncodingKey;
 
     // Must match the TEST_SECRET in services::auth::tests so the shared OnceLock
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_decode_user_jwt_rejects_token_from_other_secret() {
-        init_encoding_key(TEST_SECRET);
+        init_user_signing_key(TEST_SECRET);
 
         // Mint a user JWT with a different secret than the one the server holds.
         let foreign_key = EncodingKey::from_secret(b"secret-from-a-previous-deployment");
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_decode_user_jwt_rejects_legacy_no_aud_token_from_other_secret() {
-        init_encoding_key(TEST_SECRET);
+        init_user_signing_key(TEST_SECRET);
 
         // Legacy user token (empty aud) signed with an old secret — must still fail.
         let foreign_key = EncodingKey::from_secret(b"secret-from-a-previous-deployment");

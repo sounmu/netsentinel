@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import useSWR from "swr";
 import {
   Settings, Plus, Pencil, Trash2, Server, Save, X, AlertTriangle, Copy, RefreshCw,
@@ -13,6 +13,8 @@ import {
 import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useRemoveHost } from "@/app/lib/sse-context";
+import { Switch } from "@/app/components/Switch";
+import { createLatestRequestGuard } from "@/app/lib/latest-request";
 import { toast } from "sonner";
 import { PageHeader } from "@/app/components/PageHeader";
 import {
@@ -92,19 +94,33 @@ export default function AgentsPage() {
   const [installNetwork, setInstallNetwork] = useState<InstallNetwork>("lan");
   const [agentPort, setAgentPort] = useState(9101);
   const [copied, setCopied] = useState(false);
+  const [reenroll, setReenroll] = useState(false);
 
-  const issueEnrollment = useCallback(async () => {
+  // Token requests can overlap (New token, the re-enroll switch, closing and
+  // reopening the form). Only the most recent one may update what is shown:
+  // otherwise a slow re-enroll request could land after the form was reset
+  // and display a re-enroll-capable command while the switch reads "off".
+  const enrollmentRequests = useRef(createLatestRequestGuard());
+
+  const issueEnrollment = useCallback(async (allowExistingHost: boolean) => {
+    const isLatest = enrollmentRequests.current.begin();
     setEnrollmentLoading(true);
     setFormError(null);
     try {
-      const token = await createAgentEnrollment({ label: "Host install", ttl_secs: 900 });
+      const token = await createAgentEnrollment({
+        label: "Host install",
+        ttl_secs: 900,
+        allow_existing_host: allowExistingHost,
+      });
+      if (!isLatest()) return;
       setEnrollment(token);
       setCopied(false);
     } catch (e) {
+      if (!isLatest()) return;
       setEnrollment(null);
       setFormError(e instanceof Error ? e.message : t.agents.errorCreateEnrollment);
     } finally {
-      setEnrollmentLoading(false);
+      if (isLatest()) setEnrollmentLoading(false);
     }
   }, [t]);
 
@@ -115,7 +131,8 @@ export default function AgentsPage() {
     setInstallNetwork("lan");
     setAgentPort(9101);
     setCopied(false);
-    void issueEnrollment();
+    setReenroll(false);
+    void issueEnrollment(false);
   };
   const openEdit = async (hostKey: string) => {
     // Fetch full host config (HostSummary doesn't include config fields)
@@ -129,6 +146,9 @@ export default function AgentsPage() {
     }
   };
   const closeForm = () => {
+    // Whatever token request is still in flight belongs to this form session.
+    enrollmentRequests.current.invalidate();
+    setEnrollmentLoading(false);
     setEditingKey(null);
     setFormError(null);
     setEnrollment(null);
@@ -248,7 +268,7 @@ export default function AgentsPage() {
                     <Terminal size={14} aria-hidden="true" />
                     {t.agents.installCommand}
                   </span>
-                  <Button variant="secondary" size="sm" onClick={issueEnrollment} disabled={enrollmentLoading}>
+                  <Button variant="secondary" size="sm" onClick={() => void issueEnrollment(reenroll)} disabled={enrollmentLoading}>
                     <RefreshCw size={13} aria-hidden="true" /> {t.agents.newToken}
                   </Button>
                 </div>
@@ -265,7 +285,7 @@ export default function AgentsPage() {
                       onChange={(e) => setAgentPort(parseInt(e.target.value, 10) || 9101)} />
                   </Field>
                   <Field label={t.agents.network} htmlFor="agent-network">
-                    <div id="agent-network" className="segmented segmented--fill">
+                    <div id="agent-network" className="segmented segmented--fill" role="tablist" aria-label={t.agents.network}>
                       {(["lan", "tailscale"] as InstallNetwork[]).map((mode) => (
                         <button
                           key={mode}
@@ -280,6 +300,26 @@ export default function AgentsPage() {
                       ))}
                     </div>
                   </Field>
+                </div>
+
+                <div className="install-block__option">
+                  <Switch
+                    id="agent-reenroll"
+                    checked={reenroll}
+                    disabled={enrollmentLoading}
+                    aria-labelledby="agent-reenroll-label"
+                    onChange={(next) => {
+                      // The flag is baked into the token, so a new one is issued.
+                      setReenroll(next);
+                      void issueEnrollment(next);
+                    }}
+                  />
+                  <div>
+                    <div id="agent-reenroll-label" className="install-block__option-label">
+                      {t.agents.reenroll}
+                    </div>
+                    <div className="field__hint">{t.agents.reenrollHint}</div>
+                  </div>
                 </div>
 
                 <pre className="code-block install-block__code">

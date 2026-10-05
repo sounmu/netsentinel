@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+Hardening pass from a code audit. Upgrade the hub before the agents.
+
+- **User sessions no longer share a key with agents.** `JWT_SECRET` used to
+  sign both dashboard logins and legacy agent scrape tokens, so any host
+  holding it could mint an admin session. The hub now signs user sessions
+  with a separate key generated on first boot (stored in the new
+  `server_secrets` table, migration `0016`, or supplied via `USER_JWT_SECRET`). Access tokens
+  issued before the upgrade stop working; browsers recover silently through
+  the refresh cookie.
+- **Agent responses are signed.** New agents add an
+  `x-netsentinel-signature` header (HMAC-SHA256 over the request token and
+  body) and the hub verifies it, so metrics cannot be altered or replayed
+  on the plain-HTTP scrape path. After the first verified response the hub
+  rejects unsigned responses from that host, including the `/system-info`
+  fetch that follows the pinning scrape. A rejected response is treated as
+  the host being down: it is recorded as offline and raises Host Down, so
+  corrupting responses cannot hold a host at its last "online" status.
+  Scrape tokens are minted per request and carry the target host, a
+  per-scrape id and a digest of the request path and query; the agent
+  refuses a token used for any other request, so the monitored ports and
+  containers cannot be rewritten in transit. Traffic is still unencrypted —
+  use Tailscale / WireGuard on untrusted networks.
+- **Installer no longer executes values it receives.** `install-host.sh`
+  validates the secret, host key and bind address before writing them, the
+  macOS wrapper and `update-host.sh` parse `agent.env` instead of
+  sourcing it, the config file is created `0600` up front, and
+  `update-host.sh` passes the secret through the environment rather than
+  the command line.
+- **Enrollment tokens cannot take over existing hosts.** A claim for an
+  already-registered `host_key` is rejected with `409` unless the token was
+  created with "Re-enroll an existing host". Claims for loopback,
+  link-local or unspecified addresses are rejected.
+- **Outbound request hardening.** The agent scraper no longer follows
+  redirects. HTTP monitors and webhooks resolve through a public-address-only
+  resolver, and ping monitors and SMTP connect to the address that was
+  validated, closing a DNS-rebinding gap. SMTP tries each validated address
+  in turn rather than only the first. Outbound alert requests have
+  connect and total timeouts.
+- **Agent-supplied data is bounded.** `/system-info` is capped at 64 KiB,
+  every list in a metrics payload is truncated and every string clamped.
+- **Rate limiting.** `CF-Connecting-IP` is honoured only with
+  `TRUST_CF_CONNECTING_IP=true` (set it if all traffic arrives through
+  Cloudflare; `X-Forwarded-For` keeps working without it), and forwarded
+  values must parse as IP addresses. Per-account login limits now count
+  failed attempts only and are keyed on (username, client IP), with a higher
+  per-username ceiling (`LOGIN_USER_GLOBAL_RATE_LIMIT_MAX`), so a stranger
+  can no longer lock the admin out.
+- **Agent resource limits.** At most 128 connections (8 per address), a
+  15 s header-read timeout, and throttled auth-failure logging. The systemd
+  unit gains additional sandboxing directives.
+- **Tooling.** `.dockerignore` now matches the real directory names, so a
+  local `web/node_modules` no longer overwrites `npm ci` output in the
+  image. `remove-hub.sh --purge` resolves `--install-dir` to an absolute
+  path before deleting.
+
 ## [0.5.1] — 2026-08-19
 
 Patch release that improves the day-to-day dashboard experience and fixes a

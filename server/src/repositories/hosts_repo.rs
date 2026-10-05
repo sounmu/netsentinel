@@ -19,6 +19,10 @@ pub struct HostRow {
     /// Per-agent scrape signing secret. Never exposed through JSON APIs.
     #[serde(skip_serializing, skip_deserializing)]
     pub agent_auth_secret: Option<String>,
+    /// True once a signed response from this agent has been verified; from
+    /// then on unsigned responses are rejected.
+    #[serde(skip_serializing, skip_deserializing)]
+    pub agent_signs_responses: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     // Static system info (populated by /system-info agent endpoint)
@@ -78,6 +82,7 @@ struct HostRowRaw {
     ports: String,
     containers: String,
     agent_auth_secret: Option<String>,
+    agent_signs_responses: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     os_info: Option<String>,
@@ -104,6 +109,7 @@ impl TryFrom<HostRowRaw> for HostRow {
             ports,
             containers,
             agent_auth_secret: raw.agent_auth_secret,
+            agent_signs_responses: raw.agent_signs_responses,
             created_at: raw.created_at,
             updated_at: raw.updated_at,
             os_info: raw.os_info,
@@ -117,7 +123,8 @@ impl TryFrom<HostRowRaw> for HostRow {
 }
 
 const HOST_COLUMNS: &str = "host_key, display_name, scrape_interval_secs, load_threshold, \
-                            ports, containers, agent_auth_secret, created_at, updated_at, \
+                            ports, containers, agent_auth_secret, agent_signs_responses, \
+                            created_at, updated_at, \
                             os_info, cpu_model, memory_total_mb, boot_time, ip_address, \
                             system_info_updated_at";
 
@@ -208,6 +215,15 @@ pub async fn delete_host(pool: &DbPool, host_key: &str) -> Result<bool, sqlx::Er
         .execute(pool)
         .await?;
     Ok(result.rows_affected() > 0)
+}
+
+/// Record that this agent signs its responses (see `HostRow::agent_signs_responses`).
+pub async fn mark_agent_signs_responses(pool: &DbPool, host_key: &str) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE hosts SET agent_signs_responses = 1 WHERE host_key = ?1")
+        .bind(host_key)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn update_system_info(

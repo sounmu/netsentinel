@@ -297,7 +297,9 @@ export interface AgentEnrollmentToken {
   expires_at: string;
 }
 
-export const createAgentEnrollment = (body?: { label?: string; ttl_secs?: number }) =>
+export const createAgentEnrollment = (
+  body?: { label?: string; ttl_secs?: number; allow_existing_host?: boolean },
+) =>
   apiCall<AgentEnrollmentToken>(`${API_BASE}/api/agent-enrollments`, "POST", body ?? {});
 
 // ── Alert Config CRUD ──

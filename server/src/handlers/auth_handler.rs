@@ -114,34 +114,54 @@ pub struct LoginResponse {
 ///
 /// When `trusted_proxy_count == 0`, ignores every forwarded-IP header
 /// (prevents spoofing) and uses the peer socket address. When `> 0`:
-///   1. **`CF-Connecting-IP`** is preferred — Cloudflare always sets this to
-///      the original client IP and overwrites any spoofed value at the edge.
-///      Native support matters because the NetSentinel stock deployment is
-///      "Zero-Trust via Cloudflare Tunnel", where without this every request
-///      collapses onto a single tunnel-IP and trips rate limits instantly.
-///   2. Falls back to the Nth-from-right entry of `X-Forwarded-For`
+///   1. **`CF-Connecting-IP`** is used only when `TRUST_CF_CONNECTING_IP` is
+///      set. Cloudflare overwrites the header at its edge, so it is reliable
+///      there — but nginx, Caddy, Traefik and a directly reachable port all
+///      pass a client-supplied value straight through, which would let a
+///      client choose a fresh rate-limit key per request.
+///   2. Otherwise the Nth-from-right entry of `X-Forwarded-For`
 ///      (proxies append left-to-right, so rightmost entries come from
-///      operator-controlled infrastructure).
+///      operator-controlled infrastructure). `cloudflared` sets this too.
+///
+/// A forwarded value that is not an IP address is ignored: the result keys
+/// rate-limit buckets and is written to logs and `refresh_tokens.ip`.
 pub(crate) fn extract_client_ip(
     headers: &HeaderMap,
     peer_addr: &SocketAddr,
+    state: &AppState,
+) -> String {
+    client_ip_from_headers(
+        headers,
+        peer_addr,
+        state.trusted_proxy_count,
+        state.trust_cf_connecting_ip,
+    )
+}
+
+fn client_ip_from_headers(
+    headers: &HeaderMap,
+    peer_addr: &SocketAddr,
     trusted_proxy_count: usize,
+    trust_cf_connecting_ip: bool,
 ) -> String {
     if trusted_proxy_count == 0 {
         return peer_addr.ip().to_string();
     }
-    if let Some(cf) = headers
-        .get("cf-connecting-ip")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+    let parse_ip = |raw: &str| raw.trim().parse::<std::net::IpAddr>().ok();
+    if trust_cf_connecting_ip
+        && let Some(ip) = headers
+            .get("cf-connecting-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_ip)
     {
-        return cf.to_string();
+        return ip.to_string();
     }
     if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        let ips: Vec<&str> = xff.split(',').map(|s| s.trim()).collect();
-        if ips.len() >= trusted_proxy_count {
-            return ips[ips.len() - trusted_proxy_count].to_string();
+        let ips: Vec<&str> = xff.split(',').collect();
+        if ips.len() >= trusted_proxy_count
+            && let Some(ip) = parse_ip(ips[ips.len() - trusted_proxy_count])
+        {
+            return ip.to_string();
         }
     }
     peer_addr.ip().to_string()
@@ -160,7 +180,7 @@ pub async fn login(
     headers: HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<Response, AppError> {
-    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    let ip_str = extract_client_ip(&headers, &peer_addr, &state);
     let user_key = body.username.trim().to_lowercase();
     if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
         tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited (IP bucket)");
@@ -168,15 +188,46 @@ pub async fn login(
             "Too many login attempts. Try again in {retry_after} seconds."
         )));
     }
-    if !user_key.is_empty()
-        && let Err(retry_after) = state.login_user_rate_limiter.check(&user_key)
-    {
-        tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited (user bucket)");
-        return Err(AppError::TooManyRequests(format!(
-            "Too many login attempts for this account. Try again in {retry_after} seconds."
-        )));
+    // Per-account limits count *failed* attempts only, and the tight one is
+    // keyed on (username, client IP). Counting every attempt against the bare
+    // username let anyone who knew the admin's username keep the real admin
+    // locked out with ten bad logins per window; now a stranger only ever
+    // locks out their own address. The global per-username ceiling is far
+    // higher and exists to bound guessing spread across many addresses.
+    let user_ip_key = format!("{user_key}|{ip_str}");
+    if !user_key.is_empty() {
+        let limited = state
+            .login_user_rate_limiter
+            .is_allowed(&user_ip_key)
+            .and_then(|()| state.login_user_global_rate_limiter.is_allowed(&user_key));
+        if let Err(retry_after) = limited {
+            tracing::warn!(ip = %ip_str, "🔒 [Auth] Login rate limited (user bucket)");
+            return Err(AppError::TooManyRequests(format!(
+                "Too many login attempts for this account. Try again in {retry_after} seconds."
+            )));
+        }
     }
 
+    let user = match verify_local_credentials(&state, &body).await {
+        Ok(user) => user,
+        Err(e) => {
+            if matches!(e, AppError::Unauthorized(_)) && !user_key.is_empty() {
+                state.login_user_rate_limiter.record(&user_ip_key);
+                state.login_user_global_rate_limiter.record(&user_key);
+            }
+            return Err(e);
+        }
+    };
+
+    issue_session_response(&state, user, &headers, &ip_str).await
+}
+
+/// Look the user up and verify the password. Every credential failure is the
+/// same `Unauthorized` so the response does not reveal which part was wrong.
+async fn verify_local_credentials(
+    state: &AppState,
+    body: &LoginRequest,
+) -> Result<UserRow, AppError> {
     let user = users_repo::find_by_username(&state.db_pool, body.username.trim())
         .await?
         .ok_or_else(|| AppError::Unauthorized("Invalid username or password".to_string()))?;
@@ -193,8 +244,7 @@ pub async fn login(
             "Invalid username or password".to_string(),
         ));
     }
-
-    issue_session_response(&state, user, &headers, &ip_str).await
+    Ok(user)
 }
 
 /// Install a fresh refresh cookie and return a short-lived access token.
@@ -242,7 +292,7 @@ pub async fn refresh(
     let presented = extract_refresh_cookie(&headers)
         .ok_or_else(|| AppError::Unauthorized("No refresh cookie".to_string()))?;
     let user_agent = extract_user_agent(&headers);
-    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    let ip_str = extract_client_ip(&headers, &peer_addr, &state);
 
     match refresh_token::rotate(
         &state.db_pool,
@@ -340,7 +390,7 @@ pub async fn setup(
         .await
         .map_err(|e| AppError::Internal(format!("Failed to commit transaction: {e:#}")))?;
 
-    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    let ip_str = extract_client_ip(&headers, &peer_addr, &state);
     issue_session_response(&state, user, &headers, &ip_str).await
 }
 
@@ -658,5 +708,47 @@ mod tests {
         let headers = HeaderMap::new();
         let result = extract_refresh_cookie(&headers);
         assert!(result.is_none(), "should return None with no cookie header");
+    }
+
+    fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, value.parse().unwrap());
+        }
+        map
+    }
+
+    #[test]
+    fn client_ip_ignores_forwarded_headers_without_trusted_proxy() {
+        let peer: SocketAddr = "203.0.113.9:5555".parse().unwrap();
+        let h = headers(&[
+            ("cf-connecting-ip", "1.2.3.4"),
+            ("x-forwarded-for", "5.6.7.8"),
+        ]);
+        assert_eq!(client_ip_from_headers(&h, &peer, 0, true), "203.0.113.9");
+    }
+
+    #[test]
+    fn client_ip_uses_cf_header_only_when_opted_in() {
+        let peer: SocketAddr = "10.0.0.2:5555".parse().unwrap();
+        let h = headers(&[
+            ("cf-connecting-ip", "1.2.3.4"),
+            ("x-forwarded-for", "5.6.7.8"),
+        ]);
+        assert_eq!(client_ip_from_headers(&h, &peer, 1, false), "5.6.7.8");
+        assert_eq!(client_ip_from_headers(&h, &peer, 1, true), "1.2.3.4");
+    }
+
+    #[test]
+    fn client_ip_rejects_non_ip_forwarded_values() {
+        let peer: SocketAddr = "10.0.0.2:5555".parse().unwrap();
+        // A spoofed, non-IP value must not become a rate-limit key.
+        let h = headers(&[("cf-connecting-ip", "bucket-1234")]);
+        assert_eq!(client_ip_from_headers(&h, &peer, 1, true), "10.0.0.2");
+        let h = headers(&[("x-forwarded-for", "not-an-ip")]);
+        assert_eq!(client_ip_from_headers(&h, &peer, 1, false), "10.0.0.2");
+        // Nth-from-right selection still applies.
+        let h = headers(&[("x-forwarded-for", "9.9.9.9, 8.8.8.8, 7.7.7.7")]);
+        assert_eq!(client_ip_from_headers(&h, &peer, 2, false), "8.8.8.8");
     }
 }

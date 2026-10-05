@@ -141,11 +141,8 @@ pub async fn api_rate_limit(
     if !is_rate_limited_path(request.uri().path()) {
         return next.run(request).await;
     }
-    let ip = crate::handlers::auth_handler::extract_client_ip(
-        request.headers(),
-        &peer_addr,
-        state.trusted_proxy_count,
-    );
+    let ip =
+        crate::handlers::auth_handler::extract_client_ip(request.headers(), &peer_addr, &state);
     let public = is_public_path(request.uri().path());
     let limiter = if public {
         &state.public_api_rate_limiter
