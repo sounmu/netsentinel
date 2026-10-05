@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import useSWR from "swr";
 import {
   Settings, Plus, Pencil, Trash2, Server, Save, X, AlertTriangle, Copy, RefreshCw,
@@ -14,6 +14,7 @@ import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useRemoveHost } from "@/app/lib/sse-context";
 import { Switch } from "@/app/components/Switch";
+import { createLatestRequestGuard } from "@/app/lib/latest-request";
 import { toast } from "sonner";
 import { PageHeader } from "@/app/components/PageHeader";
 import {
@@ -95,7 +96,14 @@ export default function AgentsPage() {
   const [copied, setCopied] = useState(false);
   const [reenroll, setReenroll] = useState(false);
 
+  // Token requests can overlap (New token, the re-enroll switch, closing and
+  // reopening the form). Only the most recent one may update what is shown:
+  // otherwise a slow re-enroll request could land after the form was reset
+  // and display a re-enroll-capable command while the switch reads "off".
+  const enrollmentRequests = useRef(createLatestRequestGuard());
+
   const issueEnrollment = useCallback(async (allowExistingHost: boolean) => {
+    const isLatest = enrollmentRequests.current.begin();
     setEnrollmentLoading(true);
     setFormError(null);
     try {
@@ -104,13 +112,15 @@ export default function AgentsPage() {
         ttl_secs: 900,
         allow_existing_host: allowExistingHost,
       });
+      if (!isLatest()) return;
       setEnrollment(token);
       setCopied(false);
     } catch (e) {
+      if (!isLatest()) return;
       setEnrollment(null);
       setFormError(e instanceof Error ? e.message : t.agents.errorCreateEnrollment);
     } finally {
-      setEnrollmentLoading(false);
+      if (isLatest()) setEnrollmentLoading(false);
     }
   }, [t]);
 
@@ -136,6 +146,9 @@ export default function AgentsPage() {
     }
   };
   const closeForm = () => {
+    // Whatever token request is still in flight belongs to this form session.
+    enrollmentRequests.current.invalidate();
+    setEnrollmentLoading(false);
     setEditingKey(null);
     setFormError(null);
     setEnrollment(null);

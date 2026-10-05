@@ -22,9 +22,15 @@ Hardening pass from a code audit. Upgrade the hub before the agents.
   `x-netsentinel-signature` header (HMAC-SHA256 over the request token and
   body) and the hub verifies it, so metrics cannot be altered or replayed
   on the plain-HTTP scrape path. After the first verified response the hub
-  rejects unsigned responses from that host. Scrape tokens now carry the
-  target host and a per-scrape id. Traffic is still unencrypted — use
-  Tailscale / WireGuard on untrusted networks.
+  rejects unsigned responses from that host, including the `/system-info`
+  fetch that follows the pinning scrape. A rejected response is treated as
+  the host being down: it is recorded as offline and raises Host Down, so
+  corrupting responses cannot hold a host at its last "online" status.
+  Scrape tokens are minted per request and carry the target host, a
+  per-scrape id and a digest of the request path and query; the agent
+  refuses a token used for any other request, so the monitored ports and
+  containers cannot be rewritten in transit. Traffic is still unencrypted —
+  use Tailscale / WireGuard on untrusted networks.
 - **Installer no longer executes values it receives.** `install-host.sh`
   validates the secret, host key and bind address before writing them, the
   macOS wrapper and `update-host.sh` parse `agent.env` instead of
@@ -38,7 +44,8 @@ Hardening pass from a code audit. Upgrade the hub before the agents.
 - **Outbound request hardening.** The agent scraper no longer follows
   redirects. HTTP monitors and webhooks resolve through a public-address-only
   resolver, and ping monitors and SMTP connect to the address that was
-  validated, closing a DNS-rebinding gap. Outbound alert requests have
+  validated, closing a DNS-rebinding gap. SMTP tries each validated address
+  in turn rather than only the first. Outbound alert requests have
   connect and total timeouts.
 - **Agent-supplied data is bounded.** `/system-info` is capped at 64 KiB,
   every list in a metrics payload is truncated and every string clamped.

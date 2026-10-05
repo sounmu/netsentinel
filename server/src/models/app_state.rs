@@ -184,3 +184,57 @@ impl AppState {
 
 /// Thread-safe shared store type alias (RwLock-guarded)
 pub type SharedStore = Arc<RwLock<MetricsStore>>;
+
+#[cfg(test)]
+impl AppState {
+    /// A fully wired state over an in-memory database, for tests that drive
+    /// real code paths (scraper, handlers) instead of isolated helpers.
+    pub(crate) async fn for_tests() -> Arc<Self> {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+        use std::str::FromStr;
+        use std::time::Duration;
+
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .foreign_keys(false);
+        let db_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&db_pool).await.unwrap();
+
+        let limiter = || Arc::new(LoginRateLimiter::new(1_000, Duration::from_secs(60)));
+        let cache_ttl = Duration::from_secs(60);
+        let (sse_tx, _) = broadcast::channel(16);
+
+        Arc::new(Self {
+            store: Arc::new(RwLock::new(MetricsStore::new())),
+            http_client: reqwest::Client::new(),
+            google_oauth: Arc::new(GoogleOAuthConfig::from_env().unwrap()),
+            oauth_state_store: Arc::new(OAuthStateStore::new()),
+            oauth_bootstrap_lock: Arc::new(tokio::sync::Mutex::new(())),
+            db_pool,
+            scrape_interval_secs: 10,
+            max_db_connections: 1,
+            sse_tx,
+            last_known_status: Arc::new(RwLock::new(HashMap::new())),
+            last_known_metrics: Arc::new(RwLock::new(HashMap::new())),
+            metrics_query_cache: Arc::new(MetricsQueryCache::new(cache_ttl, 4, 1 << 20)),
+            chart_metrics_query_cache: Arc::new(MetricsQueryCache::new(cache_ttl, 4, 1 << 20)),
+            login_rate_limiter: limiter(),
+            login_user_rate_limiter: limiter(),
+            login_user_global_rate_limiter: limiter(),
+            trusted_proxy_count: 0,
+            trust_cf_connecting_ip: false,
+            token_revocation_cutoffs: Arc::new(RwLock::new(HashMap::new())),
+            sse_ticket_store: Arc::new(SseTicketStore::new()),
+            api_rate_limiter: limiter(),
+            public_api_rate_limiter: limiter(),
+            sse_connections: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            max_sse_connections: 8,
+            hosts_snapshot: crate::services::hosts_snapshot::empty(),
+            monitors_snapshot: crate::services::monitors_snapshot::empty(),
+        })
+    }
+}

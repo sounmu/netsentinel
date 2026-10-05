@@ -23,6 +23,11 @@ pub struct Claims {
     /// a unique token ties each response to exactly one request.
     #[serde(default)]
     pub jti: String,
+    /// Hex SHA-256 of the request target (path and query) this token was
+    /// minted for. The agent refuses the token for any other target, so the
+    /// monitored ports and containers cannot be rewritten in transit.
+    #[serde(default)]
+    pub rq: String,
 }
 
 // Visibility is `pub(crate)` — only `services::user_auth` needs these, and
@@ -181,8 +186,22 @@ pub(crate) fn is_token_iat_still_valid(user_id: i32, iat: usize) -> bool {
     }
 }
 
-/// Mint a 60 s scrape token for `host_key`, signed with that agent's secret.
-pub fn generate_agent_jwt_with_secret(secret: &str, host_key: &str) -> Result<String, AppError> {
+/// Hex SHA-256 of a request target, as carried in the `rq` claim.
+pub fn request_target_digest(request_target: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(request_target.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Mint a 60 s scrape token for one request to `host_key`, signed with that
+/// agent's secret. `request_target` is the path and query exactly as sent.
+pub fn generate_agent_jwt_with_secret(
+    secret: &str,
+    host_key: &str,
+    request_target: &str,
+) -> Result<String, AppError> {
     use argon2::password_hash::rand_core::{OsRng, RngCore};
 
     let mut nonce = [0_u8; 16];
@@ -192,6 +211,7 @@ pub fn generate_agent_jwt_with_secret(secret: &str, host_key: &str) -> Result<St
         aud: "agent".to_string(),
         sub: host_key.to_string(),
         jti: nonce.iter().map(|b| format!("{b:02x}")).collect(),
+        rq: request_target_digest(request_target),
     };
     let key = EncodingKey::from_secret(secret.as_bytes());
     encode(&Header::new(Algorithm::HS256), &claims, &key)
@@ -421,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_generate_jwt_produces_three_part_token() {
-        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101")
+        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101", "/metrics")
             .expect("JWT generation failed");
         assert!(!token.is_empty());
         assert_eq!(
@@ -433,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_generated_jwt_is_decodable_with_correct_secret() {
-        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101")
+        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101", "/metrics")
             .expect("JWT generation failed");
         let result = decode::<Claims>(&token, &test_decoding_key(), &test_validation());
         assert!(
@@ -453,6 +473,7 @@ mod tests {
                 aud: "agent".to_string(),
                 sub: String::new(),
                 jti: String::new(),
+                rq: String::new(),
             },
             &EncodingKey::from_secret(b"correct-secret"),
         )
@@ -474,7 +495,7 @@ mod tests {
     #[test]
     fn test_generated_jwt_exp_is_in_future() {
         use chrono::Utc;
-        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101")
+        let token = generate_agent_jwt_with_secret(TEST_SECRET, "192.168.1.10:9101", "/metrics")
             .expect("JWT generation failed");
         let data = decode::<Claims>(&token, &test_decoding_key(), &test_validation())
             .expect("Decoding failed");
@@ -517,9 +538,35 @@ mod tests {
     }
 
     #[test]
+    fn request_digest_matches_the_agent_format() {
+        // Pinned value: the agent asserts the same digest in its own tests.
+        assert_eq!(
+            request_target_digest("/metrics"),
+            "b4bbca6caf5247626ee41b68231d40e1c1977ec9c3d0fc26b6809e1c703ca2b7"
+        );
+    }
+
+    #[test]
+    fn agent_tokens_are_bound_to_the_request_target() {
+        let claims_for = |target: &str| {
+            let token =
+                generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101", target).unwrap();
+            decode::<Claims>(&token, &test_decoding_key(), &test_validation())
+                .unwrap()
+                .claims
+        };
+        let ports = claims_for("/metrics?ports=80,443");
+        assert_eq!(ports.rq, request_target_digest("/metrics?ports=80,443"));
+        assert_eq!(ports.rq.len(), 64);
+        // A different port list, or a different endpoint, is a different token.
+        assert_ne!(ports.rq, claims_for("/metrics?ports=80").rq);
+        assert_ne!(ports.rq, claims_for("/system-info").rq);
+    }
+
+    #[test]
     fn agent_tokens_are_bound_to_host_and_unique_per_scrape() {
-        let a = generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101").unwrap();
-        let b = generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101").unwrap();
+        let a = generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101", "/metrics").unwrap();
+        let b = generate_agent_jwt_with_secret(TEST_SECRET, "10.0.0.1:9101", "/metrics").unwrap();
         assert_ne!(a, b, "jti must make every scrape token distinct");
         let claims = decode::<Claims>(&a, &test_decoding_key(), &test_validation())
             .unwrap()

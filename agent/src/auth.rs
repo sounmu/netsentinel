@@ -20,6 +20,10 @@ pub(crate) struct Claims {
     /// Audience claim for token type separation (server sends "agent")
     #[serde(default)]
     pub aud: String,
+    /// Hex SHA-256 of the request target (path and query) the hub minted
+    /// this token for. Absent on tokens from hubs that predate the claim.
+    #[serde(default)]
+    pub rq: Option<String>,
 }
 
 static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
@@ -69,6 +73,30 @@ fn sign_response(secret: &[u8], token: &str, body: &[u8]) -> Option<String> {
     Some(format!("v1={hex}"))
 }
 
+/// Hex SHA-256 of a request target, matching the hub's `rq` claim.
+fn request_target_digest(request_target: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(request_target.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Whether a token may be used for this request target.
+///
+/// The transport is plain HTTP, so a valid token alone does not prove the
+/// query is the one the hub sent: someone on the path could swap the port
+/// list (hiding a monitored port, or probing others) and replay the token.
+/// A token that carries `rq` is only good for that exact target. Tokens
+/// without the claim come from an older hub and are accepted as before —
+/// the claim is inside the signed token, so it cannot be stripped in transit.
+fn token_matches_request(claims: &Claims, request_target: &str) -> bool {
+    match claims.rq.as_deref() {
+        Some(expected) => expected == request_target_digest(request_target),
+        None => true,
+    }
+}
+
 /// Sign successful responses. Layered inside compression so the signature
 /// covers the bytes the hub sees after transparent gzip decoding.
 pub(crate) async fn sign_response_middleware(req: Request, next: Next) -> Response {
@@ -103,6 +131,28 @@ pub(crate) async fn sign_response_middleware(req: Request, next: Next) -> Respon
             .insert(HeaderName::from_static(RESPONSE_SIGNATURE_HEADER), value);
     }
     Response::from_parts(parts, Body::from(bytes))
+}
+
+/// Log a token used for a different request than it was minted for, at most
+/// once per interval (same reasoning as [`log_auth_failure`]).
+fn log_request_mismatch() {
+    static LAST_LOGGED_SECS: AtomicU64 = AtomicU64::new(0);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last = LAST_LOGGED_SECS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= AUTH_FAILURE_LOG_INTERVAL_SECS
+        && LAST_LOGGED_SECS
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+    {
+        tracing::warn!(
+            "⚠️ [Auth] Token presented for a different request than it was issued for — \
+             the request may have been altered in transit"
+        );
+    }
 }
 
 /// Log a failed token check without letting an unauthenticated client turn
@@ -180,7 +230,17 @@ pub(crate) async fn auth_middleware(req: Request, next: Next) -> Result<Response
     }
 
     match result {
-        Ok(_) => Ok(next.run(req).await),
+        Ok(data) => {
+            let request_target = req
+                .uri()
+                .path_and_query()
+                .map_or_else(|| req.uri().path(), |target| target.as_str());
+            if !token_matches_request(&data.claims, request_target) {
+                log_request_mismatch();
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            Ok(next.run(req).await)
+        }
         Err(e) => {
             log_auth_failure(&e);
             Err(StatusCode::UNAUTHORIZED)
@@ -208,6 +268,7 @@ mod tests {
             &Claims {
                 exp: usize::MAX,
                 aud: "agent".to_string(),
+                rq: None,
             },
             &EncodingKey::from_secret(secret),
         )
@@ -227,6 +288,7 @@ mod tests {
             &Claims {
                 exp: usize::MAX,
                 aud: "agent".to_string(),
+                rq: None,
             },
             &EncodingKey::from_secret(b"correct-secret"),
         )
@@ -237,6 +299,41 @@ mod tests {
             &test_validation(),
         );
         assert!(result.is_err(), "Should fail with the wrong secret");
+    }
+
+    fn claims_for(rq: Option<&str>) -> Claims {
+        Claims {
+            exp: usize::MAX,
+            aud: "agent".to_string(),
+            rq: rq.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn token_is_only_valid_for_the_request_it_was_minted_for() {
+        let minted_for = "/metrics?ports=80,443";
+        let claims = claims_for(Some(&request_target_digest(minted_for)));
+        assert!(token_matches_request(&claims, minted_for));
+        // Rewriting the monitored ports, dropping the query or reusing the
+        // token on another endpoint must all be refused.
+        assert!(!token_matches_request(&claims, "/metrics?ports=22"));
+        assert!(!token_matches_request(&claims, "/metrics"));
+        assert!(!token_matches_request(&claims, "/system-info"));
+    }
+
+    #[test]
+    fn tokens_from_hubs_without_the_claim_are_still_accepted() {
+        let claims = claims_for(None);
+        assert!(token_matches_request(&claims, "/metrics?ports=80"));
+    }
+
+    #[test]
+    fn request_digest_matches_the_hub_format() {
+        // Pinned value: the hub computes the same hex SHA-256 over the target.
+        assert_eq!(
+            request_target_digest("/metrics"),
+            "b4bbca6caf5247626ee41b68231d40e1c1977ec9c3d0fc26b6809e1c703ca2b7"
+        );
     }
 
     #[test]
