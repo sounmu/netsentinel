@@ -5,10 +5,14 @@
 //! `JWT_SECRET`. `DECODING_KEY` is a process-wide `OnceLock`
 //! seeded at startup and cannot be rotated without restart.
 
+use axum::body::Body;
+use axum::http::{HeaderName, HeaderValue};
 use axum::{extract::Request, http::StatusCode, middleware::Next, response::Response};
+use hmac::{Hmac, Mac};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Claims {
@@ -19,6 +23,16 @@ pub(crate) struct Claims {
 }
 
 static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
+/// Raw shared secret, kept for signing responses back to the hub.
+static SIGNING_SECRET: OnceLock<Vec<u8>> = OnceLock::new();
+
+/// Response header carrying `v1=<hex hmac-sha256>`; must match the hub's
+/// `services::auth::RESPONSE_SIGNATURE_HEADER`.
+const RESPONSE_SIGNATURE_HEADER: &str = "x-netsentinel-signature";
+/// Upper bound when buffering a response to sign it (handlers cap at 10 MiB).
+const MAX_SIGNED_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// Failed-auth log lines are emitted at most once per this many seconds.
+const AUTH_FAILURE_LOG_INTERVAL_SECS: u64 = 30;
 
 /// Initialize the decoding key from the raw shared secret.
 ///
@@ -28,7 +42,95 @@ static DECODING_KEY: OnceLock<DecodingKey> = OnceLock::new();
 pub(crate) fn init_decoding_key(secret: &[u8]) -> Result<(), &'static str> {
     DECODING_KEY
         .set(DecodingKey::from_secret(secret))
-        .map_err(|_| "DECODING_KEY was already initialized")
+        .map_err(|_| "DECODING_KEY was already initialized")?;
+    SIGNING_SECRET
+        .set(secret.to_vec())
+        .map_err(|_| "SIGNING_SECRET was already initialized")
+}
+
+/// `HMAC-SHA256(secret, token || 0x00 || body)`, hex-encoded with a `v1=` prefix.
+///
+/// The scrape channel is plain HTTP. The bearer token proves the hub to the
+/// agent; this proves the agent's answer to the hub, so someone on the path
+/// cannot rewrite metrics. Including the token ties the signature to one
+/// request (the hub mints a unique token per scrape), which rules out
+/// replaying an earlier response.
+fn sign_response(secret: &[u8], token: &str, body: &[u8]) -> Option<String> {
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(secret).ok()?;
+    mac.update(token.as_bytes());
+    mac.update(&[0]);
+    mac.update(body);
+    let hex: String = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    Some(format!("v1={hex}"))
+}
+
+/// Sign successful responses. Layered inside compression so the signature
+/// covers the bytes the hub sees after transparent gzip decoding.
+pub(crate) async fn sign_response_middleware(req: Request, next: Next) -> Response {
+    let token = req
+        .headers()
+        .get("Authorization")
+        .and_then(|val| val.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(str::to_owned);
+
+    let response = next.run(req).await;
+    let (Some(token), Some(secret)) = (token, SIGNING_SECRET.get()) else {
+        return response;
+    };
+    if !response.status().is_success() {
+        return response;
+    }
+
+    let (mut parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, MAX_SIGNED_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!(err = ?e, "❌ [Auth] Failed to buffer response for signing");
+            return axum::response::IntoResponse::into_response(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+    if let Some(value) = sign_response(secret, &token, &bytes)
+        .and_then(|signature| HeaderValue::from_str(&signature).ok())
+    {
+        parts
+            .headers
+            .insert(HeaderName::from_static(RESPONSE_SIGNATURE_HEADER), value);
+    }
+    Response::from_parts(parts, Body::from(bytes))
+}
+
+/// Log a failed token check without letting an unauthenticated client turn
+/// the log into a disk-filling primitive: one line per interval, carrying
+/// the number of failures that were not logged individually.
+fn log_auth_failure(err: &jsonwebtoken::errors::Error) {
+    static LAST_LOGGED_SECS: AtomicU64 = AtomicU64::new(0);
+    static SUPPRESSED: AtomicU64 = AtomicU64::new(0);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last = LAST_LOGGED_SECS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < AUTH_FAILURE_LOG_INTERVAL_SECS
+        || LAST_LOGGED_SECS
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
+        SUPPRESSED.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    let suppressed = SUPPRESSED.swap(0, Ordering::Relaxed);
+    tracing::warn!(
+        err = ?err,
+        suppressed_since_last = suppressed,
+        "⚠️ [Auth] JWT validation failed"
+    );
 }
 
 /// A syntactically-valid HS256 JWT signed with a throwaway secret. Used
@@ -80,7 +182,7 @@ pub(crate) async fn auth_middleware(req: Request, next: Next) -> Result<Response
     match result {
         Ok(_) => Ok(next.run(req).await),
         Err(e) => {
-            tracing::warn!(err = ?e, "⚠️ [Auth] JWT validation failed");
+            log_auth_failure(&e);
             Err(StatusCode::UNAUTHORIZED)
         }
     }
@@ -135,6 +237,22 @@ mod tests {
             &test_validation(),
         );
         assert!(result.is_err(), "Should fail with the wrong secret");
+    }
+
+    #[test]
+    fn response_signature_depends_on_secret_token_and_body() {
+        let base = sign_response(b"secret", "token", b"body").unwrap();
+        assert!(base.starts_with("v1="));
+        assert_eq!(base.len(), 3 + 64);
+        assert_eq!(base, sign_response(b"secret", "token", b"body").unwrap());
+        assert_ne!(base, sign_response(b"other", "token", b"body").unwrap());
+        assert_ne!(base, sign_response(b"secret", "token2", b"body").unwrap());
+        assert_ne!(base, sign_response(b"secret", "token", b"b0dy").unwrap());
+        // The separator keeps (token, body) splits from colliding.
+        assert_ne!(
+            sign_response(b"secret", "ab", b"c").unwrap(),
+            sign_response(b"secret", "a", b"bc").unwrap()
+        );
     }
 
     #[test]
