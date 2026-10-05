@@ -13,6 +13,7 @@ import {
 import { HostSummary } from "@/app/types/metrics";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { useRemoveHost } from "@/app/lib/sse-context";
+import { Switch } from "@/app/components/Switch";
 import { toast } from "sonner";
 import { PageHeader } from "@/app/components/PageHeader";
 
@@ -89,12 +90,17 @@ export default function AgentsPage() {
   const [installNetwork, setInstallNetwork] = useState<InstallNetwork>("lan");
   const [agentPort, setAgentPort] = useState(9101);
   const [copied, setCopied] = useState(false);
+  const [reenroll, setReenroll] = useState(false);
 
-  const issueEnrollment = useCallback(async () => {
+  const issueEnrollment = useCallback(async (allowExistingHost: boolean) => {
     setEnrollmentLoading(true);
     setFormError(null);
     try {
-      const token = await createAgentEnrollment({ label: "Agent install", ttl_secs: 900 });
+      const token = await createAgentEnrollment({
+        label: "Agent install",
+        ttl_secs: 900,
+        allow_existing_host: allowExistingHost,
+      });
       setEnrollment(token);
       setCopied(false);
     } catch (e) {
@@ -112,7 +118,8 @@ export default function AgentsPage() {
     setInstallNetwork("lan");
     setAgentPort(9101);
     setCopied(false);
-    void issueEnrollment();
+    setReenroll(false);
+    void issueEnrollment(false);
   };
   const openEdit = async (hostKey: string) => {
     // Fetch full host config (HostSummary doesn't include config fields)
@@ -250,7 +257,7 @@ export default function AgentsPage() {
                     {t.agents.installCommand}
                   </h3>
                 </div>
-                <button type="button" onClick={issueEnrollment} disabled={enrollmentLoading} className="md-btn-tonal">
+                <button type="button" onClick={() => void issueEnrollment(reenroll)} disabled={enrollmentLoading} className="md-btn-tonal">
                   <RefreshCw size={14} aria-hidden="true" /> {t.agents.newToken}
                 </button>
               </div>
@@ -295,6 +302,28 @@ export default function AgentsPage() {
                     ))}
                   </div>
                 </FormField>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
+                <Switch
+                  id="agent-reenroll"
+                  checked={reenroll}
+                  disabled={enrollmentLoading}
+                  aria-labelledby="agent-reenroll-label"
+                  onChange={(next) => {
+                    // The flag is baked into the token, so a new one is issued.
+                    setReenroll(next);
+                    void issueEnrollment(next);
+                  }}
+                />
+                <div style={{ minWidth: 0 }}>
+                  <div id="agent-reenroll-label" style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                    {t.agents.reenroll}
+                  </div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                    {t.agents.reenrollHint}
+                  </div>
+                </div>
               </div>
 
               <pre style={{ margin: 0, minHeight: 108, overflowX: "auto", whiteSpace: "pre", padding: 14, borderRadius: 8, border: "1px solid var(--border-subtle)", background: "var(--bg-primary)", color: "var(--text-primary)", fontSize: 12, lineHeight: 1.6, fontFamily: "var(--font-mono), monospace" }}>{enrollmentLoading ? t.agents.creatingToken : installCommand}</pre>
