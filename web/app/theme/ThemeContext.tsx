@@ -49,13 +49,37 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   // twice in dev StrictMode and produce duplicate writes; the new
   // shape side-steps that entirely.
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    const root = document.documentElement;
+
+    // Every surface, border and label animates its colour on a 120ms
+    // transition. Flipping the theme would otherwise run all of them at
+    // once, which reads as a smear rather than a switch. Suppress
+    // transitions for the frame in which the new palette lands.
+    root.setAttribute("data-theme-switching", "");
+    root.setAttribute("data-theme", theme);
+
+    // Keep browser chrome in sync with the explicit app preference, even
+    // when it differs from the operating-system colour scheme used by the
+    // static metadata fallback in layout.tsx.
+    const themeColor = getComputedStyle(root).getPropertyValue("--canvas").trim();
+    if (themeColor) {
+      for (const meta of document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')) {
+        meta.content = themeColor;
+      }
+    }
+
+    const raf = requestAnimationFrame(() => {
+      root.removeAttribute("data-theme-switching");
+    });
+
     try {
       localStorage.setItem("theme", theme);
     } catch {
       // Private mode or quota exhaustion — theme still works for the
       // session, just doesn't persist across reloads.
     }
+
+    return () => cancelAnimationFrame(raf);
   }, [theme]);
 
   const toggleTheme = useCallback(() => {

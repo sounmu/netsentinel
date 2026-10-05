@@ -131,114 +131,40 @@ export default function DateTimePicker({ value, onChange }: DateTimePickerProps)
   for (let d = 1; d <= daysInMonth; d++) calendarCells.push(d);
 
   return (
-    <div ref={containerRef} style={{ position: "relative", display: "inline-block" }}>
-      {/* Trigger button */}
+    <div ref={containerRef} className="dtp">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="date-input"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          cursor: "pointer",
-          minWidth: 190,
-          whiteSpace: "nowrap",
-        }}
+        className="date-input dtp__trigger"
+        aria-expanded={open}
       >
-        <Calendar size={14} color="var(--text-muted)" />
-        <span style={{ fontFamily: "var(--font-mono), monospace", fontSize: 13 }}>
-          {formatDisplay(value)}
-        </span>
+        <Calendar size={13} aria-hidden="true" />
+        <span className="mono">{formatDisplay(value)}</span>
       </button>
 
-      {/* Dropdown panel */}
       {open && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            left: 0,
-            zIndex: 100,
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: 12,
-            boxShadow: "0 8px 30px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)",
-            width: 296,
-            padding: 0,
-            overflow: "hidden",
-            animation: "fadeInUp 0.15s ease forwards",
-          }}
-        >
-          {/* Header: month navigation */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "14px 16px 10px",
-              borderBottom: "1px solid var(--border-subtle)",
-            }}
-          >
-            <button type="button" onClick={prevMonth} style={navBtnStyle}>
-              <ChevronLeft size={16} />
+        <div className="dtp__panel">
+          <div className="dtp__head">
+            <button type="button" onClick={prevMonth} className="dtp__nav" aria-label={t.datePicker.prevMonth}>
+              <ChevronLeft size={15} aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              onClick={goToToday}
-              style={{
-                fontSize: 14,
-                fontWeight: 700,
-                color: "var(--text-primary)",
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: "2px 8px",
-                borderRadius: 6,
-              }}
-            >
+            <button type="button" onClick={goToToday} className="dtp__month">
               {t.datePicker.monthYearTemplate
                 .replace("{year}", String(viewYear))
                 .replace("{month}", MONTHS[viewMonth])}
             </button>
-            <button type="button" onClick={nextMonth} style={navBtnStyle}>
-              <ChevronRight size={16} />
+            <button type="button" onClick={nextMonth} className="dtp__nav" aria-label={t.datePicker.nextMonth}>
+              <ChevronRight size={15} aria-hidden="true" />
             </button>
           </div>
 
-          {/* Day-of-week header */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
-              padding: "8px 12px 4px",
-            }}
-          >
+          <div className="dtp__dow">
             {DAYS.map((d) => (
-              <div
-                key={d}
-                style={{
-                  textAlign: "center",
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: "var(--text-muted)",
-                  padding: "4px 0",
-                }}
-              >
-                {d}
-              </div>
+              <span key={d}>{d}</span>
             ))}
           </div>
 
-          {/* Date grid */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(7, 1fr)",
-              padding: "0 12px 8px",
-              gap: 2,
-            }}
-          >
+          <div className="dtp__grid">
             {calendarCells.map((day, i) => {
               if (day === null) {
                 return <div key={`empty-${i}`} />;
@@ -252,22 +178,8 @@ export default function DateTimePicker({ value, onChange }: DateTimePickerProps)
                   key={day}
                   type="button"
                   onClick={() => selectDay(day)}
-                  style={{
-                    width: 36,
-                    height: 36,
-                    margin: "0 auto",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: 8,
-                    border: isToday && !isSelected ? "1px solid var(--accent-blue)" : "1px solid transparent",
-                    background: isSelected ? "var(--accent-blue)" : "transparent",
-                    color: isSelected ? "var(--text-on-accent, #fff)" : isToday ? "var(--accent-blue)" : "var(--text-primary)",
-                    fontSize: 13,
-                    fontWeight: isSelected || isToday ? 600 : 400,
-                    cursor: "pointer",
-                    transition: "all 0.1s ease",
-                  }}
+                  aria-current={isToday ? "date" : undefined}
+                  aria-pressed={isSelected}
                   className={`calendar-day${isSelected ? " calendar-day-selected" : ""}`}
                 >
                   {day}
@@ -276,40 +188,33 @@ export default function DateTimePicker({ value, onChange }: DateTimePickerProps)
             })}
           </div>
 
-          {/* Time picker */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 16px 14px",
-              borderTop: "1px solid var(--border-subtle)",
-              background: "var(--bg-primary)",
-            }}
-          >
-            <Clock size={14} color="var(--text-muted)" />
+          <div className="dtp__time">
+            <Clock size={13} aria-hidden="true" />
             <input
               type="text"
               value={hours}
               onChange={(e) => setHours(e.target.value.replace(/\D/g, "").slice(0, 2))}
               onBlur={applyTime}
-              style={timeInputStyle}
+              className="dtp__time-input"
               maxLength={2}
               placeholder="HH"
+              aria-label={t.datePicker.hours}
             />
-            <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-muted)" }}>:</span>
+            <span className="dtp__time-sep">:</span>
             <input
               type="text"
               value={minutes}
               onChange={(e) => setMinutes(e.target.value.replace(/\D/g, "").slice(0, 2))}
               onBlur={applyTime}
               onKeyDown={(e) => { if (e.key === "Enter") applyTime(); }}
-              style={timeInputStyle}
+              className="dtp__time-input"
               maxLength={2}
               placeholder="MM"
+              aria-label={t.datePicker.minutes}
             />
             <button
               type="button"
+              className="btn btn--secondary btn--sm dtp__now"
               onClick={() => {
                 const now = new Date();
                 const newDate = new Date(value);
@@ -317,17 +222,6 @@ export default function DateTimePicker({ value, onChange }: DateTimePickerProps)
                 setHours(pad(now.getHours()));
                 setMinutes(pad(now.getMinutes()));
                 onChange(newDate);
-              }}
-              style={{
-                marginLeft: "auto",
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: "1px solid var(--border-subtle)",
-                background: "var(--bg-secondary)",
-                color: "var(--text-secondary)",
-                fontSize: 11,
-                fontWeight: 500,
-                cursor: "pointer",
               }}
             >
               {t.datePicker.now}
@@ -338,31 +232,3 @@ export default function DateTimePicker({ value, onChange }: DateTimePickerProps)
     </div>
   );
 }
-
-const navBtnStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 30,
-  height: 30,
-  borderRadius: 8,
-  border: "1px solid var(--border-subtle)",
-  background: "transparent",
-  cursor: "pointer",
-  color: "var(--text-secondary)",
-  transition: "all 0.1s ease",
-};
-
-const timeInputStyle: React.CSSProperties = {
-  width: 40,
-  textAlign: "center",
-  padding: "4px 0",
-  borderRadius: 6,
-  border: "1px solid var(--border-subtle)",
-  background: "var(--bg-secondary)",
-  color: "var(--text-primary)",
-  fontSize: 14,
-  fontWeight: 600,
-  fontFamily: "var(--font-mono), monospace",
-  outline: "none",
-};

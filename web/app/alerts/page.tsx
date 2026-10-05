@@ -71,7 +71,7 @@ function AlertsPageInner() {
   };
 
   return (
-    <div className="page-content fade-in alerts-page">
+    <div className="page-content fade-in">
       <PageHeader
         icon={<Bell size={18} aria-hidden="true" />}
         title={t.alerts.title}
@@ -96,7 +96,7 @@ function AlertsPageInner() {
             </p>
             <p>{t.alerts.coverage.hostOverrides}</p>
           </div>
-          <Link href="/containers" className="md-btn-tonal">
+          <Link href="/containers" className="btn btn--secondary btn--sm">
             {t.alerts.coverage.reviewContainers}
           </Link>
         </div>

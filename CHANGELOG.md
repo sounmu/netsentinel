@@ -15,7 +15,7 @@ Hardening pass from a code audit. Upgrade the hub before the agents.
   sign both dashboard logins and legacy agent scrape tokens, so any host
   holding it could mint an admin session. The hub now signs user sessions
   with a separate key generated on first boot (stored in the new
-  `server_secrets` table, or supplied via `USER_JWT_SECRET`). Access tokens
+  `server_secrets` table, migration `0016`, or supplied via `USER_JWT_SECRET`). Access tokens
   issued before the upgrade stop working; browsers recover silently through
   the refresh cookie.
 - **Agent responses are signed.** New agents add an
@@ -25,11 +25,11 @@ Hardening pass from a code audit. Upgrade the hub before the agents.
   rejects unsigned responses from that host. Scrape tokens now carry the
   target host and a per-scrape id. Traffic is still unencrypted — use
   Tailscale / WireGuard on untrusted networks.
-- **Installer no longer executes values it receives.** `install-agent.sh`
+- **Installer no longer executes values it receives.** `install-host.sh`
   validates the secret, host key and bind address before writing them, the
-  macOS wrapper and `update-agent.sh` parse `agent.env` instead of
+  macOS wrapper and `update-host.sh` parse `agent.env` instead of
   sourcing it, the config file is created `0600` up front, and
-  `update-agent.sh` passes the secret through the environment rather than
+  `update-host.sh` passes the secret through the environment rather than
   the command line.
 - **Enrollment tokens cannot take over existing hosts.** A claim for an
   already-registered `host_key` is rejected with `409` unless the token was
@@ -56,6 +56,35 @@ Hardening pass from a code audit. Upgrade the hub before the agents.
   local `web/node_modules` no longer overwrites `npm ci` output in the
   image. `remove-hub.sh --purge` resolves `--install-dir` to an absolute
   path before deleting.
+
+## [0.5.1] — 2026-08-19
+
+Patch release that improves the day-to-day dashboard experience and fixes a
+Cloudflare Tunnel failure mode. No database migration or agent ↔ server
+wire-format change is required.
+
+### Added
+
+- **Instrument Panel dashboard.** The overview receives the new operational
+  dashboard layout, alongside admin password recovery.
+- **Cloudflare Tunnel guidance.** Deployment documentation now covers trusted
+  proxy configuration and Cloudflare Access policies for agent scrape hosts.
+
+### Changed
+
+- **Host-first wording.** Dashboard labels and installer-facing language now
+  consistently call monitored machines “hosts”.
+- **Pretendard UI font.** The web interface uses Pretendard in place of IBM
+  Plex Sans KR.
+
+### Fixed
+
+- **Static files no longer exhaust API rate limits.** The per-IP limiter now
+  applies only to `/api/*` and `/metrics`; static HTML, JavaScript, CSS, and
+  font requests bypass it. This prevents a cold dashboard load behind a
+  proxy/NAT from consuming the shared API budget and rendering a blank page.
+- **Password-change middleware formatting.** The server-side password-change
+  flow includes its formatting correction from main.
 
 ## [0.5.0] — 2026-06-21
 

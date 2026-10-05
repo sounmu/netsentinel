@@ -1,6 +1,8 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import noStaticStyleProps from "./eslint-rules/no-static-style-props.mjs";
+import noRawColorLiterals from "./eslint-rules/no-raw-color-literals.mjs";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -18,6 +20,40 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "error",
     },
   },
+  // Design-system enforcement (DESIGN.md §8). Typography, spacing and shape
+  // must come from token-backed classes; runtime-computed geometry and colour
+  // stay legal, so the rule targets properties rather than banning `style`.
+  {
+    files: ["app/**/*.{ts,tsx}"],
+    plugins: {
+      netsentinel: {
+        rules: {
+          "no-static-style-props": noStaticStyleProps,
+          "no-raw-color-literals": noRawColorLiterals,
+        },
+      },
+    },
+    rules: {
+      "netsentinel/no-static-style-props": "error",
+      "netsentinel/no-raw-color-literals": "error",
+    },
+  },
+  {
+    // Replaces the root layout, so globals.css never loads and no token
+    // exists — literal values are correct here.
+    files: ["app/global-error.tsx"],
+    rules: {
+      "netsentinel/no-static-style-props": "off",
+      "netsentinel/no-raw-color-literals": "off",
+    },
+  },
+  {
+    // Browser metadata cannot resolve CSS custom properties; these literals
+    // intentionally mirror the light/dark canvas tokens in globals.css.
+    files: ["app/layout.tsx"],
+    rules: { "netsentinel/no-raw-color-literals": "off" },
+  },
+
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

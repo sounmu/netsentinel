@@ -70,12 +70,12 @@ echo "✅ Wrote ${ENV_PATH} with random secrets (chmod 600)."
 echo
 echo "    JWT_SECRET has been set for server user tokens and legacy agents."
 echo "    New agents added from the dashboard receive per-agent secrets via"
-echo "    the Add Agent enrollment flow, so you normally do not copy this"
+echo "    the Add Host enrollment flow, so you normally do not copy this"
 echo "    value to monitored hosts."
 echo
 echo "👉 Next:"
 echo "    1. docker compose pull server && docker compose up -d server"
 echo "    2. ./scripts/smoke-test.sh"
 echo "    3. open http://localhost:3000/setup   # create the first admin"
-echo "    4. Agents → Add Agent                 # copy the generated installer"
+echo "    4. Hosts → Add Host                   # copy the generated installer"
 echo

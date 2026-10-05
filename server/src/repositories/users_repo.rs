@@ -25,6 +25,10 @@ pub struct UserRow {
     pub display_name: Option<String>,
     pub picture_url: Option<String>,
     pub role: String,
+    /// Set by the `reset-admin-password` CLI subcommand. While true the
+    /// account may authenticate but the API is gated to identity + password
+    /// change only — see `require_password_change` in the router.
+    pub must_change_password: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -40,6 +44,7 @@ pub struct UserInfo {
     pub display_name: Option<String>,
     pub picture_url: Option<String>,
     pub role: String,
+    pub must_change_password: bool,
 }
 
 impl From<UserRow> for UserInfo {
@@ -51,6 +56,7 @@ impl From<UserRow> for UserInfo {
             display_name: row.display_name,
             picture_url: row.picture_url,
             role: row.role,
+            must_change_password: row.must_change_password,
         }
     }
 }
@@ -69,7 +75,7 @@ pub async fn find_by_id(pool: &DbPool, user_id: i32) -> Result<Option<UserRow>, 
                NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
                oauth_provider, oauth_subject,
                email, display_name, picture_url,
-               role, created_at, updated_at
+               role, must_change_password, created_at, updated_at
         FROM users
         WHERE id = ?1
         "#,
@@ -89,7 +95,7 @@ pub async fn find_by_username(
                NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
                oauth_provider, oauth_subject,
                email, display_name, picture_url,
-               role, created_at, updated_at
+               role, must_change_password, created_at, updated_at
         FROM users
         WHERE username = ?1
         "#,
@@ -110,7 +116,7 @@ pub async fn find_by_oauth_subject(
                NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
                oauth_provider, oauth_subject,
                email, display_name, picture_url,
-               role, created_at, updated_at
+               role, must_change_password, created_at, updated_at
         FROM users
         WHERE oauth_provider = ?1 AND oauth_subject = ?2
         "#,
@@ -134,7 +140,8 @@ pub async fn create_user<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite>>(
         RETURNING id, username,
                   NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
                   oauth_provider, oauth_subject,
-                  email, display_name, picture_url, role, created_at, updated_at
+                  email, display_name, picture_url, role, must_change_password,
+                  created_at, updated_at
         "#,
     )
     .bind(username)
@@ -171,7 +178,8 @@ pub async fn upsert_oauth_user<'e, E: sqlx::Executor<'e, Database = sqlx::Sqlite
         RETURNING id, username,
                   NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
                   oauth_provider, oauth_subject,
-                  email, display_name, picture_url, role, created_at, updated_at
+                  email, display_name, picture_url, role, must_change_password,
+                  created_at, updated_at
         "#,
     )
     .bind(provider)
@@ -213,7 +221,8 @@ pub async fn link_google_user(
         RETURNING id, username,
                   NULLIF(password_hash, '__netsentinel_oauth_no_local_password__') AS password_hash,
                   oauth_provider, oauth_subject,
-                  email, display_name, picture_url, role, created_at, updated_at
+                  email, display_name, picture_url, role, must_change_password,
+                  created_at, updated_at
         "#,
     )
     .bind(user_id)
@@ -227,6 +236,12 @@ pub async fn link_google_user(
     .await
 }
 
+/// Write a new password hash and clear any forced-change flag.
+///
+/// The two are updated together on purpose: a successful change is exactly
+/// the condition that ends the forced-change state, and splitting them would
+/// leave a window where the user is locked out of the API despite having set
+/// a password.
 pub async fn update_password(
     pool: &DbPool,
     user_id: i32,
@@ -234,6 +249,7 @@ pub async fn update_password(
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE users SET password_hash = ?1, \
+         must_change_password = 0, \
          password_changed_at = strftime('%s','now'), \
          updated_at = strftime('%s','now') WHERE id = ?2",
     )
@@ -253,6 +269,38 @@ pub async fn load_password_changed_at(
     .fetch_all(pool)
     .await?;
     Ok(rows.into_iter().collect())
+}
+
+/// Install a temporary password and force a change on next sign-in.
+///
+/// The counterpart to `update_password`: that one CLEARS the flag because
+/// the user chose the password themselves, this one SETS it because an
+/// operator chose it for them out of band.
+pub async fn set_temporary_password(
+    pool: &DbPool,
+    user_id: i32,
+    temp_password_hash: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE users SET password_hash = ?1, \
+         must_change_password = 1, \
+         password_changed_at = strftime('%s','now'), \
+         updated_at = strftime('%s','now') WHERE id = ?2",
+    )
+    .bind(temp_password_hash)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// List local accounts holding the admin role, for the reset CLI to pick from.
+pub async fn list_admin_usernames(pool: &DbPool) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT username FROM users WHERE role = 'admin' ORDER BY id")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|(u,)| u).collect())
 }
 
 /// Stamp `tokens_revoked_at = now` for a user. Called on logout and admin

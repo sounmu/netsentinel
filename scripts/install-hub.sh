@@ -13,7 +13,7 @@
 #   4. `docker compose pull && docker compose up -d` to download and
 #      start the published server+web image.
 #   5. Run scripts/smoke-test.sh to verify the install.
-#   6. Print the dashboard URL and point the operator to the Add Agent
+#   6. Print the dashboard URL and point the operator to the Add Host
 #      UI, which mints one-time enrollment tokens for installers.
 #
 # Safe to re-run: step 2 pulls instead of re-cloning, step 3 skips
@@ -110,7 +110,7 @@ cat <<EOM
 👉 Next:
     1. open http://${lan_ip}:${port}/setup   # create the first admin
 
-    2. Open Agents → Add Agent, choose LAN or Tailscale, then copy
+    2. Open Hosts → Add Host, choose LAN or Tailscale, then copy
        the generated one-line installer to each machine you want to
        monitor.${agent_ref_note}
 
@@ -119,7 +119,7 @@ cat <<EOM
            ${INSTALL_DIR}/docs/AFTER_INSTALL.md
 
 The server root secret is stored in ${INSTALL_DIR}/.env (chmod 600).
-New agents receive their own auth secret through the Add Agent
+New hosts receive their own auth secret through the Add Host
 enrollment flow, so there is normally nothing to copy from this
 terminal.
 ─────────────────────────────────────────────────────────────────────

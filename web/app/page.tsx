@@ -6,41 +6,16 @@ import {
   useSSEMetricsMap,
   useSSEStatusMap,
 } from "@/app/lib/sse-context";
-import {
-  getHostStatus,
-  STATUS_DOT_CLASS,
-  HostStatus,
-} from "@/app/lib/status";
+import { getHostStatus, HostStatus } from "@/app/lib/status";
 import React, { useMemo } from "react";
 import { useI18n } from "@/app/i18n/I18nContext";
 import { Activity, LayoutDashboard } from "lucide-react";
 import { formatNetworkSpeed } from "@/app/lib/formatters";
 import { PageHeader } from "@/app/components/PageHeader";
+import { Meter, Panel, EmptyState, SkeletonRows, StatusDot } from "@/app/components/ui";
 
-/**
- * Column-header labels + numeric values stay in the primary on-surface
- * color for maximum readability. Only the inline-meter BAR carries the
- * accent-green fill so a glance tells you "running" without the
- * rainbow of per-metric hues the overview previously used.
- */
-const HEADER_COLOR = "var(--text-primary)";
-const METRIC_VALUE_COLOR = "var(--text-primary)";
-const METRIC_BAR_COLOR = "var(--accent-green)";
-
-function InlineMeter({ value, max = 100 }: { value: number; max?: number }) {
-  const pct = Math.min(Math.max((value / max) * 100, 0), 100);
-  return (
-    <div className="inline-meter">
-      <span className="inline-meter-value">{pct.toFixed(1)}%</span>
-      <span className="inline-meter-bar">
-        <span
-          className="inline-meter-fill"
-          style={{ width: `${pct}%`, background: METRIC_BAR_COLOR }}
-        />
-      </span>
-    </div>
-  );
-}
+/** Maps host status onto the shared dot tones. */
+const DOT_TONE = { online: "ok", pending: "warn", offline: "off" } as const;
 
 interface HostRow {
   host_key: string;
@@ -113,22 +88,23 @@ export default function HomePage() {
   return (
     <div className="page-content fade-in">
       <PageHeader
-        icon={<LayoutDashboard size={18} aria-hidden="true" />}
+        icon={<LayoutDashboard size={16} aria-hidden="true" />}
         title={t.overview.title}
         badge={hosts.length}
+        description={t.overview.description}
         right={
           (onlineCount > 0 || offlineCount > 0) ? (
             <div className="page-header__stats">
               {onlineCount > 0 && (
                 <span className="page-header__stats-item">
-                  <span className="pulse-dot green" style={{ width: 6, height: 6 }} />
-                  {onlineCount} {t.overview.online}
+                  <StatusDot tone="ok" />
+                  <b>{onlineCount}</b> {t.overview.online}
                 </span>
               )}
               {offlineCount > 0 && (
                 <span className="page-header__stats-item">
-                  <span className="pulse-dot red" style={{ width: 6, height: 6 }} />
-                  {offlineCount} {t.overview.offline}
+                  <StatusDot tone="crit" />
+                  <b>{offlineCount}</b> {t.overview.offline}
                 </span>
               )}
             </div>
@@ -136,31 +112,15 @@ export default function HomePage() {
         }
       />
 
-      <div className="glass-card" style={{ overflow: "hidden" }}>
-        {isLoading && (
-          <div style={{ padding: 20 }}>
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="skeleton" style={{ height: 48, marginBottom: 8 }} />
-            ))}
-          </div>
-        )}
+      <Panel>
+        {isLoading && <SkeletonRows count={4} />}
 
         {!isLoading && hosts.length === 0 && (
-          <div
-            style={{
-              padding: "48px 24px",
-              textAlign: "center",
-              color: "var(--text-muted)",
-            }}
-          >
-            <Activity size={36} style={{ margin: "0 auto 12px", opacity: 0.3 }} />
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
-              {t.overview.noAgents}
-            </div>
-            <div style={{ fontSize: 13 }}>
-              {t.overview.noAgentsHint}
-            </div>
-          </div>
+          <EmptyState
+            icon={<Activity size={28} aria-hidden="true" />}
+            title={t.overview.noAgents}
+            description={t.overview.noAgentsHint}
+          />
         )}
 
         {!isLoading && hosts.length > 0 && (
@@ -168,130 +128,58 @@ export default function HomePage() {
             <table className="systems-table">
               <thead>
                 <tr>
-                  <th>{t.overview.tableHeaders.system}</th>
-                  <th style={{ width: "14%" }}>
-                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.cpu}</span>
-                  </th>
-                  <th style={{ width: "14%" }}>
-                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.memory}</span>
-                  </th>
-                  <th style={{ width: "14%" }}>
-                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.disk}</span>
-                  </th>
-                  <th style={{ width: "9%" }}>
-                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.load}</span>
-                  </th>
-                  <th style={{ width: "11%" }}>
-                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.netRx}</span>
-                  </th>
-                  <th style={{ width: "11%" }}>
-                    <span style={{ color: HEADER_COLOR }}>{t.overview.tableHeaders.netTx}</span>
-                  </th>
+                  <th style={{ width: "26%" }}>{t.overview.tableHeaders.system}</th>
+                  <th style={{ width: "14%" }}>{t.overview.tableHeaders.cpu}</th>
+                  <th style={{ width: "14%" }}>{t.overview.tableHeaders.memory}</th>
+                  <th style={{ width: "14%" }}>{t.overview.tableHeaders.disk}</th>
+                  <th style={{ width: "9%" }}>{t.overview.tableHeaders.load}</th>
+                  <th style={{ width: "11%" }}>{t.overview.tableHeaders.netRx}</th>
+                  <th style={{ width: "11%" }}>{t.overview.tableHeaders.netTx}</th>
                 </tr>
               </thead>
               <tbody>
                 {hosts.map((host) => {
                   const offline = host.status !== "online";
-                  const dash = <span style={{ color: "var(--text-muted)", fontSize: 12 }}>—</span>;
+                  const dash = <span className="host-cell__dash">—</span>;
                   return (
-                    <tr
-                      key={host.host_key}
-                    >
+                    <tr key={host.host_key}>
                       <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <span
-                            className={STATUS_DOT_CLASS[host.status]}
-                            style={{ width: 8, height: 8, flexShrink: 0 }}
-                          />
-                          <div style={{ minWidth: 0 }}>
-                            <div
-                              style={{
-                                fontSize: 14,
-                                fontWeight: 600,
-                                color: "var(--text-primary)",
-                                whiteSpace: "nowrap",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                              }}
-                            >
-                              <Link
-                                href={`/host/?key=${encodeURIComponent(host.host_key)}`}
-                                // `prefetch={false}` because Next.js fetches the route
-                                // chunk by walking `/host/?key=…` in dev/preview mode,
-                                // which our `output: 'export'` + `ServeDir` setup
-                                // resolves to a 404 (the static asset lives at
-                                // `/host/index.html`, query string is irrelevant to
-                                // ServeDir). Disabling prefetch keeps the navigation
-                                // path identical (Next still hydrates the cached
-                                // chunk on click) without the noisy 404s in server
-                                // logs and DevTools Network panel.
-                                prefetch={false}
-                                style={{ color: "inherit", textDecoration: "none" }}
-                              >
-                                {host.display_name}
-                              </Link>
-                            </div>
+                        {/* The link wraps the whole identity cell. The table
+                            previously set `cursor: pointer` on the entire row
+                            while only this text was clickable, so most of the
+                            row looked interactive but did nothing. */}
+                        <Link
+                          href={`/host/?key=${encodeURIComponent(host.host_key)}`}
+                          // `prefetch={false}` because Next.js fetches the route
+                          // chunk by walking `/host/?key=…` in dev/preview mode,
+                          // which our `output: 'export'` + `ServeDir` setup
+                          // resolves to a 404 (the static asset lives at
+                          // `/host/index.html`, query string is irrelevant to
+                          // ServeDir). Disabling prefetch keeps the navigation
+                          // path identical (Next still hydrates the cached
+                          // chunk on click) without the noisy 404s in server
+                          // logs and DevTools Network panel.
+                          prefetch={false}
+                          className="row-link host-cell"
+                        >
+                          <StatusDot tone={DOT_TONE[host.status]} />
+                          <span className="host-cell__id">
+                            <span className="host-cell__name">{host.display_name}</span>
                             {host.display_name !== host.host_key && (
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  color: "var(--text-muted)",
-                                  fontFamily: "var(--font-mono), monospace",
-                                  whiteSpace: "nowrap",
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                }}
-                              >
-                                {host.host_key}
-                              </div>
+                              <span className="host-cell__key">{host.host_key}</span>
                             )}
-                          </div>
-                        </div>
-                      </td>
-                      <td>{offline ? dash : <InlineMeter value={host.cpu} />}</td>
-                      <td>{offline ? dash : <InlineMeter value={host.ram} />}</td>
-                      <td>{offline ? dash : <InlineMeter value={host.disk} />}</td>
-                      <td>
-                        {offline ? dash : (
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                              color: METRIC_VALUE_COLOR,
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {host.load.toFixed(2)}
                           </span>
-                        )}
+                        </Link>
                       </td>
-                      <td>
-                        {offline ? dash : (
-                          <span
-                            style={{
-                              fontSize: 13,
-                              color: METRIC_VALUE_COLOR,
-                              fontWeight: 600,
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {formatNetworkSpeed(host.networkRx)}
-                          </span>
-                        )}
+                      <td>{offline ? dash : <Meter value={host.cpu} />}</td>
+                      <td>{offline ? dash : <Meter value={host.ram} />}</td>
+                      <td>{offline ? dash : <Meter value={host.disk} />}</td>
+                      <td className="num">{offline ? dash : host.load.toFixed(2)}</td>
+                      <td className="num">
+                        {offline ? dash : formatNetworkSpeed(host.networkRx)}
                       </td>
-                      <td>
-                        {offline ? dash : (
-                          <span
-                            style={{
-                              fontSize: 13,
-                              color: METRIC_VALUE_COLOR,
-                              fontWeight: 600,
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {formatNetworkSpeed(host.networkTx)}
-                          </span>
-                        )}
+                      <td className="num">
+                        {offline ? dash : formatNetworkSpeed(host.networkTx)}
                       </td>
                     </tr>
                   );
@@ -300,7 +188,7 @@ export default function HomePage() {
             </table>
           </div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }

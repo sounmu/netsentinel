@@ -28,6 +28,7 @@ import { useI18n } from "@/app/i18n/I18nContext";
 import type { Translations } from "@/app/i18n/translations";
 import { Switch } from "@/app/components/Switch";
 import { apiErrorMessage } from "./shared";
+import { Button, EmptyState, Panel } from "@/app/components/ui";
 
 interface Props {
   onCountChange?: (count: number | null) => void;
@@ -133,23 +134,23 @@ export function ChannelsPanel({ onCountChange }: Props) {
     >
       <div className="alerts-section-heading">
         <div>
-          <h2 className="alerts-section-title" style={{ marginBottom: 0 }}>
+          <h2 className="alerts-section-title alerts-section-title--flush">
             {t.notifications.title}
           </h2>
           <p className="alerts-section-description">{t.notifications.description}</p>
         </div>
-        <button
+        <Button
           type="button"
           onClick={() => setShowForm((v) => !v)}
-          className="alerts-btn alerts-btn--sm alerts-btn--filled"
+          variant="primary" size="sm"
         >
           <Plus size={14} aria-hidden="true" />
           {t.notifications.addChannel}
-        </button>
+        </Button>
       </div>
 
       {showForm && (
-        <div className="alerts-channel-compose" style={{ marginBottom: 12 }}>
+        <div className="alerts-channel-compose">
           <div className="alerts-channel-type-grid" aria-label={t.notifications.channelType}>
             {channelOptions.map((option) => (
               <button
@@ -211,27 +212,27 @@ export function ChannelsPanel({ onCountChange }: Props) {
           </div>
 
           <div className="alerts-row alerts-row--end alerts-row--tight">
-            <button
+            <Button
               type="button"
               onClick={() => setShowForm(false)}
-              className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+              variant="secondary" size="sm"
             >
               {t.common.cancel}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={handleCreate}
-              className="alerts-btn alerts-btn--sm alerts-btn--filled"
+              variant="primary" size="sm"
             >
               <Save size={12} aria-hidden="true" />
               {t.alerts.save}
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {channels?.map((ch) => (
-        <div key={ch.id} className="alerts-channel-card" style={{ marginBottom: 8 }}>
+        <div key={ch.id} className="alerts-channel-card">
           <span className="alerts-channel-card__icon" aria-hidden="true">
             {channelIcon(ch.channel_type)}
           </span>
@@ -256,34 +257,35 @@ export function ChannelsPanel({ onCountChange }: Props) {
             {ch.enabled ? t.notifications.enabled : t.notifications.disabled}
           </span>
           <Switch checked={ch.enabled} onChange={() => handleToggle(ch)} aria-label={ch.name} />
-          <button
+          <Button
             type="button"
             onClick={() => handleTest(ch.id)}
-            className="alerts-btn alerts-btn--sm alerts-btn--tonal"
+            variant="secondary" size="sm"
             aria-label={`${t.notifications.testSend}: ${ch.name}`}
           >
             <Send size={10} aria-hidden="true" />
             {t.notifications.testSend}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            icon
             onClick={() => handleDelete(ch.id)}
-            className="alerts-icon-btn alerts-icon-btn--danger"
             aria-label={`Delete ${ch.name}`}
           >
-            <Trash2 size={14} aria-hidden="true" />
-          </button>
+            <Trash2 size={13} aria-hidden="true" />
+          </Button>
         </div>
       ))}
 
       {(!channels || channels.length === 0) && !showForm && (
-        <div className="alerts-empty alerts-empty--compact">
-          <span className="alerts-empty__icon" aria-hidden="true">
-            <Send size={24} />
-          </span>
-          <span className="alerts-empty__title">{t.notifications.noChannels}</span>
-          <span className="alerts-empty__description">{t.notifications.noChannelsDescription}</span>
-        </div>
+        <Panel>
+          <EmptyState
+            icon={<Send size={24} aria-hidden="true" />}
+            title={t.notifications.noChannels}
+            description={t.notifications.noChannelsDescription}
+          />
+        </Panel>
       )}
     </div>
   );

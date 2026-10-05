@@ -26,6 +26,8 @@ interface TimeRangeControlsProps {
   browserTimeTemplate: string;
   utcStorageLabel: string;
   rangeUpdatingLabel: string;
+  /** Accessible name for the preset tablist. */
+  rangeLabel?: string;
   onPresetClick: (minutes: number, key: PresetKey) => void;
   onRangeChange: (range: TimeRange) => void;
 }
@@ -37,6 +39,7 @@ export function TimeRangeControls({
   browserTimeTemplate,
   utcStorageLabel,
   rangeUpdatingLabel,
+  rangeLabel,
   onPresetClick,
   onRangeChange,
 }: TimeRangeControlsProps) {
@@ -45,24 +48,28 @@ export function TimeRangeControls({
   return (
     <>
       <div className="time-controls">
-        {PRESET_CONFIG.map(({ key, minutes }) => (
-          <button
-            key={key}
-            type="button"
-            className={`preset-btn ${displayedRange.preset === key ? "active" : ""}`}
-            onClick={() => onPresetClick(minutes, key)}
-          >
-            {presetLabels[key]}
-          </button>
-        ))}
-        <div style={{ width: 1, height: 24, background: "var(--border-subtle)", margin: "0 4px" }} />
+        <div className="segmented" role="tablist" aria-label={rangeLabel}>
+          {PRESET_CONFIG.map(({ key, minutes }) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={displayedRange.preset === key}
+              className="segmented__item"
+              onClick={() => onPresetClick(minutes, key)}
+            >
+              {presetLabels[key]}
+            </button>
+          ))}
+        </div>
+        <div className="toolbar-divider" />
         <DateTimePicker
           value={displayedRange.start}
           onChange={(date) => onRangeChange(
             customizeDisplayedRange(displayedRange, "start", date),
           )}
         />
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>~</span>
+        <span className="toolbar-tilde">~</span>
         <DateTimePicker
           value={displayedRange.end}
           onChange={(date) => onRangeChange(

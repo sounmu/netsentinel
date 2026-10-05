@@ -23,6 +23,11 @@ export const translations = {
       passwordPolicy: "Password must contain uppercase, lowercase, digit, and special character",
       passwordMismatch: "Passwords do not match",
       setupFailed: "Setup failed",
+      forgotPassword: "Forgot your password?",
+      forgotPasswordHelp:
+        "Password recovery runs on the server, not from this page. Sign in to the machine running NetSentinel and run:",
+      forgotPasswordNote:
+        "It prints a temporary password and signs out every session. You will be asked to set a new one right after signing in.",
       or: "or",
       loginError: {
         invalid: "Invalid username or password",
@@ -34,26 +39,6 @@ export const translations = {
         oauthConflict: "This Google account is already linked to another user",
         generic: "An error occurred during login",
       },
-    },
-    // Dashboard
-    dashboard: {
-      customize: "Customize",
-      done: "Done",
-      addWidget: "Add Widget",
-      removeWidget: "Remove",
-      widgetTypes: {
-        host_status: "Host Status",
-        cpu_chart: "CPU Chart",
-        memory_chart: "Memory Chart",
-        alert_feed: "Alert Feed",
-        uptime_overview: "Uptime Overview",
-        http_monitor: "HTTP Monitor",
-      },
-      selectHost: "Select Host",
-      cpu: "CPU",
-      ram: "RAM",
-      noRecentAlerts: "No recent alerts",
-      noWidgets: "No widgets added. Click 'Customize' to add widgets.",
     },
     // Overview page
     overview: {
@@ -67,8 +52,8 @@ export const translations = {
       offline: "Offline",
       uptime: "Uptime",
       serverList: "Server List",
-      noAgents: "No agents connected",
-      noAgentsHint: "Start a Rust agent — it will appear here automatically.",
+      noAgents: "No hosts connected",
+      noAgentsHint: "Install NetSentinel on a host — it will appear here automatically.",
       tableHeaders: {
         system: "System",
         cpu: "CPU",
@@ -84,7 +69,7 @@ export const translations = {
       uptime: "Uptime",
       lastSeen: "Last seen:",
       noMetrics: "No metrics received yet",
-      noMetricsHint: "Data will appear once the agent sends metrics.",
+      noMetricsHint: "Data will appear once this host sends metrics.",
       backToOverview: "Overview",
       loadAverage: "System Load Average",
       portStatus: "Port Status",
@@ -103,7 +88,7 @@ export const translations = {
         "Track container state, resource pressure, and deployment spread across every monitored host.",
       noContainers: "No containers detected",
       noContainersHint:
-        "Docker and Podman workloads will appear here as soon as agents report them.",
+        "Docker and Podman workloads will appear here as soon as monitored hosts report them.",
       noLiveStats: "No live stats",
       noIo: "No I/O",
       sortAsc: "sort ascending",
@@ -185,13 +170,13 @@ export const translations = {
       total: "Total",
       noDisks: "No disk data",
     },
-    // Agents management page
+    // Host management page
     agents: {
-      title: "Agent Management",
-      description: "Add, edit, or delete monitoring agents. Changes take effect immediately.",
-      addAgent: "Add Agent",
-      addAgentTitle: "Add New Agent",
-      editAgentTitle: "Edit Agent",
+      title: "Host Management",
+      description: "Add, edit, or delete monitored hosts. Changes take effect immediately.",
+      addAgent: "Add Host",
+      addAgentTitle: "Add New Host",
+      editAgentTitle: "Edit Host",
       displayName: "Display Name",
       scrapeInterval: "Scrape Interval (s)",
       loadThreshold: "Load Threshold",
@@ -200,32 +185,32 @@ export const translations = {
       cancel: "Cancel",
       save: "Save",
       saving: "Saving...",
-      registeredAgents: "Registered Agents",
-      noAgents: "No agents registered",
-      noAgentsHint: 'Click "Add Agent" to register a monitoring target.',
+      registeredAgents: "Registered Hosts",
+      noAgents: "No hosts registered",
+      noAgentsHint: 'Click "Add Host" to register a monitoring target.',
       errorLoadHost: "Failed to load host info.",
-      errorHostKeyRequired: "Host Key (agent URL) is required.",
+      errorHostKeyRequired: "Host address is required.",
       errorDisplayNameRequired: "Display name is required.",
       errorSaveFailed: "Failed to save.",
       errorDeleteFailed: "Failed to delete.",
       deleteConfirmText: "Confirm",
-      hostKey: "Host Key (agent URL)",
-      agentCount: "agents",
+      hostKey: "Host Address",
+      agentCount: "hosts",
       installCommand: "Install command",
       serverUrl: "Server URL",
-      installPort: "Agent Port",
+      installPort: "Monitoring Port",
       network: "Network",
       networkLan: "LAN",
       networkTailscale: "Tailscale",
       newToken: "New token",
-      creatingToken: "Creating enrollment token...",
+      creatingToken: "Creating host enrollment token...",
       reenroll: "Re-enroll an existing host",
-      reenrollHint: "Off by default: an install command cannot replace the secret of a host that is already registered. Turn on only to reinstall that host's agent.",
+      reenrollHint: "Off by default: an install command cannot replace the secret of a host that is already registered. Turn on only to reinstall the monitor on that host.",
       tokenExpires: "Token expires at {time}",
       tokenUnavailable: "Token unavailable",
       copy: "Copy",
       copied: "Copied",
-      errorCreateEnrollment: "Failed to create enrollment token.",
+      errorCreateEnrollment: "Failed to create host enrollment token.",
       errorCopyFailed: "Failed to copy command.",
     },
     // Alerts page
@@ -236,7 +221,7 @@ export const translations = {
       perHostOverrides: "Per-Host Overrides",
       perHostDescription:
         "Apply custom alert thresholds to individual hosts. Deleting an override reverts to global defaults.",
-      noHosts: "No hosts registered. Go to the Agents page to add one.",
+      noHosts: "No hosts registered. Go to the Hosts page to add one.",
       save: "Save",
       saving: "Saving...",
       saved: "Saved",
@@ -308,7 +293,7 @@ export const translations = {
         selectedHosts: "{count} selected",
         applyGlobal: "Apply global defaults",
         matrix: "Rule matrix",
-        matrixDescription: "Overview of thresholds per host. Cells tinted blue indicate a per-host override.",
+        matrixDescription: "Overview of thresholds per host. Highlighted cells indicate a per-host override.",
         using: "Using global",
         overridden: "Overridden",
         clearSelection: "Clear",
@@ -351,7 +336,7 @@ export const translations = {
       offline: "Offline",
       overview: "Overview",
       containers: "Containers",
-      agents: "Agents",
+      agents: "Hosts",
       alerts: "Alerts",
       monitors: "Monitors",
       status: "Status",
@@ -359,7 +344,7 @@ export const translations = {
       active: "Active",
       pendingStatus: "Pending",
       offlineStatus: "Offline",
-      waitingForAgents: "Waiting for agents...",
+      waitingForAgents: "Waiting for hosts...",
       live: "Live",
       connecting: "Connecting...",
       openSidebar: "Open sidebar",
@@ -389,20 +374,9 @@ export const translations = {
       exitCode: "exit {code}",
       restarts: "restarts {count}",
     },
-    // CpuCoreGrid
-    cpuCores: {
-      title: "CPU Cores",
-      core: "Core",
-    },
-    // NetworkInterfaceTable
-    networkInterfaces: {
-      title: "Network Interfaces",
-      interface: "Interface",
-      rx: "RX",
-      tx: "TX",
-    },
     // Chart / TimeSeriesChart
     chart: {
+      timeRange: "Time range",
       presets: {
         "1m": "1m",
         "5m": "5m",
@@ -432,19 +406,16 @@ export const translations = {
       utcStorage: "Stored and queried as UTC",
       rangeUpdating: "Updating the visible range…",
     },
-    // LoadGauge
-    loadGauge: {
-      load1mAvg: "1m avg",
-      load5mAvg: "5m avg",
-      load15mAvg: "15m avg",
-      cpuCoreReference: "Based on CPU cores: {cpuCount} cores (max = {cpuCount})",
-    },
     // DateTimePicker
     datePicker: {
       days: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
       months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
       monthYearTemplate: "{month} {year}",
       now: "Now",
+      prevMonth: "Previous month",
+      nextMonth: "Next month",
+      hours: "Hours",
+      minutes: "Minutes",
     },
     // Alert history
     alertHistory: {
@@ -520,16 +491,6 @@ export const translations = {
       statusOk: "OK",
       statusError: "Error",
     },
-    // ProcessTable
-    process: {
-      noData: "No process data",
-      name: "Name",
-      memoryMb: "Memory (MB)",
-    },
-    // TemperatureDisplay
-    temperature: {
-      noData: "No temperature data",
-    },
     // GpuCard
     gpu: {
       noData: "No GPU data",
@@ -544,13 +505,27 @@ export const translations = {
       reload: "Reload",
       fallbackMessage: "An unexpected error occurred.",
     },
+    // Account
+    account: {
+      changePassword: "Change password",
+      currentPassword: "Current password",
+      newPassword: "New password",
+      passwordChanged: "Password changed. Please sign in again.",
+      passwordChangeFailed: "Could not change the password.",
+      currentPasswordWrong: "Current password is incorrect.",
+      passwordUnchanged: "The new password must differ from the current one.",
+      temporaryPasswordNotice:
+        "You are signed in with a temporary password. Set a new one to unlock the dashboard.",
+    },
     // Common
     common: {
       delete: "Delete",
       cancel: "Cancel",
       confirm: "Confirm",
-      online: "ONLINE",
-      offline: "OFFLINE",
+      // Sentence case: status badges are no longer uppercase pills, and
+      // shouting "ONLINE" on every healthy host competed with real alerts.
+      online: "Online",
+      offline: "Offline",
       servers: "servers",
       host: "Host",
       apply: "Apply",
@@ -558,25 +533,6 @@ export const translations = {
     },
   },
   ko: {
-    dashboard: {
-      customize: "커스터마이즈",
-      done: "완료",
-      addWidget: "위젯 추가",
-      removeWidget: "제거",
-      widgetTypes: {
-        host_status: "호스트 상태",
-        cpu_chart: "CPU 차트",
-        memory_chart: "메모리 차트",
-        alert_feed: "알림 피드",
-        uptime_overview: "가동률 개요",
-        http_monitor: "HTTP 모니터",
-      },
-      selectHost: "호스트 선택",
-      cpu: "CPU",
-      ram: "RAM",
-      noRecentAlerts: "최근 알림 없음",
-      noWidgets: "추가된 위젯이 없습니다. '커스터마이즈'를 클릭하여 위젯을 추가하세요.",
-    },
     auth: {
       login: "로그인",
       logout: "로그아웃",
@@ -595,6 +551,11 @@ export const translations = {
       passwordPolicy: "비밀번호에 대문자, 소문자, 숫자, 특수문자가 포함되어야 합니다",
       passwordMismatch: "비밀번호가 일치하지 않습니다",
       setupFailed: "초기 설정에 실패했습니다",
+      forgotPassword: "비밀번호를 잊으셨나요?",
+      forgotPasswordHelp:
+        "비밀번호 복구는 이 페이지가 아니라 서버에서 진행합니다. NetSentinel이 실행 중인 서버에 접속해 다음을 실행하세요:",
+      forgotPasswordNote:
+        "임시 비밀번호가 출력되고 모든 세션이 로그아웃됩니다. 로그인 직후 새 비밀번호를 설정하게 됩니다.",
       or: "또는",
       loginError: {
         invalid: "아이디 또는 비밀번호가 올바르지 않습니다",
@@ -618,8 +579,8 @@ export const translations = {
       offline: "오프라인",
       uptime: "가동률",
       serverList: "서버 목록",
-      noAgents: "연결된 에이전트가 없습니다",
-      noAgentsHint: "Rust 에이전트를 실행하면 자동으로 이 화면에 표시됩니다.",
+      noAgents: "연결된 호스트가 없습니다",
+      noAgentsHint: "호스트에 NetSentinel을 설치하면 자동으로 이 화면에 표시됩니다.",
       tableHeaders: {
         system: "시스템",
         cpu: "CPU",
@@ -634,7 +595,7 @@ export const translations = {
       uptime: "가동 시간",
       lastSeen: "마지막 수신:",
       noMetrics: "아직 수신된 메트릭이 없습니다",
-      noMetricsHint: "에이전트가 데이터를 전송하면 자동으로 표시됩니다.",
+      noMetricsHint: "이 호스트에서 데이터를 전송하면 자동으로 표시됩니다.",
       backToOverview: "대시보드",
       loadAverage: "시스템 Load Average",
       portStatus: "포트 상태",
@@ -653,7 +614,7 @@ export const translations = {
         "모든 모니터링 호스트의 컨테이너 상태, 리소스 압박, 배포 현황을 한눈에 확인합니다.",
       noContainers: "감지된 컨테이너가 없습니다",
       noContainersHint:
-        "에이전트가 Docker 또는 Podman 워크로드를 보고하면 여기에 표시됩니다.",
+        "모니터링 호스트가 Docker 또는 Podman 워크로드를 보고하면 여기에 표시됩니다.",
       noLiveStats: "실시간 통계 없음",
       noIo: "I/O 없음",
       sortAsc: "오름차순 정렬",
@@ -735,12 +696,12 @@ export const translations = {
       noDisks: "디스크 데이터 없음",
     },
     agents: {
-      title: "에이전트 관리",
+      title: "호스트 관리",
       description:
-        "모니터링 대상 에이전트를 추가, 수정, 삭제할 수 있습니다. 변경 사항은 즉시 반영됩니다.",
-      addAgent: "에이전트 추가",
-      addAgentTitle: "새 에이전트 추가",
-      editAgentTitle: "에이전트 수정",
+        "모니터링할 호스트를 추가, 수정, 삭제할 수 있습니다. 변경 사항은 즉시 반영됩니다.",
+      addAgent: "호스트 추가",
+      addAgentTitle: "새 호스트 추가",
+      editAgentTitle: "호스트 수정",
       displayName: "표시 이름",
       scrapeInterval: "스크레이프 주기 (초)",
       loadThreshold: "Load Threshold",
@@ -749,32 +710,32 @@ export const translations = {
       cancel: "취소",
       save: "저장",
       saving: "저장 중...",
-      registeredAgents: "등록된 에이전트",
-      noAgents: "등록된 에이전트가 없습니다",
-      noAgentsHint: '"에이전트 추가" 버튼을 눌러 모니터링 대상을 등록하세요.',
+      registeredAgents: "등록된 호스트",
+      noAgents: "등록된 호스트가 없습니다",
+      noAgentsHint: '"호스트 추가" 버튼을 눌러 모니터링 대상을 등록하세요.',
       errorLoadHost: "호스트 정보를 불러오는데 실패했습니다.",
-      errorHostKeyRequired: "Host Key (에이전트 URL)는 필수입니다.",
+      errorHostKeyRequired: "호스트 주소는 필수입니다.",
       errorDisplayNameRequired: "표시 이름은 필수입니다.",
       errorSaveFailed: "저장에 실패했습니다.",
       errorDeleteFailed: "삭제에 실패했습니다.",
       deleteConfirmText: "확인",
-      hostKey: "Host Key (에이전트 URL)",
+      hostKey: "호스트 주소",
       agentCount: "개",
       installCommand: "설치 명령",
       serverUrl: "서버 URL",
-      installPort: "에이전트 포트",
+      installPort: "모니터링 포트",
       network: "네트워크",
       networkLan: "LAN",
       networkTailscale: "Tailscale",
       newToken: "새 토큰",
-      creatingToken: "등록 토큰 생성 중...",
+      creatingToken: "호스트 등록 토큰 생성 중...",
       reenroll: "기존 호스트 재등록",
-      reenrollHint: "기본은 꺼짐: 설치 명령으로 이미 등록된 호스트의 시크릿을 교체할 수 없습니다. 해당 호스트의 에이전트를 다시 설치할 때만 켜세요.",
+      reenrollHint: "기본은 꺼짐: 설치 명령으로 이미 등록된 호스트의 시크릿을 교체할 수 없습니다. 해당 호스트에 다시 설치할 때만 켜세요.",
       tokenExpires: "토큰 만료: {time}",
       tokenUnavailable: "토큰 없음",
       copy: "복사",
       copied: "복사됨",
-      errorCreateEnrollment: "등록 토큰 생성에 실패했습니다.",
+      errorCreateEnrollment: "호스트 등록 토큰 생성에 실패했습니다.",
       errorCopyFailed: "명령 복사에 실패했습니다.",
     },
     alerts: {
@@ -784,7 +745,7 @@ export const translations = {
       perHostOverrides: "호스트별 오버라이드",
       perHostDescription:
         "특정 호스트에 글로벌과 다른 알람 기준을 적용합니다. 설정을 삭제하면 글로벌 기본값으로 복귀합니다.",
-      noHosts: "등록된 호스트가 없습니다. 먼저 Agents 페이지에서 호스트를 등록하세요.",
+      noHosts: "등록된 호스트가 없습니다. 먼저 호스트 페이지에서 호스트를 등록하세요.",
       save: "저장",
       saving: "저장 중...",
       saved: "저장됨",
@@ -857,7 +818,7 @@ export const translations = {
         applyGlobal: "글로벌 기본값 적용",
         matrix: "규칙 매트릭스",
         matrixDescription:
-          "호스트별 임계치를 한눈에 확인합니다. 파란색 배경은 호스트 오버라이드를 의미합니다.",
+          "호스트별 임계치를 한눈에 확인합니다. 강조된 셀은 호스트 오버라이드를 의미합니다.",
         using: "글로벌 사용",
         overridden: "오버라이드됨",
         clearSelection: "선택 해제",
@@ -898,7 +859,7 @@ export const translations = {
       offline: "오프라인",
       overview: "대시보드",
       containers: "컨테이너",
-      agents: "에이전트",
+      agents: "호스트",
       alerts: "알림",
       monitors: "모니터",
       status: "상태",
@@ -906,7 +867,7 @@ export const translations = {
       active: "활성",
       pendingStatus: "대기 중",
       offlineStatus: "오프라인",
-      waitingForAgents: "에이전트 연결 대기 중...",
+      waitingForAgents: "호스트 연결 대기 중...",
       live: "실시간 연결됨",
       connecting: "연결 중...",
       openSidebar: "사이드바 열기",
@@ -934,18 +895,9 @@ export const translations = {
       exitCode: "exit {code}",
       restarts: "재시작 {count}회",
     },
-    cpuCores: {
-      title: "CPU 코어",
-      core: "코어",
-    },
-    networkInterfaces: {
-      title: "네트워크 인터페이스",
-      interface: "인터페이스",
-      rx: "수신",
-      tx: "송신",
-    },
     // Chart / TimeSeriesChart
     chart: {
+      timeRange: "기간",
       presets: {
         "1m": "1분",
         "5m": "5분",
@@ -975,19 +927,16 @@ export const translations = {
       utcStorage: "저장·조회 기준은 UTC",
       rangeUpdating: "표시 범위 갱신 중…",
     },
-    // LoadGauge
-    loadGauge: {
-      load1mAvg: "1분 평균",
-      load5mAvg: "5분 평균",
-      load15mAvg: "15분 평균",
-      cpuCoreReference: "CPU 코어 수 기준: {cpuCount} cores (max = {cpuCount})",
-    },
     // DateTimePicker
     datePicker: {
       days: ["일", "월", "화", "수", "목", "금", "토"],
       months: ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"],
       monthYearTemplate: "{year}년 {month}",
       now: "현재 시간",
+      prevMonth: "이전 달",
+      nextMonth: "다음 달",
+      hours: "시",
+      minutes: "분",
     },
     alertHistory: {
       title: "알림 이력",
@@ -1059,14 +1008,6 @@ export const translations = {
       statusOk: "정상",
       statusError: "오류",
     },
-    process: {
-      noData: "프로세스 데이터 없음",
-      name: "이름",
-      memoryMb: "메모리 (MB)",
-    },
-    temperature: {
-      noData: "온도 데이터 없음",
-    },
     gpu: {
       noData: "GPU 데이터 없음",
       usage: "GPU 사용률",
@@ -1078,6 +1019,17 @@ export const translations = {
       title: "오류가 발생했습니다",
       reload: "새로고침",
       fallbackMessage: "예상치 못한 오류가 발생했습니다.",
+    },
+    account: {
+      changePassword: "비밀번호 변경",
+      currentPassword: "현재 비밀번호",
+      newPassword: "새 비밀번호",
+      passwordChanged: "비밀번호가 변경되었습니다. 다시 로그인해 주세요.",
+      passwordChangeFailed: "비밀번호를 변경하지 못했습니다.",
+      currentPasswordWrong: "현재 비밀번호가 올바르지 않습니다.",
+      passwordUnchanged: "새 비밀번호는 현재 비밀번호와 달라야 합니다.",
+      temporaryPasswordNotice:
+        "임시 비밀번호로 로그인한 상태입니다. 새 비밀번호를 설정해야 대시보드를 사용할 수 있습니다.",
     },
     common: {
       delete: "삭제",

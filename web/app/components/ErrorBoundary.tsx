@@ -1,7 +1,9 @@
 "use client";
 
 import React from "react";
+import { AlertTriangle } from "lucide-react";
 import { useI18n } from "@/app/i18n/I18nContext";
+import { Button } from "@/app/components/ui";
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -23,47 +25,15 @@ function ErrorFallback({
 }) {
   const { t } = useI18n();
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "60vh",
-        padding: 40,
-        color: "var(--text-primary)",
-      }}
-    >
-      <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3 }}>:(</div>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-        {t.errorBoundary.title}
-      </h2>
-      <p
-        style={{
-          fontSize: 13,
-          color: "var(--text-muted)",
-          marginBottom: 20,
-          textAlign: "center",
-          maxWidth: 400,
-        }}
-      >
+    <div className="boundary-fallback">
+      <AlertTriangle size={28} aria-hidden="true" className="boundary-fallback__icon" />
+      <h2 className="boundary-fallback__title">{t.errorBoundary.title}</h2>
+      <p className="boundary-fallback__message">
         {error?.message || t.errorBoundary.fallbackMessage}
       </p>
-      <button
-        onClick={onReload}
-        style={{
-          padding: "8px 20px",
-          borderRadius: 8,
-          border: "1px solid var(--accent-blue)",
-          background: "var(--accent-blue)",
-          color: "var(--text-on-accent, #fff)",
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
+      <Button variant="primary" onClick={onReload}>
         {t.errorBoundary.reload}
-      </button>
+      </Button>
     </div>
   );
 }

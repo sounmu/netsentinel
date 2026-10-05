@@ -50,10 +50,50 @@ export function getHostStatus(
 
 /** Colors per status */
 export const STATUS_COLORS: Record<HostStatus, { accent: string; bg: string; border: string }> = {
-  online:  { accent: "var(--accent-green)",  bg: "var(--status-online-bg)", border: "var(--badge-online-border)" },
-  pending: { accent: "var(--accent-yellow)", bg: "var(--badge-pending-bg)", border: "var(--badge-pending-border)" },
-  offline: { accent: "var(--accent-red)",    bg: "var(--status-offline-bg)", border: "var(--badge-offline-border)" },
+  online:  { accent: "var(--ok)",   bg: "var(--ok-bg)",   border: "var(--badge-online-border)" },
+  pending: { accent: "var(--warn)", bg: "var(--warn-bg)", border: "var(--badge-pending-border)" },
+  offline: { accent: "var(--crit)", bg: "var(--crit-bg)", border: "var(--badge-offline-border)" },
 };
+
+/**
+ * Single source of truth for "how bad is this percentage".
+ *
+ * Every surface that draws a utilisation meter — the overview table,
+ * the containers table, host detail — reads its colour from here.
+ * These thresholds used to be duplicated per page (and the overview
+ * ignored them entirely, painting every meter green regardless of
+ * value), so the same 88% reading could be described three different
+ * ways depending on which route you were looking at.
+ */
+export type MeterTone = "ok" | "warn" | "crit";
+
+export const METER_WARN_PCT = 60;
+export const METER_CRIT_PCT = 85;
+
+export function meterTone(percent: number): MeterTone {
+  if (percent >= METER_CRIT_PCT) return "crit";
+  if (percent >= METER_WARN_PCT) return "warn";
+  return "ok";
+}
+
+/** CSS custom property holding the colour for a meter tone. */
+export const METER_TONE_VAR: Record<MeterTone, string> = {
+  ok:   "var(--ok)",
+  warn: "var(--warn)",
+  crit: "var(--crit)",
+};
+
+/**
+ * Uptime percentages run the other way round — higher is better —
+ * and were previously thresholded at 99/95 on /monitors but 99.5/95
+ * on /status, so a monitor at 99.2% showed green on one page and
+ * amber on the other.
+ */
+export function uptimeTone(percent: number): MeterTone {
+  if (percent >= 99.5) return "ok";
+  if (percent >= 95) return "warn";
+  return "crit";
+}
 
 /** Labels per status */
 export const STATUS_LABELS: Record<HostStatus, string> = {

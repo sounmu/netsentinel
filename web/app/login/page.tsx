@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { Shield } from "lucide-react";
+import { Shield, Terminal } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/app/auth/AuthContext";
 import { useI18n } from "@/app/i18n/I18nContext";
@@ -15,6 +15,7 @@ import {
   publicFetcher,
   startGoogleOAuth,
 } from "@/app/lib/api";
+import { Button, Field } from "@/app/components/ui";
 
 export default function LoginPage() {
   const auth = useAuth();
@@ -24,6 +25,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
 
   const { data: authStatus } = useSWR<AuthStatus>(
     getAuthStatusUrl(),
@@ -105,118 +107,81 @@ export default function LoginPage() {
   };
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        padding: 20,
-        background:
-          "linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%)",
-      }}
-    >
-      <section className="glass-card" style={{ maxWidth: 420, width: "100%", padding: 32 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 24,
-            justifyContent: "center",
-          }}
-        >
-          <Shield size={28} style={{ color: "var(--accent-blue)" }} />
-          <h1 style={{ color: "var(--text-primary)", fontSize: 24, margin: 0 }}>
-            {t.auth.login}
-          </h1>
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="auth-card__head">
+          <Shield size={22} aria-hidden="true" />
+          <h1 className="auth-card__title">{t.auth.login}</h1>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 16 }}>
-            <label htmlFor="login-username" style={{ display: "block", color: "var(--text-muted)", marginBottom: 6, fontSize: 14 }}>
-              {t.auth.username}
-            </label>
+        <form onSubmit={handleSubmit} className="auth-form">
+          <Field label={t.auth.username} htmlFor="login-username">
             <input
               id="login-username"
               className="date-input"
               type="text"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
-              style={{ width: "100%", boxSizing: "border-box" }}
               autoFocus
             />
-          </div>
+          </Field>
 
-          <div style={{ marginBottom: 24 }}>
-            <label htmlFor="login-password" style={{ display: "block", color: "var(--text-muted)", marginBottom: 6, fontSize: 14 }}>
-              {t.auth.password}
-            </label>
+          <Field label={t.auth.password} htmlFor="login-password">
             <input
               id="login-password"
               className="date-input"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              style={{ width: "100%", boxSizing: "border-box" }}
             />
-          </div>
+          </Field>
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: "100%",
-              minHeight: 42,
-              padding: "10px 16px",
-              backgroundColor: "var(--accent-blue)",
-              color: "var(--text-on-accent, #fff)",
-              border: "none",
-              borderRadius: 8,
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: loading ? "not-allowed" : "pointer",
-              opacity: loading ? 0.7 : 1,
-            }}
-          >
-            {loading ? "..." : t.auth.loginButton}
-          </button>
+          <Button type="submit" variant="primary" disabled={loading} className="auth-submit">
+            {loading ? t.common.loading : t.auth.loginButton}
+          </Button>
         </form>
+
+        {/* Recovery is deliberately not self-service. A reset button here
+            would let anyone who can reach this page take over the instance,
+            which for a single-admin tool is total compromise. Running a
+            command on the host proves ownership; this just says how. */}
+        <div className="auth-recovery">
+          <button
+            type="button"
+            className="auth-recovery__toggle"
+            onClick={() => setShowRecovery((v) => !v)}
+            aria-expanded={showRecovery}
+          >
+            {t.auth.forgotPassword}
+          </button>
+
+          {showRecovery && (
+            <div className="auth-recovery__body">
+              <p className="auth-recovery__lede">
+                <Terminal size={13} aria-hidden="true" />
+                {t.auth.forgotPasswordHelp}
+              </p>
+              <pre className="code-block">netsentinel-server reset-admin-password</pre>
+              <p className="auth-recovery__note">{t.auth.forgotPasswordNote}</p>
+            </div>
+          )}
+        </div>
 
         {authStatus?.oauth_enabled && (
           <>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "22px 0" }}>
-              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-              <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{t.auth.or}</span>
-              <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            <div className="auth-divider">
+              <span>{t.auth.or}</span>
             </div>
 
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onClick={handleGoogleLogin}
               disabled={googleLoading}
-              style={{
-                width: "100%",
-                minHeight: 42,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 10,
-                padding: "10px 16px",
-                backgroundColor: "var(--surface-elevated)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                fontSize: 15,
-                fontWeight: 600,
-                cursor: googleLoading ? "not-allowed" : "pointer",
-                opacity: googleLoading ? 0.7 : 1,
-              }}
+              className="auth-submit"
             >
-              <span aria-hidden="true" style={{ fontWeight: 700, fontSize: 18 }}>
-                G
-              </span>
-              {googleLoading ? "..." : t.auth.signInWithGoogle}
-            </button>
+              <span aria-hidden="true" className="auth-google-mark">G</span>
+              {googleLoading ? t.common.loading : t.auth.signInWithGoogle}
+            </Button>
           </>
         )}
       </section>

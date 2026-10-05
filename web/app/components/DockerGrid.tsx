@@ -13,6 +13,7 @@ import {
 } from "@/app/lib/container-operations";
 import { formatBytes } from "@/app/lib/formatters";
 import type { DockerContainer, DockerContainerStats } from "@/app/types/metrics";
+import { EmptyState } from "@/app/components/ui";
 
 interface DockerGridProps {
   containers: readonly DockerContainer[];
@@ -98,10 +99,10 @@ export default function DockerGrid({ containers, stats = [] }: DockerGridProps) 
 
   if (containers.length === 0) {
     return (
-      <div className="ctr-list__empty">
-        <Box size={24} aria-hidden="true" />
-        <span>{t.dockerGrid.noContainers}</span>
-      </div>
+      <EmptyState
+        icon={<Box size={24} aria-hidden="true" />}
+        title={t.dockerGrid.noContainers}
+      />
     );
   }
 
@@ -111,28 +112,28 @@ export default function DockerGrid({ containers, stats = [] }: DockerGridProps) 
   return (
     <div className="ctr-list">
       <div className="ctr-list__toolbar">
-        <div className="ctr-list__segments" role="group" aria-label={t.host.dockerContainers}>
+        <div className="segmented" role="group" aria-label={t.host.dockerContainers}>
           <button
             type="button"
-            className="ctr-list__segment"
+            className="segmented__item"
             aria-pressed={activeFilter === "all"}
             onClick={() => setFilter("all")}
           >
             {t.dockerGrid.all}
-            <span className="ctr-list__segment-count">{summary.total}</span>
+            <span className="segmented__count">{summary.total}</span>
           </button>
           {FILTER_ORDER.filter((c) => summary[c] > 0).map((category) => (
             <button
               key={category}
               type="button"
-              className="ctr-list__segment"
+              className="segmented__item"
               data-category={category}
               aria-pressed={activeFilter === category}
               onClick={() => setFilter(category)}
             >
               <span className="ctr-list__dot" data-category={category} aria-hidden="true" />
               {t.containers.categories[category]}
-              <span className="ctr-list__segment-count">{summary[category]}</span>
+              <span className="segmented__count">{summary[category]}</span>
             </button>
           ))}
         </div>

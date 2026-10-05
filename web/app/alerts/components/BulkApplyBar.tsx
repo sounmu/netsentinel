@@ -8,6 +8,7 @@ import { bulkUpdateHostAlertConfigs, getHostAlertConfigsUrl } from "@/app/lib/ap
 import { useI18n } from "@/app/i18n/I18nContext";
 import type { AlertFormData } from "./shared";
 import { apiErrorMessage, formToRequests } from "./shared";
+import { Button } from "@/app/components/ui";
 
 interface Props {
   selectedCount: number;
@@ -45,19 +46,19 @@ export function BulkApplyBar({ selectedCount, selectedHosts, form, onClear, onAp
         {t.alerts.rules.selectedHosts.replace("{count}", String(selectedCount))}
       </span>
       <div className="alerts-row alerts-row--tight">
-        <button type="button" onClick={onClear} className="alerts-btn alerts-btn--sm alerts-btn--tonal">
+        <Button type="button" onClick={onClear} variant="secondary" size="sm">
           <X size={12} aria-hidden="true" />
           {t.alerts.rules.clearSelection}
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           onClick={handleApply}
           disabled={applying}
-          className="alerts-btn alerts-btn--sm alerts-btn--filled"
+          variant="primary" size="sm"
         >
           <CheckCheck size={12} aria-hidden="true" />
           {applying ? t.alerts.saving : t.alerts.rules.bulkApply}
-        </button>
+        </Button>
       </div>
     </div>
   );

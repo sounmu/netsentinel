@@ -18,17 +18,13 @@ interface PageHeaderProps {
 }
 
 /**
- * Shared page header that conforms to DESIGN.md §2.2's M3 typography
- * mapping: `<h1>` uses headline-small (20px / 400), the optional
- * description uses body-medium (14px / 400), the count chip uses
- * label-small (11px / 500) on an on-surface 8% state-layer background,
- * and the leading icon is tinted with `--md-sys-color-primary`. All
- * spacing is driven by the 4px-grid tokens from §7.1 and the chip corner
- * is `corner-small` from §3 — no raw hex or pixel literals inside the
- * component.
+ * Shared page header, applied on every top-level route.
  *
- * Applied on every top-level page so users get the same typographic
- * rhythm at the top of every route.
+ * It is deliberately NOT a card. Boxing the title meant every page
+ * opened with a container that held nothing but a line of text, and
+ * the first real panel then read as the second item on the page. A
+ * title on the canvas over a hairline reads as chrome, which is what
+ * it is.
  */
 export function PageHeader({
   icon,
@@ -39,7 +35,7 @@ export function PageHeader({
   align = "start",
 }: PageHeaderProps) {
   return (
-    <header className={`glass-card page-header page-header--align-${align}`}>
+    <header className={`page-header page-header--align-${align}`}>
       <div className="page-header__row">
         {icon && <span className="page-header__icon">{icon}</span>}
         <h1 className="page-header__title">{title}</h1>
