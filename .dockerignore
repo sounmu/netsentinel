@@ -1,9 +1,14 @@
 # Build artefacts
-netsentinel-server/target
-netsentinel-agent/target
-netsentinel-web/.next
-netsentinel-web/out
-netsentinel-web/node_modules
+server/target
+agent/target
+web/.next
+web/out
+web/node_modules
+
+# Local databases, logs and agent work dirs never belong in the build context
+**/data
+**/logs
+.claude
 
 # Local env + logs
 **/.env

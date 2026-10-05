@@ -211,6 +211,23 @@ extract_json_string() {
   sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p"
 }
 
+# Values below end up in ${CONFIG_FILE}, which systemd reads as an
+# EnvironmentFile and the macOS wrapper reads line by line. They come from
+# CLI flags and from the hub's enrollment response, so both are held to a
+# strict character set before anything is written: no quotes, whitespace,
+# `$`, backticks or `;` can reach a root-owned file.
+is_safe_secret() {
+  [[ "$1" =~ ^[A-Za-z0-9_+/=.:@%-]+$ ]]
+}
+
+is_ip_literal() {
+  [[ "$1" =~ ^[0-9A-Fa-f:.]+$ ]]
+}
+
+is_safe_host_key() {
+  [[ "$1" =~ ^[A-Za-z0-9._:-]+$ || "$1" =~ ^\[[0-9A-Fa-f:.]+\]:[0-9]+$ ]]
+}
+
 # ── validate required args ──────────────────────────────────────────
 case "$NETWORK_MODE" in
   lan|tailscale) ;;
@@ -239,6 +256,15 @@ fi
 
 if [[ -n "$JWT_SECRET" && ${#JWT_SECRET} -lt 32 ]]; then
   echo "❌ Agent auth secret is only ${#JWT_SECRET} chars; it must be ≥ 32." >&2
+  exit 1
+fi
+if [[ -n "$JWT_SECRET" ]] && ! is_safe_secret "$JWT_SECRET"; then
+  echo "❌ Agent auth secret contains unsupported characters." >&2
+  echo "    Allowed: letters, digits and _ - + / = . : @ %" >&2
+  exit 1
+fi
+if ! is_ip_literal "$BIND_ADDR"; then
+  echo "❌ Invalid --bind '$BIND_ADDR'. Must be an IPv4 or IPv6 address." >&2
   exit 1
 fi
 if ! [[ "$AGENT_PORT" =~ ^[0-9]+$ ]] || (( AGENT_PORT < 1 || AGENT_PORT > 65535 )); then
@@ -430,6 +456,19 @@ DISPLAY_NAME="$(hostname 2>/dev/null || echo "$HOST_KEY")"
 ENROLLED_HOST_KEY=""
 
 if [[ -n "$ENROLL_TOKEN" ]]; then
+  case "$SERVER_URL" in
+    https://*) ;;
+    http://*)
+      echo "⚠️  ${SERVER_URL} is plain HTTP: the enrollment token and the agent secret" >&2
+      echo "    returned by the hub cross the network unencrypted. Use an https:// hub" >&2
+      echo "    URL or a private overlay (Tailscale / WireGuard) when the network" >&2
+      echo "    between this host and the hub is not trusted." >&2
+      ;;
+    *)
+      echo "❌ --server-url must start with https:// or http://." >&2
+      exit 1
+      ;;
+  esac
   echo "▶ Claiming enrollment token with ${SERVER_URL}…"
   host_key_json="$(json_escape "$HOST_KEY")"
   display_name_json="$(json_escape "$DISPLAY_NAME")"
@@ -443,15 +482,26 @@ if [[ -n "$ENROLL_TOKEN" ]]; then
     "${SERVER_URL}/api/agent-enrollments/claim")"
   JWT_SECRET="$(printf '%s' "$claim_response" | extract_json_string "agent_auth_secret")"
   ENROLLED_HOST_KEY="$(printf '%s' "$claim_response" | extract_json_string "host_key")"
-  if [[ -z "$JWT_SECRET" || ${#JWT_SECRET} -lt 32 ]]; then
+  if [[ -z "$JWT_SECRET" || ${#JWT_SECRET} -lt 32 ]] || ! is_safe_secret "$JWT_SECRET"; then
     echo "❌ Enrollment claim succeeded but did not return a valid agent auth secret." >&2
     exit 1
   fi
-  [[ -n "$ENROLLED_HOST_KEY" ]] && HOST_KEY="$ENROLLED_HOST_KEY"
+  if [[ -n "$ENROLLED_HOST_KEY" ]]; then
+    if ! is_safe_host_key "$ENROLLED_HOST_KEY"; then
+      echo "❌ Enrollment claim returned a malformed host key." >&2
+      exit 1
+    fi
+    HOST_KEY="$ENROLLED_HOST_KEY"
+  fi
   echo "✅ Enrollment claimed for ${HOST_KEY}"
 fi
 
 # ── write agent config ──────────────────────────────────────────────
+# Create the file 0600 before the secret is written so it is never
+# readable by other local users, not even for the moment before chmod.
+chmod 700 "${CONFIG_DIR}"
+rm -f "${CONFIG_FILE}"
+( umask 077 && : > "${CONFIG_FILE}" )
 cat > "${CONFIG_FILE}" <<EOF
 # Managed by scripts/install-agent.sh — re-run with different flags to replace.
 # AGENT_AUTH_SECRET is the preferred key. JWT_SECRET is kept as a compatibility
@@ -491,6 +541,17 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=${LOG_DIR}
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+# Bound what a connection flood can cost the host.
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target
@@ -514,11 +575,23 @@ EOF
     # installer is used on a machine that previously ran deploy/macos.
     launchctl unload "/Library/LaunchDaemons/com.sounmu.netsentinel.plist" 2>/dev/null || true
     rm -f "/Library/LaunchDaemons/com.sounmu.netsentinel.plist"
+    # The wrapper reads KEY=VALUE lines and exports them verbatim. It must
+    # not `.`-source the file: this runs as root on every daemon start, and
+    # sourcing would execute anything that ever landed in a value.
     cat > "$wrapper" <<EOF
 #!/bin/sh
-set -a
-. "${CONFIG_FILE}"
-set +a
+while IFS= read -r line || [ -n "\$line" ]; do
+  case "\$line" in
+    ''|'#'*) continue ;;
+    [A-Z_]*=*) ;;
+    *) continue ;;
+  esac
+  key="\${line%%=*}"
+  case "\$key" in
+    *[!A-Z0-9_]*) continue ;;
+  esac
+  export "\$key=\${line#*=}"
+done < "${CONFIG_FILE}"
 exec "${PREFIX}/bin/${BIN_NAME}"
 EOF
     chmod 755 "$wrapper"
