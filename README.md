@@ -237,7 +237,7 @@ cargo run
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `JWT_SECRET` | **Yes** | — | HS256 secret (≥ 32 bytes) for user JWTs and legacy agents. New agents added through the UI receive an agent-scoped secret instead of this server-wide value. `bootstrap.sh` generates it via `openssl rand -hex 32`; server startup rejects empty, short, and known public example values. |
+| `JWT_SECRET` | **Yes** | — | Hub secret (≥ 32 bytes) that authenticates scrapes of legacy agents. User sessions are signed with a separate key the hub generates on first boot (see `USER_JWT_SECRET`). New agents added through the UI receive an agent-scoped secret instead of this server-wide value. `bootstrap.sh` generates it via `openssl rand -hex 32`; server startup rejects empty, short, and known public example values. |
 | `GOOGLE_OAUTH_CLIENT_ID` | No | — | Optional Google OAuth web-client id. |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | No | — | Optional Google OAuth web-client secret. Server-side only. |
 | `GOOGLE_OAUTH_REDIRECT_URI` | No | — | Exact callback registered in Google Cloud, e.g. `https://dashboard.example.com/api/auth/oauth/google/callback`. Required only when Google OAuth is enabled. |
@@ -267,6 +267,8 @@ Under Docker Compose the server reads **root `.env`** (via `env_file: .env` in `
 | `MAX_DB_CONNECTIONS` | No | `10` | sqlx connection pool size. SQLite serialises writes via a single writer lock, so values beyond ~10 provide no throughput gain and only grow idle pool memory. |
 | `SSE_BUFFER_SIZE` | No | `128` | SSE broadcast channel buffer; floor is 128, so env can raise but not lower it |
 | `TRUSTED_PROXY_COUNT` | No | `0` | Reverse proxy count for X-Forwarded-For (0 = use peer IP directly) |
+| `TRUST_CF_CONNECTING_IP` | No | `false` | Also honour `CF-Connecting-IP` for client IP extraction. Enable only when every request reaches the hub through Cloudflare; other proxies pass a client-supplied value through. |
+| `USER_JWT_SECRET` | No | generated | Key that signs user sessions. By default a random key is generated on first boot and stored in the database; set this to keep it in the environment instead. Must differ from `JWT_SECRET`. |
 | `METRICS_CACHE_MAX_ENTRIES` | No | `20` | Max in-memory query-cache entries per cache (raw ≤6h ranges are not server-cached; TTL 120 s) |
 | `METRICS_CACHE_MAX_BYTES` | No | `33554432` | Estimated byte budget per metrics query cache (default 32 MiB). Oldest entries are evicted when either the entry cap or byte cap is exceeded |
 | `SQLITE_MMAP_SIZE` | No | `67108864` | SQLite mmap size in bytes (default 64 MiB) |
