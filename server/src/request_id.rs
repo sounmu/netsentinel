@@ -115,11 +115,8 @@ pub async fn api_rate_limit(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let ip = crate::handlers::auth_handler::extract_client_ip(
-        request.headers(),
-        &peer_addr,
-        state.trusted_proxy_count,
-    );
+    let ip =
+        crate::handlers::auth_handler::extract_client_ip(request.headers(), &peer_addr, &state);
     let limiter = if is_public_path(request.uri().path()) {
         &state.public_api_rate_limiter
     } else {

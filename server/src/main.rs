@@ -87,7 +87,10 @@ async fn main() -> anyhow::Result<()> {
         )
     })?;
     validate_jwt_secret(&jwt_secret)?;
-    services::auth::init_encoding_key(&jwt_secret);
+    // JWT_SECRET only authenticates scrapes of legacy agents. User sessions
+    // are signed with a separate hub-only key, initialized below once the
+    // database is available.
+    services::auth::init_legacy_agent_secret(&jwt_secret);
 
     let google_oauth = Arc::new(services::oauth::GoogleOAuthConfig::from_env()?);
     let oauth_state_store = Arc::new(services::oauth_state_store::OAuthStateStore::new());
@@ -128,6 +131,10 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Run database migrations ──
     db::run_migrations(&db_pool).await?;
+
+    // ── User session signing key ──
+    let user_jwt_secret = services::auth::resolve_user_jwt_secret(&db_pool, &jwt_secret).await?;
+    services::auth::init_user_signing_key(&user_jwt_secret);
 
     // ── Background maintenance workers ──
     // TimescaleDB's continuous-aggregate refresh and retention
@@ -196,10 +203,13 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(
             "⚠️ [Security] TRUSTED_PROXY_COUNT=0 — if deploying behind Cloudflare \
              Tunnel or another reverse proxy, set it to 1 so per-IP rate limits \
-             key off the original client IP (via CF-Connecting-IP / X-Forwarded-For) \
-             instead of the single tunnel IP."
+             key off the original client IP (via X-Forwarded-For) instead of the \
+             single tunnel IP."
         );
     }
+    let trust_cf_connecting_ip = std::env::var("TRUST_CF_CONNECTING_IP")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
 
     let sse_ticket_store = Arc::new(services::sse_ticket::SseTicketStore::new());
 
@@ -217,8 +227,17 @@ async fn main() -> anyhow::Result<()> {
             // a 30x redirect can re-target the request at an internal IP
             // after that check. Disable automatic redirects so every
             // outbound URL we send (alert webhooks, HTTP monitors, OAuth
-            // token exchange, agent scrape) is the one we validated.
+            // token exchange) is the one we validated. The agent scraper
+            // builds its own client with the same policy.
             .redirect(reqwest::redirect::Policy::none())
+            // Validation resolves the name once and the client resolves it
+            // again on connect; this resolver refuses private addresses at
+            // that second lookup so DNS rebinding cannot retarget a request.
+            .dns_resolver(Arc::new(services::url_validator::PublicOnlyResolver))
+            // A webhook endpoint that accepts the connection and never
+            // answers must not pin an alert task forever.
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("reqwest::Client::builder must build with default settings"),
         google_oauth: Arc::clone(&google_oauth),
@@ -258,7 +277,20 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or(300),
             ),
         )),
+        login_user_global_rate_limiter: Arc::new(LoginRateLimiter::new(
+            std::env::var("LOGIN_USER_GLOBAL_RATE_LIMIT_MAX")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100),
+            std::time::Duration::from_secs(
+                std::env::var("LOGIN_RATE_LIMIT_WINDOW_SECS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(300),
+            ),
+        )),
         trusted_proxy_count,
+        trust_cf_connecting_ip,
         token_revocation_cutoffs: Arc::clone(&token_revocation_cache),
         sse_ticket_store: Arc::clone(&sse_ticket_store),
         api_rate_limiter: Arc::new(LoginRateLimiter::new(
@@ -348,6 +380,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let login_limiter = Arc::clone(&state.login_rate_limiter);
         let login_user_limiter = Arc::clone(&state.login_user_rate_limiter);
+        let login_user_global_limiter = Arc::clone(&state.login_user_global_rate_limiter);
         let api_limiter = Arc::clone(&state.api_rate_limiter);
         let public_api_limiter = Arc::clone(&state.public_api_rate_limiter);
         tokio::spawn(async move {
@@ -355,6 +388,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 login_limiter.evict_stale();
                 login_user_limiter.evict_stale();
+                login_user_global_limiter.evict_stale();
                 api_limiter.evict_stale();
                 public_api_limiter.evict_stale();
             }

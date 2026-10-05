@@ -2233,6 +2233,7 @@ dependencies = [
  "chrono-tz",
  "dotenvy",
  "futures",
+ "hmac",
  "jsonwebtoken",
  "lettre",
  "reqwest",

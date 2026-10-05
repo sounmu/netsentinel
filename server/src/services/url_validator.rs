@@ -3,7 +3,7 @@
 //! Used by webhook configuration, HTTP monitors, and ping monitors to prevent
 //! server-side requests to internal services (RFC 1918, link-local, loopback, etc.).
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 /// Returns `true` if the IP address is in a private, reserved, or link-local range.
 pub fn is_private_ip(ip: IpAddr) -> bool {
@@ -54,13 +54,22 @@ pub async fn validate_url(url_str: &str, allowed_schemes: &[&str]) -> Result<(),
     // Determine port: explicit port in URL, or default for scheme
     let port = parsed.port_or_known_default().unwrap_or(443);
 
-    check_host_ips(host, port).await
+    check_host_ips(host, port).await.map(|_| ())
 }
 
 /// Validate a host:port target (for ping monitors): resolve DNS, block private IPs.
 ///
 /// Accepts formats: `hostname`, `hostname:port`, `ip:port`.
 pub async fn validate_host(host_str: &str) -> Result<(), String> {
+    resolve_public_host(host_str).await.map(|_| ())
+}
+
+/// Like [`validate_host`], but returns the addresses that passed the check.
+///
+/// Callers that open the connection themselves must connect to these
+/// addresses rather than resolving the name again: a second lookup can
+/// return a different (internal) answer — DNS rebinding.
+pub async fn resolve_public_host(host_str: &str) -> Result<Vec<SocketAddr>, String> {
     let (host, port) = if let Some((h, p)) = host_str.rsplit_once(':') {
         let port: u16 = p.parse().map_err(|_| format!("Invalid port: {p}"))?;
         (h, port)
@@ -71,17 +80,47 @@ pub async fn validate_host(host_str: &str) -> Result<(), String> {
     check_host_ips(host, port).await
 }
 
+/// DNS resolver for the outbound HTTP client that only ever hands back public
+/// addresses.
+///
+/// `validate_url` runs before each request, but the HTTP client resolves the
+/// name again when it connects. Filtering at that second lookup closes the
+/// gap: whatever the name resolves to at connect time, a private, loopback or
+/// link-local address is never dialled. URLs with an IP literal bypass DNS
+/// entirely and are covered by `validate_url` alone.
+pub struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_string();
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .filter(|addr| !is_private_ip(addr.ip()))
+                .collect();
+            if addrs.is_empty() {
+                return Err(format!("'{host}' has no public address").into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
 /// Resolve a hostname and check all returned IPs against the private range deny list.
-async fn check_host_ips(host: &str, port: u16) -> Result<(), String> {
+/// Returns the checked addresses.
+async fn check_host_ips(host: &str, port: u16) -> Result<Vec<SocketAddr>, String> {
     // If the host is a raw IP address, check it directly
     if let Ok(ip) = host.parse::<IpAddr>() {
         if is_private_ip(ip) {
             return Err(format!("Private/reserved IP address not allowed: {ip}"));
         }
-        return Ok(());
+        return Ok(vec![SocketAddr::new(ip, port)]);
     }
 
-    // DNS resolution — check ALL returned addresses (prevents DNS rebinding)
+    // DNS resolution — reject the name if ANY returned address is private.
+    // This alone does not stop DNS rebinding (the answer can change on the
+    // next lookup); callers connect to the addresses returned here, or go
+    // through `PublicOnlyResolver`.
     let addr_str = format!("{host}:{port}");
     let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&addr_str)
         .await
@@ -101,7 +140,7 @@ async fn check_host_ips(host: &str, port: u16) -> Result<(), String> {
         }
     }
 
-    Ok(())
+    Ok(addrs)
 }
 
 #[cfg(test)]
@@ -179,6 +218,22 @@ mod tests {
     async fn test_validate_host_private() {
         let result = validate_host("192.168.1.1:80").await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_public_host_returns_checked_literal() {
+        let addrs = resolve_public_host("8.8.8.8:53").await.unwrap();
+        assert_eq!(addrs, vec!["8.8.8.8:53".parse::<SocketAddr>().unwrap()]);
+        assert!(resolve_public_host("10.0.0.1:53").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn public_only_resolver_refuses_names_that_resolve_internally() {
+        use reqwest::dns::Resolve;
+        use std::str::FromStr;
+        // `localhost` resolves to loopback only, so nothing public remains.
+        let name = reqwest::dns::Name::from_str("localhost").unwrap();
+        assert!(PublicOnlyResolver.resolve(name).await.is_err());
     }
 
     #[tokio::test]

@@ -45,6 +45,7 @@ lettre = { version = "0.11", default-features = false, features = ["smtp-transpo
 argon2 = "0.5"
 base64 = "0.22"
 sha2 = "0.10"
+hmac = "0.12"
 url = "2.5.8"
 
 # Match the agent's release profile. The server is on every hot path

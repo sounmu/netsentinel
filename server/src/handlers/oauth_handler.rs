@@ -40,7 +40,7 @@ pub async fn google_start(
             "Google OAuth is not configured".into(),
         ));
     }
-    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    let ip_str = extract_client_ip(&headers, &peer_addr, &state);
     if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
         tracing::warn!(ip = %ip_str, "🔒 [OAuth] Start rate limited");
         return Err(AppError::TooManyRequests(format!(
@@ -78,7 +78,7 @@ pub async fn google_callback(
         return redirect("/login?error=oauth");
     }
 
-    let ip_str = extract_client_ip(&headers, &peer_addr, state.trusted_proxy_count);
+    let ip_str = extract_client_ip(&headers, &peer_addr, &state);
     if let Err(retry_after) = state.login_rate_limiter.check(&ip_str) {
         tracing::warn!(
             ip = %ip_str,

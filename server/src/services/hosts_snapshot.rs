@@ -147,6 +147,32 @@ pub fn apply_system_info(cell: &SharedHostsSnapshot, host_key: &str, info: &Syst
     }
 }
 
+/// Flip a single host's `agent_signs_responses` flag in the cached snapshot so
+/// the very next scrape already enforces signatures, without waiting for the
+/// background refresh.
+pub fn apply_response_signing(cell: &SharedHostsSnapshot, host_key: &str) {
+    let current = load(cell);
+    let mut hosts = current.hosts.clone();
+    let Some(host) = hosts.iter_mut().find(|h| h.host_key == host_key) else {
+        return;
+    };
+    host.agent_signs_responses = true;
+
+    let new_snapshot = Arc::new(HostsSnapshot {
+        hosts,
+        alert_map: current.alert_map.clone(),
+    });
+    match cell.write() {
+        Ok(mut guard) => *guard = new_snapshot,
+        Err(poisoned) => {
+            tracing::error!(
+                "❌ [HostsSnapshot] RwLock poisoned on apply_response_signing, recovering"
+            );
+            *poisoned.into_inner() = new_snapshot;
+        }
+    }
+}
+
 /// Rebuild the snapshot from the DB and atomically swap it in.
 ///
 /// Called on every mutation handler (create/update/delete host, upsert/delete

@@ -303,24 +303,23 @@ async fn check_ping_host(
     pool: &crate::db::DbPool,
     monitor: &ping_monitors_repo::PingMonitor,
 ) -> Option<String> {
-    // Defense-in-depth: re-validate host at runtime (catches pre-existing DB entries)
-    if let Err(e) = super::url_validator::validate_host(&monitor.host).await {
-        tracing::warn!(monitor_id = monitor.id, host = %monitor.host, "⚠️ [Ping Monitor] SSRF blocked: {e}");
-        return Some(format!("SSRF blocked: {e}"));
-    }
+    // Re-validate at runtime (catches pre-existing DB entries and DNS changes)
+    // and connect to exactly the addresses that passed, so a second lookup
+    // cannot swap in an internal address.
+    let addrs = match super::url_validator::resolve_public_host(&monitor.host).await {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            tracing::warn!(monitor_id = monitor.id, host = %monitor.host, "⚠️ [Ping Monitor] SSRF blocked: {e}");
+            return Some(format!("SSRF blocked: {e}"));
+        }
+    };
 
     let timeout = Duration::from_millis(monitor.timeout_ms.max(1000) as u64);
 
     // Use tokio TCP connect as a cross-platform "ping" alternative.
     // True ICMP ping requires raw sockets (root/CAP_NET_RAW) which is impractical in Docker.
-    let target = if monitor.host.contains(':') {
-        monitor.host.clone()
-    } else {
-        format!("{}:80", monitor.host)
-    };
-
     let start = Instant::now();
-    match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(&target)).await {
+    match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addrs.as_slice())).await {
         Ok(Ok(_)) => {
             let rtt = start.elapsed().as_secs_f64() * 1000.0;
             let _ =

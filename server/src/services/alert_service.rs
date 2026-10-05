@@ -304,18 +304,24 @@ async fn send_email(config: &serde_json::Value, message: &str) {
     // channel was saved, or the DNS record for `smtp_host` changed to point
     // at an internal IP, the previously-valid config would otherwise be
     // honored. Also guards against raw DB writes that skip the handler.
-    if let Err(e) =
-        crate::services::url_validator::validate_host(&format!("{smtp_host}:{smtp_port}")).await
+    let smtp_addr = match crate::services::url_validator::resolve_public_host(&format!(
+        "{smtp_host}:{smtp_port}"
+    ))
+    .await
     {
-        tracing::error!(
-            channel = "email",
-            smtp_host,
-            smtp_port,
-            err = %e,
-            "🚫 [Email] SSRF block — refusing to connect"
-        );
-        return;
-    }
+        Ok(addrs) if !addrs.is_empty() => addrs[0],
+        Ok(_) => return,
+        Err(e) => {
+            tracing::error!(
+                channel = "email",
+                smtp_host,
+                smtp_port,
+                err = %e,
+                "🚫 [Email] SSRF block — refusing to connect"
+            );
+            return;
+        }
+    };
 
     if smtp_user.is_empty() || smtp_pass.is_empty() {
         tracing::warn!(
@@ -351,13 +357,22 @@ async fn send_email(config: &serde_json::Value, message: &str) {
 
     let creds = Credentials::new(smtp_user.to_string(), smtp_pass.to_string());
 
-    let mailer = match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host) {
-        Ok(builder) => builder.port(smtp_port).credentials(creds).build(),
+    // Same as `starttls_relay(smtp_host)`, except the TCP connection goes to
+    // the address validated above instead of resolving `smtp_host` a second
+    // time. The certificate is still verified against the hostname.
+    let tls = match lettre::transport::smtp::client::TlsParameters::new(smtp_host.to_string()) {
+        Ok(params) => lettre::transport::smtp::client::Tls::Required(params),
         Err(e) => {
             tracing::error!(channel = "email", err = ?e, "⚠️ [Email] Failed to create SMTP transport");
             return;
         }
     };
+    let mailer =
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(smtp_addr.ip().to_string())
+            .port(smtp_port)
+            .tls(tls)
+            .credentials(creds)
+            .build();
 
     match mailer.send(email).await {
         Ok(_) => tracing::info!(channel = "email", to = %to, "🔔 [Alert Sent]"),
